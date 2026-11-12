@@ -51,7 +51,7 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 
 ## FileShape 3.9 — SQLite metadata hardening before live integration
 
-The standalone SQLite metadata store now tightens database file permissions to owner-only (0600 on POSIX), rejects symlink/non-file database paths, and uses SQLite FULL synchronous mode for durable transaction commits. Tests cover competing transitions from two connections, stale updates, database permissions and symlink rejection.
+The standalone SQLite metadata store now tightens database file permissions to owner-only (0600 on POSIX), rejects symlink/non-file database paths, and uses SQLite FULL synchronous mode for durable transaction commits. Files are created with mode 0600 before SQLite opens them. Existing WAL/SHM/journal files are checked before connection; symlinks, hardlinks and non-regular files are rejected. Initialization failures close the connection. Tests cover competing transitions from two connections, stale updates, legitimate processing cancellation, private sidecars under a permissive umask and connection cleanup.
 
 **Deployment caution:** This is not a complete defense against a hostile process that can replace parent directory entries; configure a private, service-owned directory on a trusted filesystem and protect its backups and WAL/SHM files. Run the service with a single worker until a shared job-store migration and multi-process startup semantics are designed. The live API still uses its existing in-memory job registry. No persistent files or restart recovery.
 

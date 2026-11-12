@@ -1,5 +1,6 @@
 """SQLite job metadata persistence and privacy tests."""
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -100,6 +101,59 @@ class DurableJobStoreTests(unittest.TestCase):
             self.skipTest("Symlinks unavailable")
         with self.assertRaises(ValueError):
             DurableJobStore(link)
+
+    def test_processing_can_legitimately_be_cancelled(self):
+        with DurableJobStore(self.path) as first, DurableJobStore(self.path) as second:
+            job = first.create(11)
+            first.transition(job.job_id, 11, "processing")
+            second.transition(job.job_id, 11, "cancelled")
+            with self.assertRaises(JobStateError):
+                first.transition(job.job_id, 11, "completed")
+            self.assertEqual(first.get(job.job_id, 11).state, "cancelled")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
+    def test_sidecars_private_even_with_permissive_umask(self):
+        old = os.umask(0)
+        try:
+            with DurableJobStore(self.path) as store:
+                store.create(11)
+                for suffix in ("", "-wal", "-shm"):
+                    self.assertEqual(Path(str(self.path) + suffix).stat().st_mode & 0o777, 0o600)
+                self.assertEqual(store._db.execute("PRAGMA synchronous").fetchone()[0], 2)
+        finally:
+            os.umask(old)
+
+    def test_reject_sidecar_symlinks_without_changing_target(self):
+        target = Path(self.tmp.name) / "private"
+        target.write_bytes(b"untouched")
+        for suffix in ("-wal", "-shm", "-journal"):
+            with self.subTest(suffix=suffix):
+                link = Path(str(self.path) + suffix)
+                link.symlink_to(target)
+                try:
+                    with self.assertRaises(ValueError):
+                        DurableJobStore(self.path)
+                    self.assertEqual(target.read_bytes(), b"untouched")
+                finally:
+                    link.unlink()
+
+    def test_initialization_failure_closes_connection(self):
+        connection = sqlite3.connect(":memory:")
+        with patch("api.durable_jobs.sqlite3.connect", return_value=connection):
+            with patch.object(DurableJobStore, "_initialize", side_effect=RuntimeError):
+                with self.assertRaises(RuntimeError):
+                    DurableJobStore(":memory:")
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+
+    def test_reject_directory_and_hardlink(self):
+        with self.assertRaises(ValueError):
+            DurableJobStore(self.tmp.name)
+        target = Path(self.tmp.name) / "real"
+        target.touch()
+        os.link(target, self.path)
+        with self.assertRaises(ValueError):
+            DurableJobStore(self.path)
 
     def test_invalid_owners_and_retention(self):
         with DurableJobStore(self.path) as store:

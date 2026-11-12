@@ -7,6 +7,7 @@ it cannot resume conversions without a durable, privacy-safe file pipeline.
 import os
 import secrets
 import sqlite3
+import stat
 import time
 from pathlib import Path
 
@@ -16,19 +17,46 @@ from api.jobs import JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
 class DurableJobStore:
     def __init__(self, path: str | Path):
         self.path = str(path)
-        # Service metadata is not an upload workspace. Reject symlinks and
-        # tighten permissions on existing and newly created database files.
+        # The parent directory must be private and service-owned. SQLite opens
+        # sidecars by pathname; untrusted directory writers cannot be supported.
         if self.path != ":memory:":
-            target = Path(self.path)
-            if target.is_symlink():
-                raise ValueError("Job database must not be a symlink")
-            if target.exists() and not target.is_file():
-                raise ValueError("Job database path must be a regular file")
-            if target.exists():
-                os.chmod(target, 0o600)
+            self._prepare_file(Path(self.path), create=True)
+            for suffix in ("-wal", "-shm", "-journal"):
+                self._prepare_file(Path(self.path + suffix), create=False)
         self._db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
-        if self.path != ":memory:":
-            os.chmod(self.path, 0o600)
+        try:
+            self._initialize()
+        except BaseException:
+            self._db.close()
+            raise
+
+    @staticmethod
+    def _prepare_file(path: Path, *, create: bool) -> None:
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        if create:
+            flags |= os.O_CREAT
+        if path.is_symlink():
+            raise ValueError("Job database files must not be symlinks")
+        try:
+            fd = os.open(path, flags, 0o600)
+        except FileNotFoundError:
+            if not create:
+                return
+            raise
+        except OSError as exc:
+            raise ValueError("Unsafe job database file") from exc
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("Job database files must be regular files with one link")
+            if os.name == "posix":
+                if info.st_uid != os.geteuid():
+                    raise ValueError("Job database files must be service-owned")
+                os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+
+    def _initialize(self) -> None:
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")
