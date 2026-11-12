@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.5 — bulk PDF page selection and safety
+
+After PDF page-count inspection, users can select all pages (for extraction only), invert the selection, or clear it. The interface now enforces the server's maximum of 150 selected pages and prevents selecting all pages for removal. It also fixes a page-range splitting bug in the 2.4 grid, so ranges like 1-3 correctly mark each page. Server-side limits remain authoritative.
+
 ## FileShape 2.4 — PDF page number grid
 
 After the user explicitly requests PDF page count, the Mini App displays an accessible grid of numbered page buttons for extract/remove operations. Tapping a page toggles its selection and synchronizes the existing manual input. Consecutive selections are compacted into ranges, with a bounded 90-character input and the existing server-side checks. The grid displays numbers, **not rendered PDF thumbnails**. Manual input and quick presets remain available.
