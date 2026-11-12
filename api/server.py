@@ -21,6 +21,7 @@ from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import inspect_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
+from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
 from services.file_tools import (
     IMAGE_FORMATS, compress_image, convert_image, extract_pdf_pages,
     pdf_page_count, remove_pdf_pages, rotate_pdf,
@@ -75,7 +76,7 @@ def file_kind(filename: str) -> tuple[str, str]:
 
 @api.middleware("http")
 async def reject_oversized_requests(request: Request, call_next):
-    if request.url.path == "/api/v1/convert":
+    if request.url.path in {"/api/v1/convert", "/api/v1/images/pdf"}:
         length = request.headers.get("content-length")
         if length:
             try:
@@ -234,3 +235,72 @@ async def convert(
     finally:
         slots.release()
         await upload.close()
+
+
+@api.post("/api/v1/images/pdf")
+async def multi_image_pdf(
+    uploads: list[UploadFile] = FileField(...),
+    user_id: int = Depends(authenticated_user),
+):
+    """Convert 2–8 pictures to one PDF without storing user data."""
+    if not MIN_IMAGES <= len(uploads) <= MAX_IMAGES:
+        raise HTTPException(status_code=422, detail="Выбери от 2 до 8 изображений")
+    for upload in uploads:
+        kind, _ = file_kind(upload.filename or "")
+        if kind != "image":
+            raise HTTPException(status_code=422, detail="Поддерживаются только JPG, PNG и WebP")
+    await enforce_rate_limit(user_id)
+    try:
+        await asyncio.wait_for(slots.acquire(), timeout=1.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=429, detail="Сервер занят. Попробуй позже.") from None
+
+    work = tempfile.TemporaryDirectory(prefix="fileshape_batch_")
+    try:
+        paths = []
+        total = 0
+        for index, upload in enumerate(uploads):
+            suffix = file_kind(upload.filename or "")[1]
+            path = Path(work.name) / f"image_{index}{suffix}"
+            count = 0
+            with path.open("wb") as output:
+                while True:
+                    chunk = await upload.read(64 * 1024)
+                    if not chunk:
+                        break
+                    count += len(chunk)
+                    total += len(chunk)
+                    if total > MAX_INPUT_BYTES:
+                        raise HTTPException(status_code=413, detail="Общий размер файлов превышает 20 МБ")
+                    output.write(chunk)
+            if count == 0:
+                raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
+            paths.append(path)
+
+        target = Path(work.name) / "fileshape_photos.pdf"
+        await asyncio.to_thread(images_to_pdf, paths, target)
+        if not target.is_file() or target.stat().st_size == 0:
+            raise ValueError("Не удалось создать PDF")
+        if target.stat().st_size > MAX_RESULT_BYTES:
+            raise HTTPException(status_code=413, detail="Результат слишком большой")
+        return FileResponse(
+            target,
+            filename=target.name,
+            media_type="application/pdf",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            background=BackgroundTask(work.cleanup),
+        )
+    except HTTPException:
+        work.cleanup()
+        raise
+    except ValueError as exc:
+        work.cleanup()
+        raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+    except Exception:
+        work.cleanup()
+        logger.exception("Multi-image PDF failed")
+        raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
+    finally:
+        slots.release()
+        for upload in uploads:
+            await upload.close()
