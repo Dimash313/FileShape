@@ -11,6 +11,7 @@ import zipfile
 from docx import Document
 from PIL import Image
 from pypdf import PdfWriter
+from pypdf.errors import PdfReadError
 
 from services.archive_tools import inspect_zip
 from services.document_tools import read_docx_text
@@ -39,7 +40,7 @@ class MalformedFileTests(unittest.TestCase):
     def test_pdf_with_valid_header_but_invalid_structure(self):
         fake = self.write("broken.pdf", b"%PDF-1.7\ninvalid body\n%%EOF")
         validate_upload(fake, ".pdf")
-        with self.assertRaises((ValueError, Exception)):
+        with self.assertRaises((ValueError, PdfReadError)):
             pdf_page_count(fake)
 
     def test_valid_pdf_still_reads(self):
@@ -52,7 +53,7 @@ class MalformedFileTests(unittest.TestCase):
         self.assertEqual(pdf_page_count(source), 1)
 
     def test_truncated_zip_rejected(self):
-        source = self.write("broken.zip", b"PK\\x03\\x04not-a-central-directory")
+        source = self.write("broken.zip", b"PK\x03\x04not-a-central-directory")
         with self.assertRaises(ValueError):
             inspect_zip(source)
 
