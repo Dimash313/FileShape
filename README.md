@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.9 — conversion output verification
+
+The pre-2.0 regression suite now exercises real authenticated API requests and worker subprocesses across image conversion (PNG/JPEG/WebP/PDF/compression), PDF editing (rotate, extract, first page, remove, info), and TXT/DOCX conversion. It parses resulting images, PDFs and Word documents instead of relying only on HTTP status codes. These tests cover representative generated fixtures, not the full variety of real-world files or deployment performance. Further format-specific tests and hardware stress tests remain release requirements.
+
 ## FileShape 1.8 — crash-recovery temporary workspace cleanup
 
 The Linux API now uses private temporary workspaces with held advisory locks. At API startup it scans at most 500 workspace entries and deletes only FileShape workspaces older than one hour whose locks are no longer held. Active, recent and unrelated directories are preserved. Regression tests cover these cases. This is bounded startup recovery, not a periodic disk janitor; operational disk monitoring and container restart policy are still required.
