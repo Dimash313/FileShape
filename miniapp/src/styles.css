@@ -67,3 +67,9 @@
 .pdf-page-number:disabled{opacity:.5}
 .pdf-page-number:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
 .pdf-page-picker small{font-size:11px;line-height:1.5;color:#91a8c6}
+
+/* 2.5 bulk page controls and safety feedback */
+.pdf-bulk-actions{display:flex;flex-wrap:wrap;gap:7px}
+.pdf-bulk-actions button{min-height:38px;padding:8px 10px;border:1px solid #416187;border-radius:9px;background:#1a3656;color:#d3e6ff;font-size:11px;font-weight:700}
+.pdf-bulk-actions button:disabled{opacity:.45;cursor:not-allowed}
+.pdf-page-picker .pdf-selection-warning{color:#ffb4b4}
