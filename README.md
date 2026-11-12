@@ -2,9 +2,12 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.8 — authenticated Mini App API + Telegram bot)
+## Implemented (v0.9 — batch images and real upload progress)
 
-Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.\n\n**Reusable results**\n- Each successfully generated file up to 20 MB includes its own action buttons. You can edit/convert that result again without downloading and re-uploading it.\n- The bot accepts actions on generated files only in the owner's private chat.\n- Outputs larger than 20 MB are sent without action buttons because the standard Telegram Bot API cannot re-download them.\n- Input file cards show filename, type and size.
+Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.
+
+**Reusable results**
+- Each successfully generated file up to 20 MB includes its own action buttons. You can edit/convert that result again without downloading and re-uploading it.\n- The bot accepts actions on generated files only in the owner's private chat.\n- Outputs larger than 20 MB are sent without action buttons because the standard Telegram Bot API cannot re-download them.\n- Input file cards show filename, type and size.
 
 **PDF**
 - Show number of pages.
@@ -46,20 +49,21 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
-## FileShape Studio Mini App (v0.8)
+## FileShape Studio Mini App (v0.9)
 
-A mobile-first dark-blue React + TypeScript interface is in `miniapp/`. Four tabs, browser-side JPG/PNG/WebP conversion, temporary session history, and an **authenticated Python API** for supported file tools.
+A mobile-first dark-blue React + TypeScript interface is in `miniapp/`. Four tabs, browser-side JPG/PNG/WebP conversion, downloadable results retained in limited session memory, and an **authenticated Python API** for supported file tools.
 
 The Mini App now sends selected files to `/api/v1/convert` using **Telegram.WebApp.initData** in the `X-Telegram-Init-Data` header. The server validates the Telegram HMAC signature with `BOT_TOKEN`, validates `auth_date` (max age one hour), and derives user ID from the signed data. **Never trust initDataUnsafe or a user ID sent by the browser.**
 
 Supported Mini App API actions:
 - PDF: count, first page, select pages, remove pages, rotate 90 degrees
 - Images: create single-page PDF, optimize to WebP (plus local JPG/PNG/WebP conversion)
+- Batch photos: combine 2–8 JPG/PNG/WebP into a single PDF in chosen order; total incoming size up to 20 MB and decoded pixel limits
 - Audio: inspect, convert to MP3/OGG/WAV
 - Documents: DOCX ⇄ TXT, text info
 - ZIP: list contents (extract/build still available through Telegram bot, not Mini App)
 
-No accounts, payment processing, stored file history or production monitoring exist yet. API temporary files are removed on completion; size limits (20 MB input, 45 MB output), per-user request rate limits and a global concurrency cap are enforced. API clients must run inside Telegram; ordinary browser previews can only use local image conversion.
+No accounts, payment processing, persistent file history or production monitoring exist yet. Upload progress uses the browser's actual transferred-byte events; **server processing has no percent-complete measurement**, so the UI only displays a processing state after upload. The history lists up to 12 operations, retaining downloadable blobs for at most four recent results with a combined 35 MB in browser memory (no persistent storage). API temporary files are removed on completion; size limits (20 MB input, 45 MB output), per-user request rate limits and a global concurrency cap are enforced. API clients must run inside Telegram; ordinary browser previews can only use local image conversion.
 
 ### Preview locally
 
@@ -123,7 +127,7 @@ Automated tests also run in GitHub Actions for commits to `main`.
 - More advanced PDF manipulation and batch tools
 - Rich DOCX editing and DOCX → PDF conversion
 - Additional audio formats and advanced archive tools
-- Live job progress, refined navigation and PRO subscription infrastructure
+- Persistent job queue, true server-side processing progress, refined navigation and PRO subscription infrastructure
 - Hosted HTTPS deployment, production monitoring and persistent job management
 
 These roadmap features are **not implemented yet**.

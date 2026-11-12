@@ -97,6 +97,47 @@ class APITests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
+    def test_batch_images_pdf(self):
+        from pypdf import PdfReader
+        from io import BytesIO as Stream
+        sources = []
+        for size in ((14, 12), (24, 16), (20, 21)):
+            image = Image.new("RGB", size, "white")
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            sources.append(buffer.getvalue())
+        response = self.client.post(
+            "/api/v1/images/pdf",
+            headers=self.auth,
+            files=[("uploads", (f"image_{i}.png", item, "image/png")) for i, item in enumerate(sources)],
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(PdfReader(Stream(response.content)).pages), 3)
+        self.assertEqual(response.headers.get("cache-control"), "no-store")
+
+    def test_batch_requires_2_to_8_images(self):
+        response = self.client.post(
+            "/api/v1/images/pdf",
+            headers=self.auth,
+            files=[("uploads", ("one.png", b"x", "image/png"))],
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_batch_requires_telegram_auth(self):
+        response = self.client.post(
+            "/api/v1/images/pdf",
+            files=[("uploads", ("one.png", b"x", "image/png")), ("uploads", ("two.png", b"x", "image/png"))],
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_batch_rejects_non_images(self):
+        response = self.client.post(
+            "/api/v1/images/pdf",
+            headers=self.auth,
+            files=[("uploads", ("one.png", b"x", "image/png")), ("uploads", ("two.txt", b"x", "text/plain"))],
+        )
+        self.assertEqual(response.status_code, 422)
+
     def test_broken_zip_cannot_be_listed(self):
         response = self.client.post(
             "/api/v1/convert",

@@ -8,3 +8,21 @@
 .pages-field input{background:#0f1a2b;border:1px solid #345073;color:#f1f6ff;padding:12px 14px;border-radius:11px;outline:none;font:inherit}
 .pages-field input:focus{border-color:#5b9eff}
 .notice{white-space:pre-line}
+
+.transfer-status{border:1px solid #30527d;background:#13243c;border-radius:14px;padding:15px;margin:14px 0}
+.transfer-label{display:flex;justify-content:space-between;gap:14px;font-size:12px;font-weight:700;color:#c9ddfa}
+.transfer-label strong{color:#6faaff;font-variant-numeric:tabular-nums}
+.transfer-track{height:7px;background:#273b59;overflow:hidden;border-radius:999px;margin-top:13px}
+.transfer-track>div{height:100%;border-radius:999px;background:linear-gradient(90deg,#327efa,#6bb8ff);transition:width .16s linear}
+.transfer-wait{font-size:12px;line-height:1.55;color:#9daecd;margin:12px 0}
+.batch-intro{color:#9daecd;font-size:12px;line-height:1.65;margin:0 0 12px}
+.batch-list{margin-top:18px;display:flex;flex-direction:column;gap:9px}
+.batch-row{display:flex;align-items:center;gap:9px;background:#19273c;border:1px solid #2a3b56;border-radius:12px;padding:10px}
+.batch-number{background:#234371;color:#80b4ff;font-size:12px;font-weight:760;min-width:29px;height:29px;border-radius:9px;display:grid;place-items:center}
+.batch-file{min-width:0;flex:1;display:flex;flex-direction:column;gap:5px}
+.batch-file strong{color:#e4edf9;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batch-file span{font-size:10px;color:#8a9bb8}
+.batch-row button{background:#203453;border:1px solid #345177;border-radius:9px;color:#a8d0ff;font-size:17px;font-weight:700;min-width:29px;height:33px}
+.batch-row button:disabled{opacity:.35}
+.batch-summary{margin:16px 0;color:#9fb2ce;font-size:12px}
+.history-download{height:35px;width:35px;border-radius:10px;background:#244c80;border:1px solid #3b73b7;color:#93c6ff;display:grid;place-items:center}
