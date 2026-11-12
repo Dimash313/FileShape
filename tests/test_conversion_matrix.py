@@ -114,6 +114,22 @@ class ConversionMatrixTests(unittest.TestCase):
         self.assertEqual(info.status_code, 200, info.text)
         self.assertEqual(info.json()["info"]["pages"], 3)
 
+    def test_pdf_invalid_page_requests_are_rejected(self):
+        source = pdf_bytes()
+        cases = (
+            ("pdf:extract", ""),
+            ("pdf:extract", "4"),
+            ("pdf:extract", "3-1"),
+            ("pdf:extract", "1,,2"),
+            ("pdf:remove", "1-3"),
+            ("pdf:remove", "1,2,3"),
+        )
+        for action, pages in cases:
+            with self.subTest(action=action, pages=pages):
+                response = self.convert("pages.pdf", source, action, pages)
+                self.assertGreaterEqual(response.status_code, 400, response.text)
+                self.assertLess(response.status_code, 500, response.text)
+
     def test_text_and_docx_roundtrip(self):
         source = "Тест FileShape\nВторая строка"
         response = self.convert("source.txt", source.encode(), "txt:docx")
