@@ -1,6 +1,7 @@
 """Bounded, shutdown-aware in-process admission for conversion workers.
 
 The waiting room is not durable and does not survive process restarts.
+Waiter notifications belong to each request's event loop.
 """
 import asyncio
 
@@ -17,6 +18,11 @@ class QueueClosed(Exception):
     """The server is shutting down and cannot accept more work."""
 
 
+def _notify_waiter(waiter: asyncio.Future) -> None:
+    if not waiter.done():
+        waiter.set_result(None)
+
+
 class AdmissionQueue:
     def __init__(self, max_waiters: int = 20, wait_seconds: float = 90.0):
         if max_waiters < 0 or wait_seconds <= 0:
@@ -24,15 +30,22 @@ class AdmissionQueue:
         self.max_waiters = max_waiters
         self.wait_seconds = wait_seconds
         self.waiting = 0
-        self._closing = asyncio.Event()
+        self._closed = False
+        self._shutdown_waiters: set[asyncio.Future] = set()
 
     def close(self) -> None:
-        """Reject new admissions and wake waiting requests promptly."""
-        self._closing.set()
+        """Reject new work and wake existing requests on their own loops."""
+        self._closed = True
+        for waiter in tuple(self._shutdown_waiters):
+            try:
+                waiter.get_loop().call_soon_threadsafe(_notify_waiter, waiter)
+            except RuntimeError:
+                # The request's event loop has already exited.
+                pass
 
     @property
     def closing(self) -> bool:
-        return self._closing.is_set()
+        return self._closed
 
     async def acquire(self, semaphore: asyncio.Semaphore) -> None:
         if self.closing:
@@ -43,30 +56,27 @@ class AdmissionQueue:
                 raise QueueFull()
             self.waiting += 1
         acquire_task = asyncio.create_task(semaphore.acquire())
-        closing_task = asyncio.create_task(self._closing.wait())
+        shutdown_notice = asyncio.get_running_loop().create_future()
+        self._shutdown_waiters.add(shutdown_notice)
         acquired = False
         transferred = False
         try:
             done, _ = await asyncio.wait(
-                (acquire_task, closing_task),
+                (acquire_task, shutdown_notice),
                 timeout=self.wait_seconds,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if acquire_task in done:
                 acquired = acquire_task.result()
-            if self.closing or closing_task in done:
+            if self.closing or shutdown_notice in done:
                 raise QueueClosed()
             if acquire_task not in done:
                 raise QueueTimeout()
-            # The caller owns the slot after successful return.
             transferred = True
         finally:
-            # On cancellation, timeout or shutdown the semaphore permit must
-            # never leak, including a simultaneous close/acquire race.
-            for task in (acquire_task, closing_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(acquire_task, closing_task, return_exceptions=True)
+            if not acquire_task.done():
+                acquire_task.cancel()
+            await asyncio.gather(acquire_task, return_exceptions=True)
             if not acquired and acquire_task.done() and not acquire_task.cancelled():
                 try:
                     acquired = acquire_task.result() is True
@@ -74,5 +84,8 @@ class AdmissionQueue:
                     pass
             if acquired and not transferred:
                 semaphore.release()
+            self._shutdown_waiters.discard(shutdown_notice)
+            if not shutdown_notice.done():
+                shutdown_notice.cancel()
             if queued:
                 self.waiting -= 1
