@@ -21,7 +21,7 @@ from starlette.background import BackgroundTask
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
-from api.jobs import JobCapacityExceeded, JobNotFound, JobRegistry, JobStateError
+from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
 from api.observability import RequestTrace
 from api.readiness import readiness_status
@@ -80,7 +80,7 @@ def configured_worker_capacity() -> int:
 MAX_CONCURRENT_JOBS = configured_worker_capacity()
 slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
-jobs = JobRegistry()
+jobs = None
 job_runtime = None
 metadata_maintenance = None
 limiter_lock = asyncio.Lock()
@@ -156,9 +156,9 @@ async def stop_accepting_conversions():
     if job_runtime is not None:
         job_runtime.close()
         job_runtime = None
-        jobs = JobRegistry()
+        jobs = None
     else:
-        jobs.clear()
+        jobs = None
 
 
 @api.on_event("startup")
@@ -187,6 +187,9 @@ async def health():
 @api.get("/ready")
 async def ready():
     result = await asyncio.to_thread(readiness_status)
+    result["checks"]["job_metadata"] = job_runtime is not None
+    if job_runtime is None:
+        result["status"] = "unavailable"
     return JSONResponse(
         result,
         status_code=200 if result["status"] == "ready" else 503,
@@ -218,6 +221,8 @@ async def queue_status(user_id: int = Depends(authenticated_user)):
 @api.get("/api/v1/jobs/{job_id}")
 async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
     await enforce_rate_limit(user_id)
+    if jobs is None:
+        raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
         item = jobs.get(job_id, user_id)
     except JobNotFound:
@@ -228,6 +233,8 @@ async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
 
 
 def new_job(user_id: int) -> str:
+    if jobs is None:
+        raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
         return jobs.create(user_id).job_id
     except JobCapacityExceeded:

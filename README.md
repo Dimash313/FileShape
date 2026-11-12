@@ -51,7 +51,7 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 
 ## FileShape 4.0 — durable metadata for real HTTP conversions
 
-Both existing conversion endpoints now use SQLite metadata after API startup. Opaque IDs, Telegram owner IDs, states and timestamps survive restarts; no file names, paths, contents or results are stored in SQLite. The authenticated status endpoint remains owner-only. Completed metadata does **not** mean that a result is available for a later download: results still stream in the original HTTP response and are then deleted.
+Both existing conversion endpoints now use SQLite metadata after API startup. Disabling ASGI lifespan fails conversion admission and readiness closed instead of silently falling back to memory. Opaque IDs, Telegram owner IDs, states and timestamps survive restarts; no file names, paths, contents or results are stored in SQLite. The authenticated status endpoint remains owner-only. Completed metadata does **not** mean that a result is available for a later download: results still stream in the original HTTP response and are then deleted.
 
 The store holds at most 1,000 records. Capacity checks and insertion are one SQLite transaction; active records are never evicted. Terminal records expire after one hour, with cleanup on access/admission and every 60 seconds while running. At startup, an exclusive process lock is acquired **before** interrupted queued/processing records are marked failed. A second API process using the same state directory fails startup without changing the first process's jobs. Jobs are never replayed automatically.
 

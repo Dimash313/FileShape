@@ -52,6 +52,19 @@ class DurableIntegrationTests(unittest.TestCase):
             self.assertEqual(client.get(f"/api/v1/jobs/{job_id}").status_code, 401)
             self.assertEqual(response.headers["cache-control"], "no-store")
 
+    def test_lifespan_disabled_fails_closed(self):
+        with patch.object(server, "jobs", None), patch.object(server, "job_runtime", None):
+            with TestClient(server.api) as started:
+                self.assertEqual(started.get("/ready").status_code, 200)
+            client = TestClient(server.api)
+            self.addCleanup(client.close)
+            response = client.post("/api/v1/convert", headers=self.auth,
+                                   files={"upload": ("input.txt", b"hello", "text/plain")},
+                                   data={"action": "txt:docx"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(client.get("/api/v1/jobs/unknown", headers=self.auth).status_code, 503)
+            self.assertEqual(client.get("/ready").status_code, 503)
+
     def test_second_process_cannot_fail_active_jobs(self):
         runtime = JobRuntime(self.root)
         self.addCleanup(runtime.close)
