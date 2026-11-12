@@ -8,11 +8,11 @@ import {
 } from 'lucide-react';
 import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } from './imageTools';
 import { initTelegram, tapFeedback, telegramInitData } from './telegram';
-import { actionsFor, downloadBlob, getQueueStatus, runMultiImagePdf, runServerAction } from './api';
+import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
 import type { QueueStatus, UploadProgress } from './api';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
-type Task = { id: number; name: string; format: string; time: string; blob?: Blob };
+type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: string };
 type Tool = { title: string; subtitle: string; icon: LucideIcon; category: string; local: boolean };
 const tools: Tool[] = [
   { title: 'PDF', subtitle: 'Страницы и объединение', icon: FileText, category: 'Документы', local: false },
@@ -129,9 +129,9 @@ export default function App() {
       return next;
     });
   };
-  const remember = (name: string, blob: Blob) => {
+  const remember = (name: string, blob: Blob, jobId?: string) => {
     const task: Task = {
-      id: Date.now(), name, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
+      id: Date.now(), name, jobId, jobState: jobId ? 'completed' : undefined, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
       format: name.split('.').pop()?.toUpperCase() ?? 'ФАЙЛ',
       time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
     };
@@ -145,6 +145,16 @@ export default function App() {
         return { ...item, blob: undefined };
       });
     });
+  };
+  const checkJob = async (item: Task) => {
+    if (!item.jobId) return;
+    try {
+      const status = await getJobStatus(item.jobId);
+      setHistory(items => items.map(entry => entry.id === item.id ? { ...entry, jobState: status.state } : entry));
+      setNotice('Статус задания: ' + ({ queued: 'ожидание', processing: 'обработка', completed: 'завершено', failed: 'ошибка', cancelled: 'отменено' }[status.state]));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось проверить статус.');
+    }
   };
   const acceptFile = (next?: File) => {
     if (busy || !next) return;
@@ -326,7 +336,7 @@ export default function App() {
         setNotice(result.text);
       } else {
         downloadBlob(result.blob, result.name);
-        remember(result.name, result.blob);
+        remember(result.name, result.blob, result.jobId);
         setNotice('Готово! Результат отправлен на загрузку.');
       }
     } catch (error) {
@@ -503,12 +513,12 @@ export default function App() {
         <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.title} onClick={() => { if (tool.title === 'Сканер') { setTab('tools'); setNotice('Сканер появится позже.'); } else if (tool.title === 'Пакетно') showBatch(); else pick(); }}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
-      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}</span></div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
+      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + item.jobState : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
       {tab === 'profile' && <>
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Предварительная версия 3.6</span></div>
+          <div><strong>FileShape Studio</strong><span>Предварительная версия 3.7</span></div>
         </div>
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">
