@@ -15,6 +15,7 @@ from PIL import Image
 
 from api.auth import InvalidInitData, verify_init_data
 from api.admission import AdmissionQueue
+from api.jobs import JobRegistry
 from api import server
 from api.server import api
 
@@ -59,6 +60,9 @@ class APITests(unittest.TestCase):
         queue = patch.object(server, "admission", AdmissionQueue())
         queue.start()
         self.addCleanup(queue.stop)
+        registry = patch.object(server, "jobs", JobRegistry())
+        registry.start()
+        self.addCleanup(registry.stop)
         self.env = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -72,6 +76,17 @@ class APITests(unittest.TestCase):
         result = self.client.get("/api/v1/session", headers=self.auth)
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["user_id"], 12345)
+
+    def test_job_status_requires_auth_and_owner(self):
+        job = server.jobs.create(12345)
+        self.assertEqual(self.client.get(f"/api/v1/jobs/{job.job_id}").status_code, 401)
+        found = self.client.get(f"/api/v1/jobs/{job.job_id}", headers=self.auth)
+        self.assertEqual(found.status_code, 200)
+        self.assertEqual(found.json()["state"], "queued")
+        self.assertEqual(found.headers.get("cache-control"), "no-store")
+        other = {"X-Telegram-Init-Data": signed_init_data(user_id=99999)}
+        self.assertEqual(self.client.get(f"/api/v1/jobs/{job.job_id}", headers=other).status_code, 404)
+        self.assertEqual(self.client.get("/api/v1/jobs/nonexistent", headers=self.auth).status_code, 404)
 
     def test_queue_status_requires_auth_and_omits_user_data(self):
         self.assertEqual(self.client.get("/api/v1/queue").status_code, 401)
