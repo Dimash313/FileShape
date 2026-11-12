@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.2 — PDF page selection shortcuts
+
+The Mini App now provides touch-friendly shortcuts for selecting the first page, pages 1–3, pages 1–5, and clearing the selection. The page input still supports comma-separated numbers and ranges. Client-side validation rejects zero, reversed ranges, values over the PDF processing limit of 250, and malformed syntax before upload. The backend remains authoritative and rejects pages that do not exist in the actual document. This milestone does not implement visual PDF thumbnails or page drag-and-drop.
+
 ## FileShape 2.1 — local image preview
 
 The Mini App displays the selected JPG/PNG/WebP image before conversion using a browser object URL; the URL is revoked on file change/unmount. The preview itself stays on the device. PDF files show an honest file overview and link the user toward the existing page-count operation; rendering individual PDF pages is not yet implemented. This milestone does not add server-side image storage.
