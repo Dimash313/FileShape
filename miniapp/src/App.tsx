@@ -227,7 +227,15 @@ export default function App() {
     const next = new Set(selectedPageNumbers);
     if (next.has(page)) next.delete(page);
     else next.add(page);
-    const value = [...next].sort((a, b) => a - b).join(',');
+    const sorted = [...next].sort((a, b) => a - b);
+    const chunks: string[] = [];
+    for (let index = 0; index < sorted.length;) {
+      let end = index;
+      while (end + 1 < sorted.length && sorted[end + 1] === sorted[end] + 1) end += 1;
+      chunks.push(end === index ? String(sorted[index]) : sorted[index] + '-' + sorted[end]);
+      index = end + 1;
+    }
+    const value = chunks.join(',');
     if (value.length > 90) {
       setNotice('Слишком много выбранных страниц. Используй диапазоны в поле выше.');
       return;
