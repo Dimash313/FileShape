@@ -221,7 +221,24 @@ export default function App() {
       <h1>{title}<span className="blue-dot">.</span></h1>
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
-        {!file ? <div className={`upload-area ${dragging ? 'dragging' : ''}`}
+        {batchMode ? <section className="selected-file">
+          <div className="section-head"><h2>Фото → один PDF</h2><button type="button" className="text-button" onClick={clear}>Закрыть <X size={14}/></button></div>
+          <p className="batch-intro">Выбери от 2 до 8 изображений. Порядок ниже станет порядком страниц PDF.</p>
+          <button type="button" className="secondary-button full" disabled={busy} onClick={pickBatch}><UploadCloud size={17}/> Выбрать фотографии</button>
+          {batchFiles.length > 0 && <div className="batch-list">
+            {batchFiles.map((photo, index) => <div className="batch-row" key={index}>
+              <span className="batch-number">{index + 1}</span>
+              <div className="batch-file"><strong title={photo.name}>{photo.name}</strong><span>{sizeLabel(photo.size)}</span></div>
+              <button aria-label="Переместить выше" type="button" disabled={index === 0 || busy} onClick={() => reorderBatch(index, -1)}>↑</button>
+              <button aria-label="Переместить ниже" type="button" disabled={index === batchFiles.length - 1 || busy} onClick={() => reorderBatch(index, 1)}>↓</button>
+            </div>)}
+          </div>}
+          <div className="batch-summary">{batchFiles.length} фото · {sizeLabel(batchFiles.reduce((sum, photo) => sum + photo.size, 0))} всего</div>
+          {!telegramInitData() && <div className="transfer-wait">Создание PDF работает после открытия Mini App внутри Telegram.</div>}
+          <button type="button" className="primary-button full" disabled={busy || batchFiles.length < 2 || !telegramInitData()} onClick={convertBatch}>
+            {busy ? 'Обрабатываю…' : 'Создать PDF'} <ArrowDownToLine size={17}/>
+          </button>
+        </section> : !file ? <div className={`upload-area ${dragging ? 'dragging' : ''}`}
           onDragOver={e => { e.preventDefault(); setDragging(true); }}
           onDragLeave={e => { e.preventDefault(); setDragging(false); }}
           onDrop={e => { e.preventDefault(); setDragging(false); acceptFile(e.dataTransfer.files[0]); }}>
@@ -257,6 +274,7 @@ export default function App() {
           </div> : kind !== 'image' ? <div className="pending-panel"><Info size={20}/><div><strong>Формат пока не поддерживается</strong><p>Попробуй PDF, TXT, DOCX, ZIP, изображение или аудио.</p></div></div> : null}
           <button type="button" className="secondary-button full" onClick={pick}><RotateCcw size={16}/> Выбрать другой файл</button>
         </section>}
+        {progress && <ProgressIndicator progress={progress} />}
         <div className="section-head tools-head"><h2>Быстрые инструменты</h2><button className="text-button" onClick={() => setTab('tools')}>Все <ChevronRight size={17}/></button></div>
         <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.title} onClick={() => { if (tool.title === 'Сканер' || tool.title === 'Пакетно') { setTab('tools'); setNotice('Инструмент появится в следующем обновлении.'); } else pick(); }}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
       </>}
