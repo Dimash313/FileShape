@@ -45,6 +45,7 @@ class AdmissionQueue:
         acquire_task = asyncio.create_task(semaphore.acquire())
         closing_task = asyncio.create_task(self._closing.wait())
         acquired = False
+        transferred = False
         try:
             done, _ = await asyncio.wait(
                 (acquire_task, closing_task),
@@ -58,7 +59,7 @@ class AdmissionQueue:
             if acquire_task not in done:
                 raise QueueTimeout()
             # The caller owns the slot after successful return.
-            acquired = False
+            transferred = True
         finally:
             # On cancellation, timeout or shutdown the semaphore permit must
             # never leak, including a simultaneous close/acquire race.
@@ -71,7 +72,7 @@ class AdmissionQueue:
                     acquired = acquire_task.result() is True
                 except Exception:
                     pass
-            if acquired:
+            if acquired and not transferred:
                 semaphore.release()
             if queued:
                 self.waiting -= 1
