@@ -4,6 +4,11 @@ No external services are used. The expensive worker is replaced with a
 controllable async stub so overload behavior is deterministic.
 """
 import asyncio
+import hashlib
+import hmac
+import json
+import time
+from urllib.parse import urlencode
 from io import BytesIO
 import os
 from pathlib import Path
@@ -14,7 +19,18 @@ import httpx
 from PIL import Image
 
 from api.server import api, slots
-from tests.test_api import TOKEN, signed_init_data
+TOKEN = "987654:testing-token-only"
+
+
+def signed_init_data(user_id: int) -> str:
+    data = {
+        "auth_date": str(int(time.time())),
+        "user": json.dumps({"id": user_id}, separators=(",", ":")),
+    }
+    check = "\\n".join(f"{key}={value}" for key, value in sorted(data.items()))
+    secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+    data["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    return urlencode(data)
 
 
 def png_bytes() -> bytes:
