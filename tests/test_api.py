@@ -1,4 +1,5 @@
 """Telegram HMAC verification and authenticated API smoke tests."""
+import asyncio
 import hashlib
 import hmac
 from io import BytesIO
@@ -71,6 +72,35 @@ class APITests(unittest.TestCase):
         result = self.client.get("/api/v1/session", headers=self.auth)
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["user_id"], 12345)
+
+    def test_queue_status_requires_auth_and_omits_user_data(self):
+        self.assertEqual(self.client.get("/api/v1/queue").status_code, 401)
+        response = self.client.get("/api/v1/queue", headers=self.auth)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers.get("cache-control"), "no-store")
+        self.assertEqual(set(response.json()), {
+            "capacity", "active", "waiting", "waiting_limit", "accepting",
+        })
+        self.assertEqual(response.json()["capacity"], server.MAX_CONCURRENT_JOBS)
+        self.assertNotIn("user", response.text)
+        self.assertNotIn("filename", response.text)
+
+    def test_queue_status_reports_live_load_and_shutdown(self):
+        capacity = server.MAX_CONCURRENT_JOBS
+        with patch.object(server, "slots", asyncio.Semaphore(capacity)):
+            self.assertGreaterEqual(capacity, 1)
+            await_slots = server.slots
+            await_slots._value = capacity - 1
+            server.admission.waiting = 2
+            response = self.client.get("/api/v1/queue", headers=self.auth)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["active"], 1)
+            self.assertEqual(response.json()["waiting"], 2)
+            self.assertTrue(response.json()["accepting"])
+            server.admission.close()
+            closed = self.client.get("/api/v1/queue", headers=self.auth)
+            self.assertEqual(closed.status_code, 200)
+            self.assertFalse(closed.json()["accepting"])
 
     def test_convert_image_and_stream_result(self):
         image = Image.new("RGB", (12, 12), "blue")
