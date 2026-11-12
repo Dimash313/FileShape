@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.1 — local image preview
+
+The Mini App displays the selected JPG/PNG/WebP image before conversion using a browser object URL; the URL is revoked on file change/unmount. The preview itself stays on the device. PDF files show an honest file overview and link the user toward the existing page-count operation; rendering individual PDF pages is not yet implemented. This milestone does not add server-side image storage.
+
 ## FileShape 2.0 — editor workflow foundation
 
 The Mini App now shows a three-stage file workflow (selection, settings, result), a preflight summary of the chosen server action, and inline page-range validation before submission. Operation buttons and file replacement are disabled while a conversion is running, preventing accidental state changes during an in-flight request. Archive descriptions now accurately reflect the current ZIP listing capability. This is the first editor milestone, not a claim that every editing tool or a full preview is implemented.
