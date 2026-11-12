@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.1 — bounded internal JobManager
+
+Production HTTP conversions now dispatch subprocess work through `api/job_manager.py`: a fixed number of consumers, a bounded queue, a 50-second outer operation deadline and explicit error/cancellation propagation. The existing shared HTTP admission limit and subprocess CPU/RAM/output/time limits remain in force. Worker count stays at the configured value (default 3), with no throughput claim or increase to 10.
+
+Cancelled callers wait for subprocess cleanup before deleting their workspace. Shutdown stops admission, cancels pending/active operations, waits for their cleanup and joins consumers before closing SQLite. Repeated shutdown is idempotent; an operation exception does not kill its consumer or lose subsequent work. Operations must cooperate with cancellation; the production subprocess runner terminates/reaps its process group. This manager is local to one process, not a durable execution queue or an HTTP 202 API. Existing HTTP conversions remain compatible. Early IDs and background result downloads follow in 4.2.
+
 ## FileShape 4.0 — durable metadata for real HTTP conversions
 
 Both existing conversion endpoints now use SQLite metadata after API startup. Disabling ASGI lifespan fails conversion admission and readiness closed instead of silently falling back to memory. Opaque IDs, Telegram owner IDs, states and timestamps survive restarts; no file names, paths, contents or results are stored in SQLite. The authenticated status endpoint remains owner-only. Completed metadata does **not** mean that a result is available for a later download: results still stream in the original HTTP response and are then deleted.
