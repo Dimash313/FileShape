@@ -337,7 +337,7 @@ async def multi_image_pdf(
         raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
     except Exception:
         work.cleanup()
-        logger.exception("Multi-image PDF failed")
+        logger.error("Multi-image PDF failed")
         raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
     finally:
         slots.release()
