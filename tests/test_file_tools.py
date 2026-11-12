@@ -14,6 +14,7 @@ from services.file_tools import (
     parse_page_selection,
     pdf_page_count,
     rotate_pdf,
+    remove_pdf_pages,
 )
 
 
@@ -46,6 +47,11 @@ class FileToolsTests(unittest.TestCase):
         self.assertEqual(pdf_page_count(original), 4)
         self.assertEqual(extract_pdf_pages(original, extracted, "2-3"), 2)
         self.assertEqual(len(PdfReader(str(extracted)).pages), 2)
+        removed = self.dir / 'removed.pdf'
+        self.assertEqual(remove_pdf_pages(original, removed, '2-3'), 2)
+        self.assertEqual(pdf_page_count(removed), 2)
+        with self.assertRaises(ValueError):
+            remove_pdf_pages(original, removed, '1-4')
         self.assertEqual(rotate_pdf(original, rotated), 4)
         self.assertEqual(PdfReader(str(rotated)).pages[0].get("/Rotate"), 90)
 
