@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.5 — private job metadata foundation
+
+Adds `api/jobs.py`: a bounded in-memory registry for cryptographically random job identifiers, explicit `queued → processing → completed/failed/cancelled` transitions, owner-only lookups that hide whether another user's ID exists, terminal-entry expiry, capacity enforcement that never evicts active entries, and process-shutdown cleanup. Seven regression tests cover state transitions, isolation, TTL, capacity and invalid owners.
+
+**Scope:** This is a tested backend foundation only. The registry is **not yet connected to conversion routes or the Mini App**; no job IDs are returned to users and no job-status endpoint exists in this version. It contains no files, filenames or personal profiles, and it does not persist across restarts or recover interrupted work. Future versions must integrate request lifecycles, address multi-process ownership and implement persistent storage before promising background jobs or recovery.
+
 ## FileShape 3.4 — visible queue load (not job recovery)
 
 Adds authenticated `GET /api/v1/queue` with coarse per-process counters: configured worker capacity, workers in use, number waiting, waiting-room limit, and whether the API still accepts conversion requests. It uses existing signed Telegram Mini App authentication, shares the per-user 12-requests/minute rate limiter, and is returned with `Cache-Control: no-store`. No usernames, Telegram user IDs, filenames, or uploaded content are returned.
