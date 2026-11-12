@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.5 — malformed file regression tests
+
+Integration tests exercise the actual API subprocess worker with truncated PDFs and PNGs, damaged ZIPs, unsafe ZIP paths, invalid DOCX containers and non-UTF-8 text. Each case expects a controlled error, and selected tests verify that valid conversion still works immediately afterward. Multi-image PDF recovery is also covered. These are generated test fixtures, not an exhaustive corpus or proof that hostile documents are harmless. Fuzzing and tests against diverse real-world files remain necessary before release.
+
 ## FileShape 1.4 — concurrent request regression tests
 
 Automated ASGI tests now simulate three simultaneous conversions, verify that a fourth receives HTTP 429 while slots are occupied, and confirm processing slots are restored after successful and failed work. Tests replace the expensive worker with a deterministic stub, so they verify **admission and recovery logic**, not throughput, real conversion performance, memory consumption or production load capacity. Full stress testing on deployment-class hardware remains a release gate.
