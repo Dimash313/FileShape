@@ -13,7 +13,7 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - Combine 2–5 PDFs in the order they are sent (`/done` to finish, `/cancel` to cancel).
 
 **Images**
-- Convert JPG, PNG and WebP to JPG/PNG/WebP.
+- Convert JPG, PNG and WebP to JPG/PNG/WebP or to a one-page PDF.
 - Optimize to WebP with quality 72 (smaller output is *not* guaranteed).
 - Accept images as Telegram photos or as documents; sending as a document preserves original quality.
 
