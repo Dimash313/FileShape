@@ -2,7 +2,7 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.6)
+## Implemented (v0.7 — Mini App preview + bot v0.6)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.\n\n**Reusable results**\n- Each successfully generated file up to 20 MB includes its own action buttons. You can edit/convert that result again without downloading and re-uploading it.\n- The bot accepts actions on generated files only in the owner's private chat.\n- Outputs larger than 20 MB are sent without action buttons because the standard Telegram Bot API cannot re-download them.\n- Input file cards show filename, type and size.
 
@@ -45,6 +45,24 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - Source and result files reside in temporary folders and are deleted after processing.
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
+
+## FileShape Studio Mini App (v0.7 preview)
+
+A responsive dark-blue React + TypeScript interface lives in `miniapp/`. It includes four tabs (Home, Tools, Session History, Profile), a file picker, drag-and-drop on desktop, and **working local JPG/PNG/WebP conversion** via browser Canvas. Converted images are downloaded to the device; processing stays in the browser and history is in-memory only.
+
+**Not implemented in the Mini App yet:** server uploads, Telegram authentication verification, PDF/audio/ZIP processing, persistent history, PRO billing and BotFather Mini App registration. These operations remain available only through the existing bot once deployed. Do not describe the Mini App as a production backend-connected service.
+
+To preview the Mini App:
+
+```bash
+cd miniapp
+npm install
+npm run dev
+```
+
+For a production build: `npm run build` (output `miniapp/dist`). Host the built static assets on HTTPS, then register that HTTPS URL as a Mini App with BotFather. The Telegram Web App script is loaded in `index.html`; the UI also works in a regular browser. The Python bot is **not** automatically connected to this frontend.
+
+Before implementing server-side uploads, add server-side Telegram initData verification, authorization, request limits, private per-user job storage and automatic deletion. Never trust client-provided user IDs.
 
 ## Deploy with Docker Compose (Linux VPS)
 
