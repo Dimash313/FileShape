@@ -1,7 +1,7 @@
 """Validate handler import and basic user-facing menus without a bot token."""
 import unittest
 
-from aiogram.types import Chat, Document, Message, PhotoSize
+from aiogram.types import Audio, Chat, Document, Message, Voice
 
 from main import attachment, file_menu, size_allowed
 
@@ -11,12 +11,14 @@ class BotMenuTests(unittest.TestCase):
         pdf = file_menu("pdf")
         image = file_menu("image")
         self.assertTrue(any(button.callback_data == "pdf:merge" for row in pdf.inline_keyboard for button in row))
+        self.assertTrue(any(button.callback_data == "pdf:remove" for row in pdf.inline_keyboard for button in row))
         self.assertTrue(any(button.callback_data == "img:PDF" for row in image.inline_keyboard for button in row))
         for kind, callback in [
             ("docx", "docx:txt"),
             ("txt", "txt:docx"),
             ("archive", "zip:extract"),
             ("other", "zip:create"),
+            ("audio", "audio:mp3"),
         ]:
             with self.subTest(kind=kind):
                 menu = file_menu(kind)
@@ -28,6 +30,27 @@ class BotMenuTests(unittest.TestCase):
         self.assertTrue(size_allowed(20 * 1024 * 1024))
         self.assertFalse(size_allowed(20 * 1024 * 1024 + 1))
         self.assertFalse(size_allowed(None))
+
+    def test_audio_classification(self):
+        from datetime import datetime, timezone
+        params = {
+            "message_id": 2,
+            "date": datetime.now(timezone.utc),
+            "chat": Chat(id=1, type="private"),
+        }
+        audio_message = Message(
+            **params,
+            audio=Audio(
+                file_id="a", file_unique_id="b", duration=1,
+                file_name="track.MP3", file_size=1024,
+            ),
+        )
+        self.assertEqual(attachment(audio_message)[1:3], (".mp3", "audio"))
+        voice_message = Message(
+            **params,
+            voice=Voice(file_id="c", file_unique_id="d", duration=2, file_size=100),
+        )
+        self.assertEqual(attachment(voice_message)[1:3], (".ogg", "audio"))
 
     def test_document_classification(self):
         from datetime import datetime, timezone
