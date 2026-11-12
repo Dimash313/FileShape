@@ -2,7 +2,7 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.5)
+## Implemented (v0.6)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.\n\n**Reusable results**\n- Each successfully generated file up to 20 MB includes its own action buttons. You can edit/convert that result again without downloading and re-uploading it.\n- The bot accepts actions on generated files only in the owner's private chat.\n- Outputs larger than 20 MB are sent without action buttons because the standard Telegram Bot API cannot re-download them.\n- Input file cards show filename, type and size.
 
@@ -45,6 +45,21 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - Source and result files reside in temporary folders and are deleted after processing.
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
+
+## Deploy with Docker Compose (Linux VPS)
+
+This repository provides a container deployment template. **It does not automatically deploy or start a bot.** You need a Linux VPS with Docker Engine and the Compose plugin installed.
+
+1. Clone the repository to the VPS and enter the project directory.
+2. Create a private `.env` file on the VPS containing `BOT_TOKEN=<token from BotFather>`. Do not commit or paste your real token into GitHub.
+3. Run `docker compose up -d --build`.
+4. Check startup with `docker compose ps` and `docker compose logs --tail=100 -f fileshape`.
+5. To update: `git pull --ff-only && docker compose up -d --build`.
+6. To stop: `docker compose down`.
+
+The container uses Python 3.12 and FFmpeg, runs as a non-root user, and has a read-only root filesystem, temporary working storage, limited memory/CPU/processes, and rotating logs. The bot uses **long polling**, so no inbound web port or domain is required.
+
+**Important:** Only run **one polling instance** per bot token. The container restarts on failure, but no monitoring, backups, or managed hosting are configured. Test with private files before inviting users. The `.env` file remains on your VPS and should be restricted to the server administrator.
 
 ## Run locally
 
