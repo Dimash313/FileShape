@@ -65,7 +65,7 @@ class ConversionMatrixTests(unittest.TestCase):
         self.addCleanup(env.stop)
         self.client = TestClient(api)
         self.addCleanup(self.client.close)
-        self.headers = signed_header()
+        self.headers = signed_header(user_id=910002 + sum(self.id().encode()))
 
     def convert(self, name, payload, action, pages=""):
         return self.client.post(
