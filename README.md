@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.6 — conversion job lifecycle and owner-only lookup
+
+Single-file and multi-image conversions now register in-memory job IDs and transition through queued, processing, and terminal states. Successful responses include `X-FileShape-Job-Id` (for both JSON info and downloaded files); authenticated `GET /api/v1/jobs/{job_id}` returns the caller's job state, timestamps and opaque ID, without filenames or files. Cross-user and nonexistent IDs both return 404. The existing request rate limit applies. Job entries expire after one hour in a bounded registry.
+
+**Important:** This still uses synchronous HTTP conversions: the client receives the ID **only after success**. It is not yet a live polling API for the uploading client, does not store files, does not survive restarts and cannot resume failed or interrupted work. Future versions will add early job-ID creation and persistent worker storage only after designing safe retention and recovery.
+
 ## FileShape 3.5 — private job metadata foundation
 
 Adds `api/jobs.py`: a bounded in-memory registry for cryptographically random job identifiers, explicit `queued → processing → completed/failed/cancelled` transitions, owner-only lookups that hide whether another user's ID exists, terminal-entry expiry, capacity enforcement that never evicts active entries, and process-shutdown cleanup. Seven regression tests cover state transitions, isolation, TTL, capacity and invalid owners.
