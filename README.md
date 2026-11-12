@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.7 — actionable PDF selection feedback
+
+The Mini App displays an accessible inline message when page selection is missing, malformed, exceeds the 90-character field limit or 150 selected-page limit, or would remove every page. The same validation blocks submission and informs the preflight summary. This is client-side guidance; the server still performs authoritative PDF checks.
+
 ## FileShape 2.6 — paginated PDF page grid
 
 The PDF page-number picker displays 50 numbered buttons at a time, with previous/next navigation for documents containing more than 50 pages. Selected pages remain selected when navigating between blocks. Page navigation resets when selecting a new file or re-inspecting its page count. The 150-page selection cap and server-side checks remain in force. This is a page-number grid, not a PDF thumbnail renderer.
