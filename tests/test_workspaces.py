@@ -28,21 +28,18 @@ class WorkspaceTests(unittest.TestCase):
         self.assertTrue(path.exists())
 
     def test_old_unlocked_workspace_is_removed(self):
-        job = Workspace(prefix="fileshape_batch_")
-        path = Path(job.name)
-        # Simulate a crashed process by releasing its lock without deleting files.
-        job._lock.close()
-        job._temp = None
+        path = Path(self.temp.name) / "fileshape_batch_orphan"
+        path.mkdir()
+        (path / ".active.lock").write_bytes(b"")
         old = time.time() - STALE_SECONDS - 100
         os.utime(path, (old, old))
         self.assertEqual(cleanup_orphans(), 1)
         self.assertFalse(path.exists())
 
     def test_recent_unlocked_workspace_is_preserved(self):
-        job = Workspace(prefix="fileshape_api_")
-        path = Path(job.name)
-        job._lock.close()
-        job._temp = None
+        path = Path(self.temp.name) / "fileshape_api_recent"
+        path.mkdir()
+        (path / ".active.lock").write_bytes(b"")
         self.assertEqual(cleanup_orphans(), 0)
         self.assertTrue(path.exists())
 
