@@ -165,3 +165,19 @@ def merge_pdfs(sources: list[Path], target: Path) -> int:
         with target.open("wb") as output:
             writer.write(output)
         return total
+
+
+def remove_pdf_pages(source: Path, target: Path, pages: str) -> int:
+    """Create a copy of PDF excluding specified 1-based page numbers."""
+    with source.open("rb") as stream:
+        reader = _reader(stream)
+        exclude = set(parse_page_selection(pages, len(reader.pages)))
+        if len(exclude) == len(reader.pages):
+            raise ValueError("Нельзя удалить все страницы PDF")
+        writer = PdfWriter()
+        for index, page in enumerate(reader.pages):
+            if index not in exclude:
+                writer.add_page(page)
+        with target.open("wb") as output:
+            writer.write(output)
+        return len(reader.pages) - len(exclude)
