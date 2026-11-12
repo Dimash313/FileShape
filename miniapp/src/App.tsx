@@ -518,7 +518,7 @@ export default function App() {
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.0</span></div>
+          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.1</span></div>
         </div>
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">

@@ -23,6 +23,7 @@ from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
+from api.job_manager import JobManager, ManagerClosed, ManagerFull
 from api.observability import RequestTrace
 from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
@@ -83,6 +84,7 @@ admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
 jobs = None
 job_runtime = None
 metadata_maintenance = None
+job_manager = None
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 
@@ -147,8 +149,11 @@ async def maintain_metadata(store):
 
 @api.on_event("shutdown")
 async def stop_accepting_conversions():
-    global job_runtime, metadata_maintenance, jobs
+    global job_runtime, metadata_maintenance, jobs, job_manager
     admission.close()
+    if job_manager is not None:
+        await job_manager.close()
+        job_manager = None
     if metadata_maintenance is not None:
         metadata_maintenance.cancel()
         await asyncio.gather(metadata_maintenance, return_exceptions=True)
@@ -163,7 +168,7 @@ async def stop_accepting_conversions():
 
 @api.on_event("startup")
 async def remove_abandoned_workspaces():
-    global admission, jobs, job_runtime, metadata_maintenance
+    global admission, jobs, job_runtime, metadata_maintenance, job_manager
     if job_runtime is not None:
         raise RuntimeError("API lifecycle already started")
     runtime = JobRuntime(os.environ.get("FILESHAPE_STATE_DIR", "./state"))
@@ -174,6 +179,7 @@ async def remove_abandoned_workspaces():
         raise
     if admission.closing:
         admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
+    job_manager = JobManager(MAX_CONCURRENT_JOBS, max_pending=20)
     job_runtime = runtime
     jobs = runtime.store
     metadata_maintenance = asyncio.create_task(maintain_metadata(jobs))
@@ -288,6 +294,21 @@ async def session(user_id: int = Depends(authenticated_user)):
     return {"ok": True, "user_id": user_id, "max_upload_bytes": MAX_INPUT_BYTES}
 
 
+async def run_managed_worker(payload):
+    # Isolated handler tests inject their own registry without app lifespan.
+    # Production admission fails closed unless lifespan initialized SQLite.
+    if job_manager is None:
+        return await run_worker(payload)
+    try:
+        return await job_manager.run(lambda: run_worker(payload))
+    except ManagerFull:
+        raise HTTPException(status_code=429, detail="Очередь обработчиков заполнена", headers={"Retry-After": "15"}) from None
+    except ManagerClosed:
+        raise HTTPException(status_code=503, detail="Обработчики останавливаются", headers={"Retry-After": "10"}) from None
+    except TimeoutError:
+        raise WorkerTimeout("Обработка заняла слишком много времени") from None
+
+
 def _info_action(source: Path, action: str) -> dict | None:
     if action == "pdf:info":
         return {"info": {"pages": pdf_page_count(source)}}
@@ -366,7 +387,7 @@ async def convert(
                     output.write(chunk)
             if read_bytes == 0:
                 raise HTTPException(status_code=422, detail="Пустой файл")
-            result = await run_worker({
+            result = await run_managed_worker({
                 "operation": "single", "work": work.name,
                 "suffix": suffix, "action": action, "pages": pages,
             })
@@ -452,7 +473,7 @@ async def multi_image_pdf(
                     raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
                 paths.append(path)
 
-            await run_worker({
+            await run_managed_worker({
                 "operation": "batch", "work": work.name,
                 "suffixes": [file_kind(upload.filename or "")[1] for upload in uploads],
             })
