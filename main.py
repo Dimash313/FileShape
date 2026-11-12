@@ -160,11 +160,14 @@ async def send_result(message: Message, path: Path, caption: str = "✅ Гото
     if path.stat().st_size > MAX_OUTPUT_BYTES:
         raise ValueError("Result is too large to send")
     kind = classify_extension(path.suffix)
-    # The bot's result can be used as the next input without downloading/reuploading.
+    can_reprocess = path.stat().st_size <= MAX_BYTES
+    # Telegram's standard Bot API cannot download a bot file above 20 MB.
     return await message.answer_document(
         FSInputFile(path),
-        caption="FileShape · " + caption,
-        reply_markup=file_menu(kind),
+        caption="FileShape · " + caption + (
+            "" if can_reprocess else "\\n⚠️ Результат больше 20 МБ: повторная обработка недоступна."
+        ),
+        reply_markup=file_menu(kind) if can_reprocess else None,
     )
 
 
