@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.7 — cancellation-safe temporary file cleanup
+
+Both single-file and multi-image API handlers now explicitly clean their temporary directories when an asyncio request task is cancelled. Regression tests cancel an in-progress worker and assert that temporary files are removed and all three API processing slots are available again. This covers application-level task cancellation; a hard OS crash still requires host-level temporary-storage housekeeping.
+
 ## FileShape 1.6 — descendant process cleanup
 
 On POSIX, conversion workers run in their own process session. When a request completes, times out or is cancelled, the API signals the worker's entire process group, preventing lingering FFmpeg grandchildren. Linux integration tests check that a timed-out worker's spawned grandchild no longer runs. Non-POSIX platforms still terminate the direct worker only. This is process lifecycle hardening, not a complete OS sandbox.
