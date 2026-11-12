@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.6 — paginated PDF page grid
+
+The PDF page-number picker displays 50 numbered buttons at a time, with previous/next navigation for documents containing more than 50 pages. Selected pages remain selected when navigating between blocks. Page navigation resets when selecting a new file or re-inspecting its page count. The 150-page selection cap and server-side checks remain in force. This is a page-number grid, not a PDF thumbnail renderer.
+
 ## FileShape 2.5 — bulk PDF page selection and safety
 
 After PDF page-count inspection, users can select all pages (for extraction only), invert the selection, or clear it. The interface now enforces the server's maximum of 150 selected pages and prevents selecting all pages for removal. It also fixes a page-range splitting bug in the 2.4 grid, so ranges like 1-3 correctly mark each page. Server-side limits remain authoritative.
