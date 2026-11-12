@@ -9,6 +9,8 @@ from unittest.mock import patch
 from fastapi import UploadFile
 from PIL import Image
 
+from api.admission import AdmissionQueue
+from api import server
 from api.server import convert, multi_image_pdf, slots
 
 
@@ -19,6 +21,11 @@ def image_upload(name="picture.png"):
 
 
 class CancellationCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        queue = patch.object(server, "admission", AdmissionQueue())
+        queue.start()
+        self.addCleanup(queue.stop)
+
     async def exercise_cancellation(self, handler):
         entered = asyncio.Event()
         paths = []
