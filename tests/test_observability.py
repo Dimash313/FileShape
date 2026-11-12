@@ -1,12 +1,8 @@
 """Request correlation is stable per response and excludes private data."""
-import logging
-import re
 import unittest
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from api.observability import ROUTES
 from api.server import api
 
 
@@ -45,16 +41,13 @@ class ObservabilityTests(unittest.TestCase):
         self.assertNotIn("private-name-123", "\n".join(captured.output))
 
     def test_oversized_upload_receives_request_id(self):
-        with patch("api.ingress.UploadIngressGuard._reject") as rejected:
-            # Use the actual middleware, no need to send a large payload.
-            # The declared size is enough for the ingress guard to reject.
-            rejected.side_effect = None
-            self.client.post(
-                "/api/v1/convert",
-                headers={"content-length": "999999999"},
-                content=b"x",
-            )
-            self.assertTrue(rejected.called)
+        response = self.client.post(
+            "/api/v1/convert",
+            headers={"content-length": "999999999"},
+            content=b"x",
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertRegex(response.headers["x-request-id"], r"^[a-f0-9]{16}$")
 
 
 if __name__ == "__main__":
