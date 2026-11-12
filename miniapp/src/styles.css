@@ -79,3 +79,7 @@
 .pdf-grid-navigation span{font-size:11px;color:#a9c4e8;white-space:nowrap}
 .pdf-grid-navigation button{min-height:36px;padding:7px 12px;border:1px solid #42618a;background:#193452;border-radius:9px;color:#d5e7ff;font-size:12px;font-weight:650}
 .pdf-grid-navigation button:disabled{opacity:.4}
+
+/* 2.7: actionable, accessible PDF selection errors */
+.pdf-inline-error{display:flex;align-items:flex-start;gap:8px;margin:10px 0;padding:10px 12px;border:1px solid #a65b63;background:#39212b;border-radius:10px;color:#ffd6d9;font-size:12px;line-height:1.5}
+.pdf-inline-error svg{flex-shrink:0;margin-top:1px}
