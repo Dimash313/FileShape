@@ -19,6 +19,7 @@ from starlette.background import BackgroundTask
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
+from api.jobs import JobCapacityExceeded, JobNotFound, JobRegistry
 from api.observability import RequestTrace
 from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
@@ -76,6 +77,7 @@ def configured_worker_capacity() -> int:
 MAX_CONCURRENT_JOBS = configured_worker_capacity()
 slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
+jobs = JobRegistry()
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 
@@ -132,6 +134,7 @@ async def enforce_rate_limit(user_id: int) -> None:
 @api.on_event("shutdown")
 async def stop_accepting_conversions():
     admission.close()
+    jobs.clear()
 
 
 @api.on_event("startup")
@@ -179,6 +182,23 @@ def queue_snapshot() -> dict:
 async def queue_status(user_id: int = Depends(authenticated_user)):
     await enforce_rate_limit(user_id)
     return JSONResponse(queue_snapshot(), headers={"Cache-Control": "no-store"})
+
+
+@api.get("/api/v1/jobs/{job_id}")
+async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
+    await enforce_rate_limit(user_id)
+    try:
+        item = jobs.get(job_id, user_id)
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Задание не найдено") from None
+    return JSONResponse(item.public(), headers={"Cache-Control": "no-store"})
+
+
+def new_job(user_id: int) -> str:
+    try:
+        return jobs.create(user_id).job_id
+    except JobCapacityExceeded:
+        raise HTTPException(status_code=503, detail="Слишком много активных заданий. Повтори позже.", headers={"Retry-After": "15"}) from None
 
 
 @api.get("/api/v1/session")
@@ -247,17 +267,22 @@ async def convert(
     if len(pages) > 90:
         raise HTTPException(status_code=422, detail="Слишком длинный диапазон страниц")
     await enforce_rate_limit(user_id)
+    job_id = new_job(user_id)
     try:
         await admission.acquire(slots)
+        jobs.transition(job_id, user_id, "processing")
     except QueueClosed:
+        jobs.transition(job_id, user_id, "failed")
         raise HTTPException(status_code=503, detail="Сервер перезапускается. Повтори запрос позже.", headers={"Retry-After": "10"}) from None
     except QueueFull:
+        jobs.transition(job_id, user_id, "failed")
         raise HTTPException(
             status_code=429,
             detail="Очередь заполнена. Попробуй повторить позже.",
             headers={"Retry-After": "15"},
         ) from None
     except QueueTimeout:
+        jobs.transition(job_id, user_id, "failed")
         raise HTTPException(
             status_code=503,
             detail="Слишком долгое ожидание. Попробуй ещё раз.",
@@ -285,7 +310,8 @@ async def convert(
         })
         if "info" in result:
             work.cleanup()
-            return JSONResponse(result["info"], headers={"Cache-Control": "no-store"})
+            jobs.transition(job_id, user_id, "completed")
+            return JSONResponse(result["info"], headers={"Cache-Control": "no-store", "X-FileShape-Job-Id": job_id})
 
         target = Path(work.name) / result["filename"]
         if not target.is_file() or target.stat().st_size == 0:
@@ -293,11 +319,12 @@ async def convert(
         if target.stat().st_size > MAX_RESULT_BYTES:
             raise HTTPException(status_code=413, detail="Результат слишком большой")
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        jobs.transition(job_id, user_id, "completed")
         return FileResponse(
             target,
             filename=target.name,
             media_type=content_type,
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
             background=BackgroundTask(work.cleanup),
         )
     except asyncio.CancelledError:
@@ -319,6 +346,8 @@ async def convert(
         logger.error("FileShape API processing failed")
         raise HTTPException(status_code=422, detail="Не удалось прочитать или обработать файл") from None
     finally:
+        if jobs.get(job_id, user_id).state == "processing":
+            jobs.transition(job_id, user_id, "failed")
         slots.release()
         await upload.close()
 
@@ -336,15 +365,22 @@ async def multi_image_pdf(
         if kind != "image":
             raise HTTPException(status_code=422, detail="Поддерживаются только JPG, PNG и WebP")
     await enforce_rate_limit(user_id)
+    job_id = new_job(user_id)
     try:
         await admission.acquire(slots)
+        jobs.transition(job_id, user_id, "processing")
+    except QueueClosed:
+        jobs.transition(job_id, user_id, "failed")
+        raise HTTPException(status_code=503, detail="Сервер перезапускается. Повтори запрос позже.", headers={"Retry-After": "10"}) from None
     except QueueFull:
+        jobs.transition(job_id, user_id, "failed")
         raise HTTPException(
             status_code=429,
             detail="Очередь заполнена. Попробуй повторить позже.",
             headers={"Retry-After": "15"},
         ) from None
     except QueueTimeout:
+        jobs.transition(job_id, user_id, "failed")
         raise HTTPException(
             status_code=503,
             detail="Слишком долгое ожидание. Попробуй ещё раз.",
@@ -382,11 +418,12 @@ async def multi_image_pdf(
             raise ValueError("Не удалось создать PDF")
         if target.stat().st_size > MAX_RESULT_BYTES:
             raise HTTPException(status_code=413, detail="Результат слишком большой")
+        jobs.transition(job_id, user_id, "completed")
         return FileResponse(
             target,
             filename=target.name,
             media_type="application/pdf",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
             background=BackgroundTask(work.cleanup),
         )
     except asyncio.CancelledError:
@@ -408,6 +445,8 @@ async def multi_image_pdf(
         logger.error("Multi-image PDF failed")
         raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
     finally:
+        if jobs.get(job_id, user_id).state == "processing":
+            jobs.transition(job_id, user_id, "failed")
         slots.release()
         for upload in uploads:
             await upload.close()
