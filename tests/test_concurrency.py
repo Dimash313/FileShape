@@ -4,6 +4,7 @@ No external services are used. The expensive worker is replaced with a
 controllable async stub so overload behavior is deterministic.
 """
 import asyncio
+from collections import defaultdict, deque
 import hashlib
 import hmac
 import json
@@ -50,7 +51,7 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         queue = patch.object(server, 'admission', AdmissionQueue(max_waiters=1, wait_seconds=3))
         queue.start()
         self.addCleanup(queue.stop)
-        limits = patch.object(server, 'recent_requests', __import__('collections').defaultdict(__import__('collections').deque))
+        limits = patch.object(server, 'recent_requests', defaultdict(deque))
         limits.start()
         self.addCleanup(limits.stop)
         self.environment = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
