@@ -181,12 +181,12 @@ async def start(message: Message, state: FSMContext):
 @router.message(Command("help", "tools"))
 async def help_message(message: Message):
     await message.answer(
-        "📁 FileShape · Инструменты\\n\\n"
-        "📄 PDF — объединить, извлечь, удалить страницы, повернуть\\n"
-        "🖼 Фото — JPG / PNG / WebP / PDF\\n"
-        "🎧 Аудио — MP3 / OGG / WAV (до 10 минут)\\n"
-        "📝 Документы — DOCX ↔ TXT\\n"
-        "📦 ZIP — собрать, просмотреть, распаковать\\n\\n"
+        "📁 FileShape · Инструменты\n\n"
+        "📄 PDF — объединить, извлечь, удалить страницы, повернуть\n"
+        "🖼 Фото — JPG / PNG / WebP / PDF\n"
+        "🎧 Аудио — MP3 / OGG / WAV (до 10 минут)\n"
+        "📝 Документы — DOCX ↔ TXT\n"
+        "📦 ZIP — собрать, просмотреть, распаковать\n\n"
         "Просто отправь файл в этот чат. Отмена: /cancel."
     )
 
