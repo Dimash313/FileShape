@@ -134,6 +134,19 @@ def attachment(message: Message):
     return None, "", None, None
 
 
+def received_filename(message: Message) -> str:
+    if message.document:
+        return message.document.file_name or "file.bin"
+    if message.voice:
+        return "voice.ogg"
+    if message.audio:
+        extension = attachment(message)[1]
+        return message.audio.file_name or ("audio" + extension)
+    if message.photo:
+        return "photo.jpg"
+    return "file.bin"
+
+
 def size_allowed(size: int | None) -> bool:
     return size is not None and 0 < size <= MAX_BYTES
 
@@ -162,6 +175,19 @@ async def start(message: Message, state: FSMContext):
         "Пришли PDF, DOCX, TXT, ZIP, фото или аудио.\n"
         "Другие файлы можно собрать в ZIP.\n"
         "Файлы до 20 МБ. Для выхода из операции: /cancel."
+    )
+
+
+@router.message(Command("help", "tools"))
+async def help_message(message: Message):
+    await message.answer(
+        "📁 FileShape · Инструменты\\n\\n"
+        "📄 PDF — объединить, извлечь, удалить страницы, повернуть\\n"
+        "🖼 Фото — JPG / PNG / WebP / PDF\\n"
+        "🎧 Аудио — MP3 / OGG / WAV (до 10 минут)\\n"
+        "📝 Документы — DOCX ↔ TXT\\n"
+        "📦 ZIP — собрать, просмотреть, распаковать\\n\\n"
+        "Просто отправь файл в этот чат. Отмена: /cancel."
     )
 
 
@@ -313,7 +339,7 @@ async def cancel_zip_button(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("✖️ Создание ZIP отменено.")
 
 
-@router.message(ZipState.collecting, F.document | F.photo)
+@router.message(ZipState.collecting, F.document | F.photo | F.audio | F.voice)
 async def collect_zip_file(message: Message, state: FSMContext):
     file, suffix, category, size = attachment(message)
     if not file or not size_allowed(size):
@@ -330,7 +356,7 @@ async def collect_zip_file(message: Message, state: FSMContext):
     items.append({
         "file_id": file.file_id,
         "size": size,
-        "name": getattr(file, "file_name", None) or f"photo_{len(items)+1}.jpg",
+        "name": received_filename(message),
     })
     await state.update_data(zip_files=items)
     await message.answer(
@@ -447,7 +473,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await callback.answer()
     if action == "zip:create":
         await state.set_state(ZipState.collecting)
-        suggested_name = getattr(file, "file_name", None) or "photo.jpg"
+        suggested_name = received_filename(origin)
         await state.update_data(zip_files=[{
             "file_id": file.file_id, "size": size, "name": suggested_name,
         }])
