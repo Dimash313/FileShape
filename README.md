@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.9 — privacy-safe failure logging
+
+Unexpected API and request-middleware failures now log only generic operational markers rather than exception tracebacks, which could expose sensitive filenames or uploaded document details. Added a regression test for private exception messages. The client still receives a generic error and malformed PDFs remain rejected by existing worker validation. This is pre-3.0 server hardening, not a live deployment.
+
 ## FileShape 2.8 — PDF selection regression tests
 
 Added regression tests for page-range syntax, duplicate pages, ordering, 150-page selection limits, 250-page document limits, extract/remove output integrity, and rejection of invalid page selections through the authenticated API. This release focuses on automated safety coverage rather than new UI controls.
