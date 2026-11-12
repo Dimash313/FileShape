@@ -1,18 +1,20 @@
-"""Bounded in-process waiting for conversion workers.
+"""Bounded, shutdown-aware in-process admission for conversion workers.
 
-Waiting requests retain their HTTP connection; this is NOT a persistent job
-queue. The asyncio semaphore supplies FIFO admission to available workers.
-All state belongs to one API process and disappears on restart.
+The waiting room is not durable and does not survive process restarts.
 """
 import asyncio
 
 
 class QueueFull(Exception):
-    """The in-process waiting room has no free spaces."""
+    """The waiting room has no free spaces."""
 
 
 class QueueTimeout(Exception):
-    """The request waited too long for a processing slot."""
+    """A request waited too long for a worker slot."""
+
+
+class QueueClosed(Exception):
+    """The server is shutting down and cannot accept more work."""
 
 
 class AdmissionQueue:
@@ -22,23 +24,54 @@ class AdmissionQueue:
         self.max_waiters = max_waiters
         self.wait_seconds = wait_seconds
         self.waiting = 0
+        self._closing = asyncio.Event()
+
+    def close(self) -> None:
+        """Reject new admissions and wake waiting requests promptly."""
+        self._closing.set()
+
+    @property
+    def closing(self) -> bool:
+        return self._closing.is_set()
 
     async def acquire(self, semaphore: asyncio.Semaphore) -> None:
-        """Acquire one worker slot, or raise without leaking queue capacity.
-
-        All calls run on a single asyncio event loop per API process. State
-        changes before and after awaits are atomic within that loop.
-        """
+        if self.closing:
+            raise QueueClosed()
         queued = semaphore.locked()
         if queued:
             if self.waiting >= self.max_waiters:
                 raise QueueFull()
             self.waiting += 1
+        acquire_task = asyncio.create_task(semaphore.acquire())
+        closing_task = asyncio.create_task(self._closing.wait())
+        acquired = False
         try:
-            try:
-                await asyncio.wait_for(semaphore.acquire(), self.wait_seconds)
-            except asyncio.TimeoutError:
-                raise QueueTimeout() from None
+            done, _ = await asyncio.wait(
+                (acquire_task, closing_task),
+                timeout=self.wait_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if acquire_task in done:
+                acquired = acquire_task.result()
+            if self.closing or closing_task in done:
+                raise QueueClosed()
+            if acquire_task not in done:
+                raise QueueTimeout()
+            # The caller owns the slot after successful return.
+            acquired = False
         finally:
+            # On cancellation, timeout or shutdown the semaphore permit must
+            # never leak, including a simultaneous close/acquire race.
+            for task in (acquire_task, closing_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(acquire_task, closing_task, return_exceptions=True)
+            if not acquired and acquire_task.done() and not acquire_task.cancelled():
+                try:
+                    acquired = acquire_task.result() is True
+                except Exception:
+                    pass
+            if acquired:
+                semaphore.release()
             if queued:
                 self.waiting -= 1
