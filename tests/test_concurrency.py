@@ -1,0 +1,108 @@
+"""Real ASGI concurrency tests for FileShape admission and slot recovery.
+
+No external services are used. The expensive worker is replaced with a
+controllable async stub so overload behavior is deterministic.
+"""
+import asyncio
+from io import BytesIO
+import os
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+import httpx
+from PIL import Image
+
+from api.server import api, slots
+from tests.test_api import TOKEN, signed_init_data
+
+
+def png_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (8, 8), "blue").save(output, format="PNG")
+    return output.getvalue()
+
+
+class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.environment = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api),
+            base_url="http://fileshape.test",
+            timeout=8,
+        )
+        self.addAsyncCleanup(self.client.aclose)
+        self.headers = {"X-Telegram-Init-Data": signed_init_data(user_id=987654321)}
+        self.image = png_bytes()
+
+    async def submit(self):
+        return await self.client.post(
+            "/api/v1/convert",
+            headers=self.headers,
+            data={"action": "img:JPEG"},
+            files={"upload": ("photo.png", self.image, "image/png")},
+        )
+
+    async def test_fourth_request_rejected_while_three_are_processing(self):
+        entered = 0
+        peak = 0
+        active = 0
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_worker(payload):
+            nonlocal entered, peak, active
+            entered += 1
+            active += 1
+            peak = max(peak, active)
+            if entered == 3:
+                started.set()
+            try:
+                await release.wait()
+                target = Path(payload["work"]) / "converted.jpg"
+                target.write_bytes(b"jpeg-test-output")
+                return {"ok": True, "filename": target.name}
+            finally:
+                active -= 1
+
+        with patch("api.server.run_worker", side_effect=blocked_worker):
+            tasks = [asyncio.create_task(self.submit()) for _ in range(3)]
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                fourth = await self.submit()
+                self.assertEqual(fourth.status_code, 429, fourth.text)
+                self.assertEqual(entered, 3)
+                self.assertEqual(peak, 3)
+            finally:
+                release.set()
+                responses = await asyncio.gather(*tasks)
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        self.assertEqual(active, 0)
+        self.assertEqual(slots._value, 3)
+
+    async def test_failed_worker_releases_slot(self):
+        async def failed_worker(payload):
+            raise ValueError("invalid document")
+
+        with patch("api.server.run_worker", side_effect=failed_worker):
+            response = await self.submit()
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(slots._value, 3)
+
+    async def test_subsequent_request_succeeds_after_failure(self):
+        async def good_worker(payload):
+            target = Path(payload["work"]) / "converted.jpg"
+            target.write_bytes(b"jpeg-test-output")
+            return {"ok": True, "filename": target.name}
+
+        with patch("api.server.run_worker", side_effect=ValueError("bad file")):
+            self.assertEqual((await self.submit()).status_code, 422)
+        with patch("api.server.run_worker", side_effect=good_worker):
+            self.assertEqual((await self.submit()).status_code, 200)
+        self.assertEqual(slots._value, 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
