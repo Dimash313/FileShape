@@ -46,33 +46,82 @@ function friendlyInfo(action: string, info: Record<string, unknown>): string {
   return 'Информация получена.';
 }
 
-export async function runServerAction(file: File, action: string, pages: string): Promise<ServerResult> {
-  const raw = telegramInitData();
-  if (!raw) throw new Error('Для серверных инструментов открой FileShape через Telegram.');
+
+export type UploadProgress = { stage: 'upload' | 'processing'; percent: number | null };
+export type ProgressCallback = (progress: UploadProgress) => void;
+
+async function postFiles(
+  endpoint: string,
+  form: FormData,
+  onProgress?: ProgressCallback,
+): Promise<{ blob: Blob; contentType: string }> {
+  const signed = telegramInitData();
+  if (!signed) throw new Error('Для серверных инструментов открой FileShape через Telegram.');
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', endpoint);
+    xhr.timeout = 180_000;
+    xhr.responseType = 'blob';
+    xhr.setRequestHeader('X-Telegram-Init-Data', signed);
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress?.({ stage: 'upload', percent: Math.min(100, Math.round(100 * event.loaded / event.total)) });
+      } else {
+        onProgress?.({ stage: 'upload', percent: null });
+      }
+    };
+    xhr.upload.onload = () => onProgress?.({ stage: 'processing', percent: null });
+    xhr.onerror = () => reject(new Error('Не удалось соединиться с сервером.'));
+    xhr.ontimeout = () => reject(new Error('Сервер не ответил за отведённое время.'));
+    xhr.onabort = () => reject(new Error('Запрос отменён.'));
+    xhr.onload = async () => {
+      const blob = xhr.response as Blob;
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let detail = 'Сервер временно недоступен.';
+        try {
+          const data = JSON.parse(await blob.text()) as { detail?: unknown };
+          if (typeof data.detail === 'string') detail = data.detail;
+        } catch { /* Fallback error message above */ }
+        reject(new Error(detail));
+        return;
+      }
+      resolve({ blob, contentType: xhr.getResponseHeader('Content-Type') ?? '' });
+    };
+    onProgress?.({ stage: 'upload', percent: null });
+    xhr.send(form);
+  });
+}
+
+export async function runServerAction(
+  file: File, action: string, pages: string, onProgress?: ProgressCallback,
+): Promise<ServerResult> {
   const data = new FormData();
   data.append('upload', file, file.name);
   data.append('action', action);
   if (pages) data.append('pages', pages);
-  // Relative URL: frontend and API must be served under one HTTPS origin.
-  const response = await fetch('/api/v1/convert', {
-    method: 'POST',
-    headers: { 'X-Telegram-Init-Data': raw },
-    body: data,
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({})) as { detail?: string };
-    throw new Error(typeof error.detail === 'string' ? error.detail : 'Сервер временно недоступен.');
-  }
-  if (response.headers.get('content-type')?.includes('application/json')) {
-    const body = await response.json() as { info: Record<string, unknown> };
+  const { blob, contentType } = await postFiles('/api/v1/convert', data, onProgress);
+  if (contentType.includes('application/json')) {
+    const body = JSON.parse(await blob.text()) as { info: Record<string, unknown> };
     return { type: 'info', text: friendlyInfo(action, body.info) };
   }
-  const blob = await response.blob();
   const extension = outputExtension[action];
   if (!extension || blob.size === 0) throw new Error('Сервер вернул пустой или неожиданный файл.');
   const base = file.name.replace(/\.[^.]+$/, '').slice(0, 70) || 'file';
-  return { type: 'file', blob, name: `${base}_fileshape.${extension}` };
+  return { type: 'file', blob, name: base + '_fileshape.' + extension };
+}
+
+export async function runMultiImagePdf(files: File[], onProgress?: ProgressCallback): Promise<ServerResult> {
+  if (files.length < 2 || files.length > 8) throw new Error('Выбери от 2 до 8 фотографий.');
+  if (files.reduce((total, file) => total + file.size, 0) > 20 * 1024 * 1024) {
+    throw new Error('Общий размер фотографий не должен превышать 20 МБ.');
+  }
+  const form = new FormData();
+  files.forEach(file => form.append('uploads', file, file.name));
+  const { blob, contentType } = await postFiles('/api/v1/images/pdf', form, onProgress);
+  if (!contentType.includes('application/pdf') || blob.size === 0) {
+    throw new Error('Сервер не вернул PDF.');
+  }
+  return { type: 'file', blob, name: 'fileshape_photos.pdf' };
 }
 
 export function downloadBlob(blob: Blob, name: string): void {
