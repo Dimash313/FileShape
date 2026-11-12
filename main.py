@@ -231,6 +231,93 @@ async def merge_hint(message: Message):
     await message.answer("Пришли следующий PDF документом, либо /done или /cancel.")
 
 
+async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext):
+    if await state.get_state() != ZipState.collecting.state:
+        await message.answer("Сначала выбери «Собрать ZIP» у файла.")
+        return
+    data = await state.get_data()
+    items = data.get("zip_files", [])
+    if len(items) < 2:
+        await message.answer("Добавь ещё один файл, затем нажми «Готово».")
+        return
+    await state.clear()
+    status = await message.answer("⏳ Создаю ZIP…")
+    try:
+        async with processing_slots:
+            with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
+                folder = Path(directory)
+                inputs = []
+                for index, item in enumerate(items):
+                    path = folder / f"item_{index}"
+                    await bot.download(item["file_id"], destination=path)
+                    check_download(path)
+                    inputs.append((path, item["name"]))
+                target = folder / "fileshape.zip"
+                await asyncio.to_thread(make_zip, inputs, target)
+                await send_result(message, target, f"✅ ZIP из {len(items)} файлов · FileShape")
+    except ValueError as error:
+        await message.answer(f"Не удалось собрать ZIP: {error}.")
+    except Exception:
+        logger.exception("ZIP creation failed")
+        await message.answer("Не удалось собрать ZIP. Попробуй файлы поменьше.")
+    finally:
+        await remove_status(status)
+
+
+@router.message(ZipState.collecting, Command("done"))
+async def done_zip_command(message: Message, bot: Bot, state: FSMContext):
+    await run_zip_bundle(message, bot, state)
+
+
+@router.callback_query(F.data == "bundle:done")
+async def done_zip_button(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    await callback.answer()
+    if isinstance(callback.message, Message):
+        await run_zip_bundle(callback.message, bot, state)
+
+
+@router.callback_query(F.data == "bundle:cancel")
+async def cancel_zip_button(callback: CallbackQuery, state: FSMContext):
+    if await state.get_state() != ZipState.collecting.state:
+        await callback.answer("Эта операция уже завершена.", show_alert=True)
+        return
+    await state.clear()
+    await callback.answer("Отменено")
+    if isinstance(callback.message, Message):
+        await callback.message.answer("✖️ Создание ZIP отменено.")
+
+
+@router.message(ZipState.collecting, F.document | F.photo)
+async def collect_zip_file(message: Message, state: FSMContext):
+    file, suffix, category, size = attachment(message)
+    if not file or not size_allowed(size):
+        await message.answer("Пришли файл до 20 МБ.")
+        return
+    data = await state.get_data()
+    items = data.get("zip_files", [])
+    if len(items) >= MAX_BUNDLE_FILES:
+        await message.answer("Максимум 5 файлов. Нажми «Готово».")
+        return
+    if sum(item["size"] for item in items) + size > MAX_ZIP_BUNDLE_BYTES:
+        await message.answer("Суммарный лимит — 60 МБ. Выбери файл поменьше.")
+        return
+    items.append({
+        "file_id": file.file_id,
+        "size": size,
+        "name": getattr(file, "file_name", None) or f"photo_{len(items)+1}.jpg",
+    })
+    await state.update_data(zip_files=items)
+    await message.answer(
+        f"✅ Добавлено файлов: {len(items)}/{MAX_BUNDLE_FILES}.",
+        reply_markup=buttons([[("✅ Готово", "bundle:done"), ("✖️ Отмена", "bundle:cancel")]]),
+    )
+
+
+@router.message(ZipState.collecting)
+async def zip_hint(message: Message):
+    await message.answer("Пришли следующий файл или нажми «Готово». Отмена: /cancel.")
+
+
 @router.message(ExtractState.waiting_for_pages)
 async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
     spec = (message.text or "").strip()
