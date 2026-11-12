@@ -15,6 +15,8 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
+RUN mkdir -m 0700 /app/state && chown fileshape:fileshape /app/state
+
 COPY --chown=fileshape:fileshape main.py config.py ./
 COPY --chown=fileshape:fileshape services ./services
 COPY --chown=fileshape:fileshape api ./api

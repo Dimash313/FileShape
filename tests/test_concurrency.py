@@ -19,6 +19,7 @@ from unittest.mock import patch
 import httpx
 from PIL import Image
 
+from api.jobs import JobRegistry
 from api.admission import AdmissionQueue
 from api.server import api
 from api import server
@@ -44,6 +45,9 @@ def png_bytes() -> bytes:
 
 class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        registry = patch.object(server, "jobs", JobRegistry())
+        registry.start()
+        self.addCleanup(registry.stop)
         # A fresh semaphore is required for each IsolatedAsyncioTestCase event loop.
         capacity = patch.object(server, 'slots', asyncio.Semaphore(3))
         capacity.start()

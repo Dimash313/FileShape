@@ -28,6 +28,10 @@ services:
     init: true
     env_file:
       - .env
+    environment:
+      FILESHAPE_STATE_DIR: /app/state
+    volumes:
+      - job-metadata:/app/state
     ports:
       - "127.0.0.1:8000:8000"
     read_only: true
@@ -45,3 +49,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  job-metadata:

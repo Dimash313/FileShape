@@ -4,6 +4,8 @@ Run one API worker behind an HTTPS reverse proxy. No user files are persisted.
 """
 import asyncio
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
+import sqlite3
 import logging
 import mimetypes
 import os
@@ -19,7 +21,8 @@ from starlette.background import BackgroundTask
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
-from api.jobs import JobCapacityExceeded, JobNotFound, JobRegistry
+from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
+from api.job_runtime import JobRuntime
 from api.observability import RequestTrace
 from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
@@ -77,7 +80,9 @@ def configured_worker_capacity() -> int:
 MAX_CONCURRENT_JOBS = configured_worker_capacity()
 slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
-jobs = JobRegistry()
+jobs = None
+job_runtime = None
+metadata_maintenance = None
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 
@@ -131,21 +136,47 @@ async def enforce_rate_limit(user_id: int) -> None:
                     del recent_requests[key]
 
 
+async def maintain_metadata(store):
+    while True:
+        await asyncio.sleep(60)
+        try:
+            store.prune_terminal()
+        except sqlite3.Error:
+            logger.error("Job metadata maintenance failed")
+
+
 @api.on_event("shutdown")
 async def stop_accepting_conversions():
+    global job_runtime, metadata_maintenance, jobs
     admission.close()
-    jobs.clear()
+    if metadata_maintenance is not None:
+        metadata_maintenance.cancel()
+        await asyncio.gather(metadata_maintenance, return_exceptions=True)
+        metadata_maintenance = None
+    if job_runtime is not None:
+        job_runtime.close()
+        job_runtime = None
+        jobs = None
+    else:
+        jobs = None
 
 
 @api.on_event("startup")
 async def remove_abandoned_workspaces():
-    # Each application lifecycle needs an open waiting room. A previous
-    # graceful shutdown must not poison a subsequent startup in the process.
-    global admission
+    global admission, jobs, job_runtime, metadata_maintenance
+    if job_runtime is not None:
+        raise RuntimeError("API lifecycle already started")
+    runtime = JobRuntime(os.environ.get("FILESHAPE_STATE_DIR", "./state"))
+    try:
+        await asyncio.to_thread(cleanup_orphans)
+    except BaseException:
+        runtime.close()
+        raise
     if admission.closing:
         admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
-    # Only workspaces older than one hour and without a held lock.
-    await asyncio.to_thread(cleanup_orphans)
+    job_runtime = runtime
+    jobs = runtime.store
+    metadata_maintenance = asyncio.create_task(maintain_metadata(jobs))
 
 
 @api.get("/health")
@@ -156,6 +187,9 @@ async def health():
 @api.get("/ready")
 async def ready():
     result = await asyncio.to_thread(readiness_status)
+    result["checks"]["job_metadata"] = job_runtime is not None
+    if job_runtime is None:
+        result["status"] = "unavailable"
     return JSONResponse(
         result,
         status_code=200 if result["status"] == "ready" else 503,
@@ -187,18 +221,66 @@ async def queue_status(user_id: int = Depends(authenticated_user)):
 @api.get("/api/v1/jobs/{job_id}")
 async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
     await enforce_rate_limit(user_id)
+    if jobs is None:
+        raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
         item = jobs.get(job_id, user_id)
     except JobNotFound:
         raise HTTPException(status_code=404, detail="Задание не найдено") from None
+    except sqlite3.Error:
+        raise HTTPException(status_code=503, detail="Хранилище заданий временно недоступно") from None
     return JSONResponse(item.public(), headers={"Cache-Control": "no-store"})
 
 
 def new_job(user_id: int) -> str:
+    if jobs is None:
+        raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
         return jobs.create(user_id).job_id
     except JobCapacityExceeded:
         raise HTTPException(status_code=503, detail="Слишком много активных заданий. Повтори позже.", headers={"Retry-After": "15"}) from None
+
+
+@asynccontextmanager
+async def conversion_job(user_id, uploads):
+    job_id = None
+    acquired = False
+    try:
+        job_id = new_job(user_id)
+        await admission.acquire(slots)
+        acquired = True
+        jobs.transition(job_id, user_id, "processing")
+        yield job_id
+    except asyncio.CancelledError:
+        if job_id is not None:
+            try:
+                if jobs.get(job_id, user_id).state in {"queued", "processing"}:
+                    jobs.transition(job_id, user_id, "cancelled")
+            except (sqlite3.Error, JobNotFound, JobStateError):
+                logger.error("Job cancellation metadata update failed")
+        raise
+    except QueueClosed:
+        raise HTTPException(status_code=503, detail="Сервер перезапускается. Повтори запрос позже.", headers={"Retry-After": "10"}) from None
+    except QueueFull:
+        raise HTTPException(status_code=429, detail="Очередь заполнена. Попробуй повторить позже.", headers={"Retry-After": "15"}) from None
+    except QueueTimeout:
+        raise HTTPException(status_code=503, detail="Слишком долгое ожидание. Попробуй ещё раз.", headers={"Retry-After": "5"}) from None
+    except sqlite3.Error:
+        logger.error("Job metadata unavailable")
+        raise HTTPException(status_code=503, detail="Хранилище заданий временно недоступно") from None
+    finally:
+        try:
+            if job_id is not None:
+                try:
+                    if jobs.get(job_id, user_id).state in {"queued", "processing"}:
+                        jobs.transition(job_id, user_id, "failed")
+                except (sqlite3.Error, JobNotFound, JobStateError):
+                    logger.error("Job final metadata update failed")
+        finally:
+            if acquired:
+                slots.release()
+            for upload in uploads:
+                await upload.close()
 
 
 @api.get("/api/v1/session")
@@ -267,89 +349,70 @@ async def convert(
     if len(pages) > 90:
         raise HTTPException(status_code=422, detail="Слишком длинный диапазон страниц")
     await enforce_rate_limit(user_id)
-    job_id = new_job(user_id)
-    try:
-        await admission.acquire(slots)
-        jobs.transition(job_id, user_id, "processing")
-    except QueueClosed:
-        jobs.transition(job_id, user_id, "failed")
-        raise HTTPException(status_code=503, detail="Сервер перезапускается. Повтори запрос позже.", headers={"Retry-After": "10"}) from None
-    except QueueFull:
-        jobs.transition(job_id, user_id, "failed")
-        raise HTTPException(
-            status_code=429,
-            detail="Очередь заполнена. Попробуй повторить позже.",
-            headers={"Retry-After": "15"},
-        ) from None
-    except QueueTimeout:
-        jobs.transition(job_id, user_id, "failed")
-        raise HTTPException(
-            status_code=503,
-            detail="Слишком долгое ожидание. Попробуй ещё раз.",
-            headers={"Retry-After": "5"},
-        ) from None
+    async with conversion_job(user_id, [upload]) as job_id:
+        work = None
+        try:
+            work = Workspace(prefix="fileshape_api_")
+            source = Path(work.name) / ("source" + suffix)
+            read_bytes = 0
+            with source.open("wb") as output:
+                while True:
+                    chunk = await upload.read(64 * 1024)
+                    if not chunk:
+                        break
+                    read_bytes += len(chunk)
+                    if read_bytes > MAX_INPUT_BYTES:
+                        raise HTTPException(status_code=413, detail="Максимальный размер файла — 20 МБ")
+                    output.write(chunk)
+            if read_bytes == 0:
+                raise HTTPException(status_code=422, detail="Пустой файл")
+            result = await run_worker({
+                "operation": "single", "work": work.name,
+                "suffix": suffix, "action": action, "pages": pages,
+            })
+            if "info" in result:
+                if work is not None:
+                    work.cleanup()
+                jobs.transition(job_id, user_id, "completed")
+                return JSONResponse(result["info"], headers={"Cache-Control": "no-store", "X-FileShape-Job-Id": job_id})
 
-    work = Workspace(prefix="fileshape_api_")
-    try:
-        source = Path(work.name) / ("source" + suffix)
-        read_bytes = 0
-        with source.open("wb") as output:
-            while True:
-                chunk = await upload.read(64 * 1024)
-                if not chunk:
-                    break
-                read_bytes += len(chunk)
-                if read_bytes > MAX_INPUT_BYTES:
-                    raise HTTPException(status_code=413, detail="Максимальный размер файла — 20 МБ")
-                output.write(chunk)
-        if read_bytes == 0:
-            raise HTTPException(status_code=422, detail="Пустой файл")
-        result = await run_worker({
-            "operation": "single", "work": work.name,
-            "suffix": suffix, "action": action, "pages": pages,
-        })
-        if "info" in result:
-            work.cleanup()
+            target = Path(work.name) / result["filename"]
+            if not target.is_file() or target.stat().st_size == 0:
+                raise ValueError("Пустой результат")
+            if target.stat().st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             jobs.transition(job_id, user_id, "completed")
-            return JSONResponse(result["info"], headers={"Cache-Control": "no-store", "X-FileShape-Job-Id": job_id})
-
-        target = Path(work.name) / result["filename"]
-        if not target.is_file() or target.stat().st_size == 0:
-            raise ValueError("Пустой результат")
-        if target.stat().st_size > MAX_RESULT_BYTES:
-            raise HTTPException(status_code=413, detail="Результат слишком большой")
-        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        jobs.transition(job_id, user_id, "completed")
-        return FileResponse(
-            target,
-            filename=target.name,
-            media_type=content_type,
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
-            background=BackgroundTask(work.cleanup),
-        )
-    except asyncio.CancelledError:
-        # Cancellation does not inherit from Exception. Remove partial uploads
-        # and outputs before propagating cancellation to the ASGI server.
-        work.cleanup()
-        raise
-    except HTTPException:
-        work.cleanup()
-        raise
-    except WorkerTimeout as exc:
-        work.cleanup()
-        raise HTTPException(status_code=504, detail=str(exc)) from None
-    except ValueError as exc:
-        work.cleanup()
-        raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
-    except Exception:
-        work.cleanup()
-        logger.error("FileShape API processing failed")
-        raise HTTPException(status_code=422, detail="Не удалось прочитать или обработать файл") from None
-    finally:
-        if jobs.get(job_id, user_id).state == "processing":
-            jobs.transition(job_id, user_id, "failed")
-        slots.release()
-        await upload.close()
+            return FileResponse(
+                target,
+                filename=target.name,
+                media_type=content_type,
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
+                background=BackgroundTask(work.cleanup),
+            )
+        except asyncio.CancelledError:
+            # Cancellation does not inherit from Exception. Remove partial uploads
+            # and outputs before propagating cancellation to the ASGI server.
+            if work is not None:
+                work.cleanup()
+            raise
+        except HTTPException:
+            if work is not None:
+                work.cleanup()
+            raise
+        except WorkerTimeout as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=504, detail=str(exc)) from None
+        except ValueError as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+        except Exception:
+            if work is not None:
+                work.cleanup()
+            logger.error("FileShape API processing failed")
+            raise HTTPException(status_code=422, detail="Не удалось прочитать или обработать файл") from None
 
 
 @api.post("/api/v1/images/pdf")
@@ -365,88 +428,67 @@ async def multi_image_pdf(
         if kind != "image":
             raise HTTPException(status_code=422, detail="Поддерживаются только JPG, PNG и WebP")
     await enforce_rate_limit(user_id)
-    job_id = new_job(user_id)
-    try:
-        await admission.acquire(slots)
-        jobs.transition(job_id, user_id, "processing")
-    except QueueClosed:
-        jobs.transition(job_id, user_id, "failed")
-        raise HTTPException(status_code=503, detail="Сервер перезапускается. Повтори запрос позже.", headers={"Retry-After": "10"}) from None
-    except QueueFull:
-        jobs.transition(job_id, user_id, "failed")
-        raise HTTPException(
-            status_code=429,
-            detail="Очередь заполнена. Попробуй повторить позже.",
-            headers={"Retry-After": "15"},
-        ) from None
-    except QueueTimeout:
-        jobs.transition(job_id, user_id, "failed")
-        raise HTTPException(
-            status_code=503,
-            detail="Слишком долгое ожидание. Попробуй ещё раз.",
-            headers={"Retry-After": "5"},
-        ) from None
+    async with conversion_job(user_id, uploads) as job_id:
+        work = None
+        try:
+            work = Workspace(prefix="fileshape_batch_")
+            paths = []
+            total = 0
+            for index, upload in enumerate(uploads):
+                suffix = file_kind(upload.filename or "")[1]
+                path = Path(work.name) / f"image_{index}{suffix}"
+                count = 0
+                with path.open("wb") as output:
+                    while True:
+                        chunk = await upload.read(64 * 1024)
+                        if not chunk:
+                            break
+                        count += len(chunk)
+                        total += len(chunk)
+                        if total > MAX_INPUT_BYTES:
+                            raise HTTPException(status_code=413, detail="Общий размер файлов превышает 20 МБ")
+                        output.write(chunk)
+                if count == 0:
+                    raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
+                paths.append(path)
 
-    work = Workspace(prefix="fileshape_batch_")
-    try:
-        paths = []
-        total = 0
-        for index, upload in enumerate(uploads):
-            suffix = file_kind(upload.filename or "")[1]
-            path = Path(work.name) / f"image_{index}{suffix}"
-            count = 0
-            with path.open("wb") as output:
-                while True:
-                    chunk = await upload.read(64 * 1024)
-                    if not chunk:
-                        break
-                    count += len(chunk)
-                    total += len(chunk)
-                    if total > MAX_INPUT_BYTES:
-                        raise HTTPException(status_code=413, detail="Общий размер файлов превышает 20 МБ")
-                    output.write(chunk)
-            if count == 0:
-                raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
-            paths.append(path)
-
-        await run_worker({
-            "operation": "batch", "work": work.name,
-            "suffixes": [file_kind(upload.filename or "")[1] for upload in uploads],
-        })
-        target = Path(work.name) / "fileshape_photos.pdf"
-        if not target.is_file() or target.stat().st_size == 0:
-            raise ValueError("Не удалось создать PDF")
-        if target.stat().st_size > MAX_RESULT_BYTES:
-            raise HTTPException(status_code=413, detail="Результат слишком большой")
-        jobs.transition(job_id, user_id, "completed")
-        return FileResponse(
-            target,
-            filename=target.name,
-            media_type="application/pdf",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
-            background=BackgroundTask(work.cleanup),
-        )
-    except asyncio.CancelledError:
-        # Cancellation does not inherit from Exception. Remove partial uploads
-        # and outputs before propagating cancellation to the ASGI server.
-        work.cleanup()
-        raise
-    except HTTPException:
-        work.cleanup()
-        raise
-    except WorkerTimeout as exc:
-        work.cleanup()
-        raise HTTPException(status_code=504, detail=str(exc)) from None
-    except ValueError as exc:
-        work.cleanup()
-        raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
-    except Exception:
-        work.cleanup()
-        logger.error("Multi-image PDF failed")
-        raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
-    finally:
-        if jobs.get(job_id, user_id).state == "processing":
-            jobs.transition(job_id, user_id, "failed")
-        slots.release()
-        for upload in uploads:
-            await upload.close()
+            await run_worker({
+                "operation": "batch", "work": work.name,
+                "suffixes": [file_kind(upload.filename or "")[1] for upload in uploads],
+            })
+            target = Path(work.name) / "fileshape_photos.pdf"
+            if not target.is_file() or target.stat().st_size == 0:
+                raise ValueError("Не удалось создать PDF")
+            if target.stat().st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            jobs.transition(job_id, user_id, "completed")
+            return FileResponse(
+                target,
+                filename=target.name,
+                media_type="application/pdf",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
+                background=BackgroundTask(work.cleanup),
+            )
+        except asyncio.CancelledError:
+            # Cancellation does not inherit from Exception. Remove partial uploads
+            # and outputs before propagating cancellation to the ASGI server.
+            if work is not None:
+                work.cleanup()
+            raise
+        except HTTPException:
+            if work is not None:
+                work.cleanup()
+            raise
+        except WorkerTimeout as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=504, detail=str(exc)) from None
+        except ValueError as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+        except Exception:
+            if work is not None:
+                work.cleanup()
+            logger.error("Multi-image PDF failed")
+            raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None

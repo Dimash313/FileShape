@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Private persistent job metadata and SQLite sidecars
+state/
+*.sqlite3*
