@@ -37,3 +37,10 @@
 .editor-review span{font-size:11px;color:#9db2d1;line-height:1.5}
 .pages-field input[aria-invalid="true"]{border-color:#c06c75}
 .server-option:disabled{opacity:.5;cursor:not-allowed}
+
+/* 2.1: on-device image preview and PDF file overview. */
+.file-preview{margin:14px 0;padding:13px;background:#101d30;border:1px solid #2e4361;border-radius:14px;overflow:hidden}
+.file-preview-heading{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:#c5dcff;margin-bottom:11px}
+.file-preview-image{display:block;width:100%;height:auto;max-height:250px;object-fit:contain;background:#0a1423;border-radius:10px}
+.file-preview p{font-size:11px;line-height:1.55;color:#9bb0cf;margin:10px 0 0}
+.pdf-overview{border-style:dashed}

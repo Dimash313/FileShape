@@ -65,6 +65,7 @@ function ProgressIndicator({ progress }: { progress: UploadProgress }) {
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [file, setFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
   const [serverAction, setServerAction] = useState('');
   const [pages, setPages] = useState('');
@@ -79,6 +80,18 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
+  // Browser-only preview: never upload just to display an image.
+  // Revoke object URLs whenever the file changes or the component unmounts.
+  useEffect(() => {
+    if (!file || !canConvertLocally(file)) {
+      setImagePreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
   const pick = () => { if (busy) return; tapFeedback(); setBatchMode(false); inputRef.current?.click(); };
   const pickBatch = () => { if (busy) return; tapFeedback(); batchInputRef.current?.click(); };
   const showBatch = () => {
@@ -253,6 +266,15 @@ export default function App() {
         </div> : <section className="selected-file">
           <div className="section-head"><h2>Выбранный файл</h2><button className="text-button" disabled={busy} onClick={clear}>Сбросить <X size={14}/></button></div>
           <div className="file-card"><div className="file-icon"><FileText size={24}/></div><div className="file-details"><strong title={file.name}>{file.name}</strong><span>{sizeLabel(file.size)} · {file.name.split('.').pop()?.toUpperCase() ?? 'Файл'}</span></div><Check size={19} className="file-check"/></div>
+          {kind === 'image' && imagePreviewUrl && <div className="file-preview">
+            <div className="file-preview-heading"><Image size={16}/> Предпросмотр изображения</div>
+            <img src={imagePreviewUrl} alt="Предпросмотр выбранного изображения" className="file-preview-image" />
+            <p>Изображение отображается на устройстве без отправки на сервер.</p>
+          </div>}
+          {kind === 'pdf' && <div className="file-preview pdf-overview">
+            <div className="file-preview-heading"><FileText size={16}/> PDF-документ</div>
+            <p>Размер: {sizeLabel(file.size)}. Для количества страниц выбери «Количество страниц» ниже. Просмотр отдельных страниц пока не реализован.</p>
+          </div>}
           <div className="editor-steps" aria-label="Этапы обработки">
             <span className="editor-step done"><Check size={13}/> Файл выбран</span>
             <span className="editor-step current">2 · Настройка</span>
@@ -294,7 +316,7 @@ export default function App() {
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
       {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}</span></div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
-      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.0</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
+      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.1</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
     <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
