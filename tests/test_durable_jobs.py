@@ -2,6 +2,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.durable_jobs import DurableJobStore
@@ -73,8 +74,11 @@ class DurableJobStoreTests(unittest.TestCase):
             stale = second.get(job.job_id, 11)
             self.assertEqual(stale.state, "queued")
             first.transition(job.job_id, 11, "processing")
-            with self.assertRaises(JobStateError):
-                second.transition(job.job_id, 11, "cancelled")
+            # Force the second connection to act on its previously read
+            # snapshot; otherwise a fresh read legitimately permits cancel.
+            with patch.object(second, "get", return_value=stale):
+                with self.assertRaises(JobStateError):
+                    second.transition(job.job_id, 11, "cancelled")
             self.assertEqual(first.get(job.job_id, 11).state, "processing")
 
     @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
