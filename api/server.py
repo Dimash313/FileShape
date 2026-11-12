@@ -18,6 +18,7 @@ from starlette.background import BackgroundTask
 
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
+from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
 from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import inspect_zip
@@ -199,13 +200,15 @@ async def convert(
                 output.write(chunk)
         if read_bytes == 0:
             raise HTTPException(status_code=422, detail="Пустой файл")
-        await asyncio.to_thread(validate_upload, source, suffix)
-        info = await asyncio.to_thread(_info_action, source, action)
-        if info is not None:
+        result = await run_worker({
+            "operation": "single", "work": work.name,
+            "suffix": suffix, "action": action, "pages": pages,
+        })
+        if "info" in result:
             work.cleanup()
-            return JSONResponse(info, headers={"Cache-Control": "no-store"})
+            return JSONResponse(result["info"], headers={"Cache-Control": "no-store"})
 
-        target = await asyncio.to_thread(_transform, source, Path(work.name), action, pages)
+        target = Path(work.name) / result["filename"]
         if not target.is_file() or target.stat().st_size == 0:
             raise ValueError("Пустой результат")
         if target.stat().st_size > MAX_RESULT_BYTES:
@@ -221,6 +224,9 @@ async def convert(
     except HTTPException:
         work.cleanup()
         raise
+    except WorkerTimeout as exc:
+        work.cleanup()
+        raise HTTPException(status_code=504, detail=str(exc)) from None
     except ValueError as exc:
         work.cleanup()
         raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
@@ -271,11 +277,13 @@ async def multi_image_pdf(
                     output.write(chunk)
             if count == 0:
                 raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
-            await asyncio.to_thread(validate_upload, path, suffix)
             paths.append(path)
 
+        await run_worker({
+            "operation": "batch", "work": work.name,
+            "suffixes": [file_kind(upload.filename or "")[1] for upload in uploads],
+        })
         target = Path(work.name) / "fileshape_photos.pdf"
-        await asyncio.to_thread(images_to_pdf, paths, target)
         if not target.is_file() or target.stat().st_size == 0:
             raise ValueError("Не удалось создать PDF")
         if target.stat().st_size > MAX_RESULT_BYTES:
@@ -290,6 +298,9 @@ async def multi_image_pdf(
     except HTTPException:
         work.cleanup()
         raise
+    except WorkerTimeout as exc:
+        work.cleanup()
+        raise HTTPException(status_code=504, detail=str(exc)) from None
     except ValueError as exc:
         work.cleanup()
         raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
