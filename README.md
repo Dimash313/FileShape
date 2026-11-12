@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.7 — job status in session history
+
+The Mini App now reads `X-FileShape-Job-Id` from successful single-file and batch conversion responses, attaches the ID to the local session-history entry, and offers a manual **Проверить статус** action. This calls the authenticated, owner-only `GET /api/v1/jobs/{job_id}` endpoint with an eight-second timeout and validates the response. Statuses are shown alongside recent operations; locally converted images do not receive server IDs. No background polling or fabricated progress percentage.
+
+**Limits:** IDs become available only after successful conversion; history is session-local, server metadata expires, and neither uploaded files nor results are persisted across restarts. A completed job status is metadata only, not a downloadable server copy.
+
 ## FileShape 3.6 — conversion job lifecycle and owner-only lookup
 
 Single-file and multi-image conversions now register in-memory job IDs and transition through queued, processing, and terminal states. Successful responses include `X-FileShape-Job-Id` (for both JSON info and downloaded files); authenticated `GET /api/v1/jobs/{job_id}` returns the caller's job state, timestamps and opaque ID, without filenames or files. Cross-user and nonexistent IDs both return 404. The existing request rate limit applies. Job entries expire after one hour in a bounded registry.
