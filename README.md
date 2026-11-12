@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.4 — concurrent request regression tests
+
+Automated ASGI tests now simulate three simultaneous conversions, verify that a fourth receives HTTP 429 while slots are occupied, and confirm processing slots are restored after successful and failed work. Tests replace the expensive worker with a deterministic stub, so they verify **admission and recovery logic**, not throughput, real conversion performance, memory consumption or production load capacity. Full stress testing on deployment-class hardware remains a release gate.
+
 ## FileShape 1.3 — privacy-safe diagnostics
 
 Each API HTTP response includes a random `X-Request-ID` for troubleshooting. The server logs only that ID, a fixed route category, HTTP status and elapsed milliseconds; it deliberately excludes file names, contents, Telegram authentication data and user identifiers. Unknown URLs are grouped as `other`. This is basic observability, not full production monitoring or a load-test result. Operators should still configure log retention, access controls and reverse-proxy privacy settings before deployment.
