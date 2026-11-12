@@ -235,6 +235,11 @@ async def convert(
             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
             background=BackgroundTask(work.cleanup),
         )
+    except asyncio.CancelledError:
+        # Cancellation does not inherit from Exception. Remove partial uploads
+        # and outputs before propagating cancellation to the ASGI server.
+        work.cleanup()
+        raise
     except HTTPException:
         work.cleanup()
         raise
@@ -309,6 +314,11 @@ async def multi_image_pdf(
             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
             background=BackgroundTask(work.cleanup),
         )
+    except asyncio.CancelledError:
+        # Cancellation does not inherit from Exception. Remove partial uploads
+        # and outputs before propagating cancellation to the ASGI server.
+        work.cleanup()
+        raise
     except HTTPException:
         work.cleanup()
         raise
