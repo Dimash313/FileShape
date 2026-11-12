@@ -1,7 +1,6 @@
 """Hard timeout, error and cancellation tests for worker isolation."""
 import asyncio
 import os
-import signal
 import tempfile
 from pathlib import Path
 import sys
@@ -33,7 +32,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(WorkerTimeout):
                 await run_worker({"operation": "single"}, timeout=0.1)
 
-    @unittest.skipUnless(os.name == "posix", "Requires POSIX process groups")
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Requires Linux /proc")
     async def test_timeout_kills_grandchild(self):
         original = asyncio.create_subprocess_exec
         with tempfile.TemporaryDirectory() as folder:
