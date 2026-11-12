@@ -92,25 +92,25 @@ def file_menu(kind: str) -> InlineKeyboardMarkup:
     rows.append([("📦 Собрать ZIP с другими файлами", "zip:create")])
     return buttons(rows)
 
+def classify_extension(suffix: str) -> str:
+    suffix = suffix.lower()
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
+    return {
+        ".docx": "docx", ".txt": "txt", ".zip": "archive",
+    }.get(suffix, "other")
+
+
 def attachment(message: Message):
     """Return Telegram file, extension, category, byte count (or None)."""
     if message.document:
         document = message.document
         suffix = Path(document.file_name or "").suffix.lower()
-        if suffix == ".pdf":
-            category = "pdf"
-        elif suffix in IMAGE_EXTENSIONS:
-            category = "image"
-        elif suffix in AUDIO_EXTENSIONS:
-            category = "audio"
-        elif suffix == ".docx":
-            category = "docx"
-        elif suffix == ".txt":
-            category = "txt"
-        elif suffix == ".zip":
-            category = "archive"
-        else:
-            category = "other"
+        category = classify_extension(suffix)
         return document, suffix, category, document.file_size
     if message.photo:
         photo = message.photo[-1]
@@ -159,7 +159,16 @@ def check_download(path: Path) -> None:
 async def send_result(message: Message, path: Path, caption: str = "✅ Готово · FileShape"):
     if path.stat().st_size > MAX_OUTPUT_BYTES:
         raise ValueError("Result is too large to send")
-    await message.answer_document(FSInputFile(path), caption=caption)
+    kind = classify_extension(path.suffix)
+    can_reprocess = path.stat().st_size <= MAX_BYTES
+    # Telegram's standard Bot API cannot download a bot file above 20 MB.
+    return await message.answer_document(
+        FSInputFile(path),
+        caption="FileShape · " + caption + (
+            "" if can_reprocess else "\\n⚠️ Результат больше 20 МБ: повторная обработка недоступна."
+        ),
+        reply_markup=file_menu(kind) if can_reprocess else None,
+    )
 
 
 async def remove_status(message: Message) -> None:
@@ -382,7 +391,7 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
         await state.clear()
         await message.answer("Файл не найден. Пришли PDF заново.")
         return
-    status = await message.answer("⏳ Извлекаю страницы…")
+    status = await message.answer("⏳ Обрабатываю страницы PDF…")
     try:
         async with processing_slots:
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
@@ -427,7 +436,9 @@ async def received_file(message: Message):
         "archive": "📦 ZIP", "audio": "🎧 Аудио", "other": "📎 Файл",
     }[category]
     await message.answer(
-        f"{label} · {size / 1024 / 1024:.1f} МБ\nВыбери действие ↓",
+        f"{label} · {size / 1024 / 1024:.1f} МБ\n"
+        f"{received_filename(message)[:70]}\n\n"
+        "Выбери действие ↓",
         reply_markup=file_menu(category),
         reply_to_message_id=message.message_id,
     )
@@ -439,12 +450,21 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
     if not isinstance(callback.message, Message):
         await callback.answer("Отправь файл заново.", show_alert=True)
         return
-    origin = callback.message.reply_to_message
+    # Original user upload: menu replies to the source message.
+    # Generated result: the bot document itself carries the next menu.
+    result_message = (
+        callback.message.document is not None
+        and (callback.message.caption or "").startswith("FileShape · ")
+        and callback.message.from_user is not None
+        and callback.message.from_user.is_bot
+    )
+    origin = callback.message if result_message else callback.message.reply_to_message
     if (
         callback.message.chat.type != "private"
+        or callback.message.chat.id != callback.from_user.id
         or not origin
         or not origin.from_user
-        or origin.from_user.id != callback.from_user.id
+        or (not result_message and origin.from_user.id != callback.from_user.id)
     ):
         await callback.answer("Эта кнопка не для тебя. Отправь свой файл.", show_alert=True)
         return

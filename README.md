@@ -2,9 +2,9 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.4)
+## Implemented (v0.5)
 
-Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.
+Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.\n\n**Reusable results**\n- Each successfully generated file up to 20 MB includes its own action buttons. You can edit/convert that result again without downloading and re-uploading it.\n- The bot accepts actions on generated files only in the owner's private chat.\n- Outputs larger than 20 MB are sent without action buttons because the standard Telegram Bot API cannot re-download them.\n- Input file cards show filename, type and size.
 
 **PDF**
 - Show number of pages.
@@ -70,7 +70,7 @@ Automated tests also run in GitHub Actions for commits to `main`.
 - More advanced PDF manipulation and batch tools
 - Rich DOCX editing and DOCX → PDF conversion
 - Additional audio formats and advanced archive tools
-- More polished interface and PRO subscription infrastructure
+- Additional navigation, progress feedback and PRO subscription infrastructure
 - Cloud hosting, production limits, monitoring and persistent job management
 
 These roadmap features are **not implemented yet**.

@@ -1,9 +1,12 @@
 """Validate handler import and basic user-facing menus without a bot token."""
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import AsyncMock
 
 from aiogram.types import Audio, Chat, Document, Message, Voice
 
-from main import attachment, file_menu, size_allowed
+from main import attachment, classify_extension, file_menu, send_result, size_allowed
 
 
 class BotMenuTests(unittest.TestCase):
@@ -25,6 +28,33 @@ class BotMenuTests(unittest.TestCase):
                 actions = [button.callback_data for row in menu.inline_keyboard for button in row]
                 self.assertIn(callback, actions)
                 self.assertIn("zip:create", actions)
+
+    def test_result_formats(self):
+        self.assertEqual(classify_extension(".PDF"), "pdf")
+        self.assertEqual(classify_extension(".zip"), "archive")
+        self.assertEqual(classify_extension(".mp3"), "audio")
+        self.assertEqual(classify_extension(".unknown"), "other")
+
+    async def _send_result(self, size):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "result.pdf"
+            with path.open("wb") as output:
+                output.truncate(size)
+            message = type("FakeMessage", (), {"answer_document": AsyncMock()})()
+            await send_result(message, path)
+            return message.answer_document.call_args.kwargs
+
+    def test_result_has_follow_up_actions(self):
+        import asyncio
+        args = asyncio.run(self._send_result(1024))
+        self.assertIn("FileShape", args["caption"])
+        actions = [b.callback_data for row in args["reply_markup"].inline_keyboard for b in row]
+        self.assertIn("pdf:rotate", actions)
+
+    def test_large_result_disables_follow_up(self):
+        import asyncio
+        args = asyncio.run(self._send_result(21 * 1024 * 1024))
+        self.assertIsNone(args["reply_markup"])
 
     def test_size_limit(self):
         self.assertTrue(size_allowed(20 * 1024 * 1024))
