@@ -18,6 +18,8 @@ from aiogram.types import (
 )
 
 from config import get_settings
+from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
+from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.file_tools import (
     MAX_MERGE_FILES,
     compress_image,
@@ -32,6 +34,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 MAX_BYTES = 20 * 1024 * 1024  # Standard Bot API download limit.
 MAX_MERGE_BYTES = 60 * 1024 * 1024
+MAX_ZIP_BUNDLE_BYTES = 60 * 1024 * 1024
 MAX_OUTPUT_BYTES = 45 * 1024 * 1024
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 processing_slots = asyncio.Semaphore(3)
@@ -42,6 +45,10 @@ class ExtractState(StatesGroup):
 
 
 class MergeState(StatesGroup):
+    collecting = State()
+
+
+class ZipState(StatesGroup):
     collecting = State()
 
 
@@ -56,17 +63,26 @@ def buttons(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
 
 def file_menu(kind: str) -> InlineKeyboardMarkup:
     if kind == "pdf":
-        return buttons([
-            [("📄 Страницы", "pdf:info"), ("✂️ Первая страница", "pdf:first")],
+        rows = [
+            [("📄 Страницы", "pdf:info"), ("✂️ Первая", "pdf:first")],
             [("🔢 Выбрать страницы", "pdf:extract"), ("↻ Повернуть 90°", "pdf:rotate")],
-            [("🔗 Объединить с другими PDF", "pdf:merge")],
-        ])
-    return buttons([
-        [("→ JPG", "img:JPEG"), ("→ PNG", "img:PNG"), ("→ WebP", "img:WEBP")],
-        [("📄 → PDF", "img:PDF")],
-        [("🗜 Оптимизировать WebP", "img:compress")],
-    ])
-
+            [("🔗 Объединить PDF", "pdf:merge")],
+        ]
+    elif kind == "image":
+        rows = [
+            [("→ JPG", "img:JPEG"), ("→ PNG", "img:PNG"), ("→ WebP", "img:WEBP")],
+            [("📄 → PDF", "img:PDF"), ("🗜 WebP", "img:compress")],
+        ]
+    elif kind == "docx":
+        rows = [[("📝 → TXT", "docx:txt"), ("ℹ️ О документе", "docx:info")]]
+    elif kind == "txt":
+        rows = [[("📝 → DOCX", "txt:docx"), ("ℹ️ О тексте", "txt:info")]]
+    elif kind == "archive":
+        rows = [[("📋 Содержимое ZIP", "zip:list"), ("📂 Распаковать", "zip:extract")]]
+    else:
+        rows = []
+    rows.append([("📦 Собрать ZIP с другими файлами", "zip:create")])
+    return buttons(rows)
 
 def attachment(message: Message):
     """Return Telegram file, extension, category, byte count (or None)."""
@@ -77,8 +93,14 @@ def attachment(message: Message):
             category = "pdf"
         elif suffix in IMAGE_EXTENSIONS:
             category = "image"
+        elif suffix == ".docx":
+            category = "docx"
+        elif suffix == ".txt":
+            category = "txt"
+        elif suffix == ".zip":
+            category = "archive"
         else:
-            category = None
+            category = "other"
         return document, suffix, category, document.file_size
     if message.photo:
         photo = message.photo[-1]
@@ -111,7 +133,8 @@ async def start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "📁 FileShape | Инструменты для файлов\n\n"
-        "Пришли PDF или изображение — я покажу доступные действия.\n"
+        "Пришли PDF, DOCX, TXT, ZIP или изображение.\n"
+        "Другие файлы можно собрать в ZIP.\n"
         "Файлы до 20 МБ. Для выхода из операции: /cancel."
     )
 
@@ -249,12 +272,16 @@ async def received_file(message: Message):
         return
     file, suffix, category, size = attachment(message)
     if not category:
-        await message.answer("Пока поддерживаются PDF, JPG, PNG и WebP.")
+        await message.answer("Пришли документ или изображение.")
         return
     if not size_allowed(size):
         await message.answer("Файл слишком большой или размер неизвестен. Лимит: 20 МБ.")
         return
-    label = "📄 PDF" if category == "pdf" else "🖼 Изображение"
+    label = {
+        "pdf": "📄 PDF", "image": "🖼 Изображение",
+        "docx": "📝 DOCX", "txt": "📝 TXT",
+        "archive": "📦 ZIP", "other": "📎 Файл",
+    }[category]
     await message.answer(
         f"{label} получен. Что сделать с файлом?",
         reply_markup=file_menu(category),
@@ -262,7 +289,7 @@ async def received_file(message: Message):
     )
 
 
-@router.callback_query(F.data.startswith("pdf:") | F.data.startswith("img:"))
+@router.callback_query(F.data.startswith(("pdf:", "img:", "docx:", "txt:", "zip:")))
 async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
     action = callback.data or ""
     if not isinstance(callback.message, Message):
@@ -284,13 +311,32 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
     valid_image = category == "image" and action in {
         "img:JPEG", "img:PNG", "img:WEBP", "img:PDF", "img:compress"
     }
-    if not file or not size_allowed(size) or not (valid_pdf or valid_image):
+    valid_docx = category == "docx" and action in {"docx:info", "docx:txt"}
+    valid_txt = category == "txt" and action in {"txt:info", "txt:docx"}
+    valid_zip = category == "archive" and action in {"zip:list", "zip:extract"}
+    valid_bundle = action == "zip:create"
+    if not file or not size_allowed(size) or not (
+        valid_pdf or valid_image or valid_docx or valid_txt or valid_zip or valid_bundle
+    ):
         await callback.answer("Недопустимое действие.", show_alert=True)
         return
     if await state.get_state():
         await callback.answer("Закончи текущую операцию или отправь /cancel.", show_alert=True)
         return
     await callback.answer()
+    if action == "zip:create":
+        await state.set_state(ZipState.collecting)
+        suggested_name = getattr(file, "file_name", None) or "photo.jpg"
+        await state.update_data(zip_files=[{
+            "file_id": file.file_id, "size": size, "name": suggested_name,
+        }])
+        await callback.message.answer(
+            "📦 Создание ZIP · 1/5\n\n"
+            "Отправь ещё от 1 до 4 файлов в нужном порядке.\n"
+            "Затем нажми «Готово».",
+            reply_markup=buttons([[("✅ Готово", "bundle:done"), ("✖️ Отмена", "bundle:cancel")]]),
+        )
+        return
     if action == "pdf:extract":
         await state.set_state(ExtractState.waiting_for_pages)
         await state.update_data(file_id=file.file_id)
@@ -323,6 +369,29 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                 if action == "pdf:info":
                     count = await asyncio.to_thread(pdf_page_count, source)
                     await callback.message.answer(f"📄 В PDF страниц: {count}.")
+                elif action == "docx:info":
+                    _text, info = await asyncio.to_thread(read_docx_text, source)
+                    await callback.message.answer(
+                        f"📝 DOCX: абзацев {info['paragraphs']}, таблиц {info['tables']}, "
+                        f"символов {info['characters']}."
+                    )
+                elif action == "txt:info":
+                    info = await asyncio.to_thread(txt_info, source)
+                    await callback.message.answer(
+                        f"📝 TXT: строк {info['lines']}, символов {info['characters']}."
+                    )
+                elif action == "zip:list":
+                    info = await asyncio.to_thread(inspect_zip, source)
+                    names = "\n".join("• " + name[:100] for name in info["names"])
+                    await callback.message.answer(
+                        f"📦 ZIP: файлов {info['files']}, распакованный размер "
+                        f"≈ {info['bytes'] // 1024} КБ.\n"
+                        f"{names or 'Архив пуст.'}"
+                    )
+                elif action == "zip:extract":
+                    entries = await asyncio.to_thread(unpack_zip, source, folder)
+                    for path, name in entries:
+                        await send_result(callback.message, path, f"📂 {name}")
                 else:
                     if action == "pdf:first":
                         target = folder / "first_page.pdf"
@@ -333,6 +402,12 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                     elif action == "img:compress":
                         target = folder / "optimized.webp"
                         await asyncio.to_thread(compress_image, source, target)
+                    elif action == "docx:txt":
+                        target = folder / "document.txt"
+                        await asyncio.to_thread(docx_to_txt, source, target)
+                    elif action == "txt:docx":
+                        target = folder / "document.docx"
+                        await asyncio.to_thread(txt_to_docx, source, target)
                     else:
                         fmt = action.split(":", 1)[1]
                         ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}[fmt]
