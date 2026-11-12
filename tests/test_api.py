@@ -80,6 +80,29 @@ class APITests(unittest.TestCase):
         self.assertTrue(response.content.startswith(b"\xff\xd8\xff"))
         self.assertEqual(response.headers.get("cache-control"), "no-store")
 
+    def test_reject_spoofed_pdf_before_parser(self):
+        response = self.client.post(
+            "/api/v1/convert",
+            headers=self.auth,
+            data={"action": "pdf:info"},
+            files={"upload": ("report.pdf", b"not really a PDF", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("PDF", response.json()["detail"])
+
+    def test_reject_spoofed_image_in_batch(self):
+        valid = BytesIO()
+        Image.new("RGB", (10, 10), "white").save(valid, format="PNG")
+        response = self.client.post(
+            "/api/v1/images/pdf",
+            headers=self.auth,
+            files=[
+                ("uploads", ("first.png", valid.getvalue(), "image/png")),
+                ("uploads", ("fake.png", b"not an image", "image/png")),
+            ],
+        )
+        self.assertEqual(response.status_code, 422)
+
     def test_reject_invalid_operation(self):
         response = self.client.post(
             "/api/v1/convert",
