@@ -18,6 +18,7 @@ from starlette.background import BackgroundTask
 
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
+from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
 from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
@@ -112,6 +113,16 @@ async def enforce_rate_limit(user_id: int) -> None:
 @api.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@api.get("/ready")
+async def ready():
+    result = await asyncio.to_thread(readiness_status)
+    return JSONResponse(
+        result,
+        status_code=200 if result["status"] == "ready" else 503,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @api.get("/api/v1/session")
