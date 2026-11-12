@@ -160,6 +160,27 @@ async def ready():
     )
 
 
+def queue_snapshot() -> dict:
+    """Coarse, per-process counts only; no user IDs or filenames."""
+    # CPython asyncio.Semaphore holds the remaining permits in _value.
+    # Sampled on the API event loop, this is a point-in-time view,
+    # not an SLA and not an aggregate across API replicas.
+    available = max(0, min(MAX_CONCURRENT_JOBS, slots._value))
+    return {
+        "capacity": MAX_CONCURRENT_JOBS,
+        "active": MAX_CONCURRENT_JOBS - available,
+        "waiting": admission.waiting,
+        "waiting_limit": admission.max_waiters,
+        "accepting": not admission.closing,
+    }
+
+
+@api.get("/api/v1/queue")
+async def queue_status(user_id: int = Depends(authenticated_user)):
+    await enforce_rate_limit(user_id)
+    return JSONResponse(queue_snapshot(), headers={"Cache-Control": "no-store"})
+
+
 @api.get("/api/v1/session")
 async def session(user_id: int = Depends(authenticated_user)):
     return {"ok": True, "user_id": user_id, "max_upload_bytes": MAX_INPUT_BYTES}
