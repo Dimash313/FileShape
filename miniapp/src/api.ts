@@ -184,7 +184,7 @@ export async function runMultiImagePdf(files: File[], onProgress?: ProgressCallb
   }
   const form = new FormData();
   files.forEach(file => form.append('uploads', file, file.name));
-  const { blob, contentType } = await postFiles('/api/v1/images/pdf', form, onProgress);
+  const { blob, contentType, jobId } = await postFiles('/api/v1/images/pdf', form, onProgress);
   if (!contentType.includes('application/pdf') || blob.size === 0) {
     throw new Error('Сервер не вернул PDF.');
   }
