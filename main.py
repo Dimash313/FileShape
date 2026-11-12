@@ -18,6 +18,7 @@ from aiogram.types import (
 )
 
 from config import get_settings
+from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.file_tools import (
@@ -27,6 +28,7 @@ from services.file_tools import (
     extract_pdf_pages,
     merge_pdfs,
     pdf_page_count,
+    remove_pdf_pages,
     rotate_pdf,
 )
 
@@ -67,11 +69,17 @@ def file_menu(kind: str) -> InlineKeyboardMarkup:
             [("📄 Страницы", "pdf:info"), ("✂️ Первая", "pdf:first")],
             [("🔢 Выбрать страницы", "pdf:extract"), ("↻ Повернуть 90°", "pdf:rotate")],
             [("🔗 Объединить PDF", "pdf:merge")],
+            [("🗑 Удалить страницы", "pdf:remove")],
         ]
     elif kind == "image":
         rows = [
             [("→ JPG", "img:JPEG"), ("→ PNG", "img:PNG"), ("→ WebP", "img:WEBP")],
             [("📄 → PDF", "img:PDF"), ("🗜 WebP", "img:compress")],
+        ]
+    elif kind == "audio":
+        rows = [
+            [("→ MP3", "audio:mp3"), ("→ OGG", "audio:ogg"), ("→ WAV", "audio:wav")],
+            [("ℹ️ Об аудио", "audio:info")],
         ]
     elif kind == "docx":
         rows = [[("📝 → TXT", "docx:txt"), ("ℹ️ О документе", "docx:info")]]
@@ -93,6 +101,8 @@ def attachment(message: Message):
             category = "pdf"
         elif suffix in IMAGE_EXTENSIONS:
             category = "image"
+        elif suffix in AUDIO_EXTENSIONS:
+            category = "audio"
         elif suffix == ".docx":
             category = "docx"
         elif suffix == ".txt":
@@ -105,6 +115,22 @@ def attachment(message: Message):
     if message.photo:
         photo = message.photo[-1]
         return photo, ".jpg", "image", photo.file_size
+    if message.voice:
+        voice = message.voice
+        return voice, ".ogg", "audio", voice.file_size
+    if message.audio:
+        audio = message.audio
+        suffix = Path(audio.file_name or "").suffix.lower()
+        mime_to_ext = {
+            "audio/mpeg": ".mp3", "audio/ogg": ".ogg",
+            "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+            "audio/wav": ".wav", "audio/x-wav": ".wav",
+            "audio/flac": ".flac", "audio/x-flac": ".flac",
+        }
+        if suffix not in AUDIO_EXTENSIONS:
+            suffix = mime_to_ext.get(audio.mime_type or "", "")
+        category = "audio" if suffix in AUDIO_EXTENSIONS else "other"
+        return audio, suffix or ".bin", category, audio.file_size
     return None, "", None, None
 
 
@@ -133,7 +159,7 @@ async def start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "📁 FileShape | Инструменты для файлов\n\n"
-        "Пришли PDF, DOCX, TXT, ZIP или изображение.\n"
+        "Пришли PDF, DOCX, TXT, ZIP, фото или аудио.\n"
         "Другие файлы можно собрать в ZIP.\n"
         "Файлы до 20 МБ. Для выхода из операции: /cancel."
     )
@@ -339,8 +365,13 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
                 await bot.download(file_id, destination=source)
                 check_download(source)
                 target = folder / "pages.pdf"
-                count = await asyncio.to_thread(extract_pdf_pages, source, target, spec)
-                await send_result(message, target, f"✅ Извлечено страниц: {count} | FileShape")
+                if data.get("pdf_mode") == "pdf:remove":
+                    target = folder / "without_pages.pdf"
+                    count = await asyncio.to_thread(remove_pdf_pages, source, target, spec)
+                    await send_result(message, target, f"✅ Осталось страниц: {count} | FileShape")
+                else:
+                    count = await asyncio.to_thread(extract_pdf_pages, source, target, spec)
+                    await send_result(message, target, f"✅ Извлечено страниц: {count} | FileShape")
         await state.clear()
     except ValueError as error:
         await message.answer(f"Не удалось выбрать страницы: {error}. Попробуй ещё раз или /cancel.")
@@ -352,7 +383,7 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
         await remove_status(status)
 
 
-@router.message(F.document | F.photo)
+@router.message(F.document | F.photo | F.audio | F.voice)
 async def received_file(message: Message):
     if message.chat.type != "private":
         await message.answer("Для обработки файлов открой личный чат с ботом.")
@@ -367,16 +398,16 @@ async def received_file(message: Message):
     label = {
         "pdf": "📄 PDF", "image": "🖼 Изображение",
         "docx": "📝 DOCX", "txt": "📝 TXT",
-        "archive": "📦 ZIP", "other": "📎 Файл",
+        "archive": "📦 ZIP", "audio": "🎧 Аудио", "other": "📎 Файл",
     }[category]
     await message.answer(
-        f"{label} получен. Что сделать с файлом?",
+        f"{label} · {size / 1024 / 1024:.1f} МБ\nВыбери действие ↓",
         reply_markup=file_menu(category),
         reply_to_message_id=message.message_id,
     )
 
 
-@router.callback_query(F.data.startswith(("pdf:", "img:", "docx:", "txt:", "zip:")))
+@router.callback_query(F.data.startswith(("pdf:", "img:", "docx:", "txt:", "zip:", "audio:")))
 async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
     action = callback.data or ""
     if not isinstance(callback.message, Message):
@@ -393,17 +424,20 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         return
     file, suffix, category, size = attachment(origin)
     valid_pdf = category == "pdf" and action in {
-        "pdf:info", "pdf:first", "pdf:extract", "pdf:rotate", "pdf:merge"
+        "pdf:info", "pdf:first", "pdf:extract", "pdf:rotate", "pdf:merge", "pdf:remove"
     }
     valid_image = category == "image" and action in {
         "img:JPEG", "img:PNG", "img:WEBP", "img:PDF", "img:compress"
+    }
+    valid_audio = category == "audio" and action in {
+        "audio:mp3", "audio:ogg", "audio:wav", "audio:info"
     }
     valid_docx = category == "docx" and action in {"docx:info", "docx:txt"}
     valid_txt = category == "txt" and action in {"txt:info", "txt:docx"}
     valid_zip = category == "archive" and action in {"zip:list", "zip:extract"}
     valid_bundle = action == "zip:create"
     if not file or not size_allowed(size) or not (
-        valid_pdf or valid_image or valid_docx or valid_txt or valid_zip or valid_bundle
+        valid_pdf or valid_image or valid_audio or valid_docx or valid_txt or valid_zip or valid_bundle
     ):
         await callback.answer("Недопустимое действие.", show_alert=True)
         return
@@ -424,11 +458,12 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
             reply_markup=buttons([[("✅ Готово", "bundle:done"), ("✖️ Отмена", "bundle:cancel")]]),
         )
         return
-    if action == "pdf:extract":
+    if action in {"pdf:extract", "pdf:remove"}:
         await state.set_state(ExtractState.waiting_for_pages)
-        await state.update_data(file_id=file.file_id)
+        await state.update_data(file_id=file.file_id, pdf_mode=action)
+        verb = "удалить" if action == "pdf:remove" else "извлечь"
         await callback.message.answer(
-            "🔢 Какие страницы извлечь?\n"
+            f"🔢 Какие страницы {verb}?\n"
             "Например: 1,3-5 (первая, третья, четвёртая и пятая).\n"
             "Для отмены: /cancel"
         )
@@ -456,6 +491,13 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                 if action == "pdf:info":
                     count = await asyncio.to_thread(pdf_page_count, source)
                     await callback.message.answer(f"📄 В PDF страниц: {count}.")
+                elif action == "audio:info":
+                    info = await asyncio.to_thread(probe_audio, source)
+                    await callback.message.answer(
+                        f"🎧 Аудио · {info['seconds']:.1f} сек. · "
+                        f"кодек {info['codec']}\n"
+                        "Конвертация доступна для записей до 10 минут."
+                    )
                 elif action == "docx:info":
                     _text, info = await asyncio.to_thread(read_docx_text, source)
                     await callback.message.answer(
@@ -489,6 +531,10 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                     elif action == "img:compress":
                         target = folder / "optimized.webp"
                         await asyncio.to_thread(compress_image, source, target)
+                    elif action.startswith("audio:"):
+                        fmt = action.split(":", 1)[1]
+                        target = folder / ("audio" + OUTPUT_FORMATS[fmt])
+                        await asyncio.to_thread(convert_audio, source, target, fmt)
                     elif action == "docx:txt":
                         target = folder / "document.txt"
                         await asyncio.to_thread(docx_to_txt, source, target)
