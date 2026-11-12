@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Archive, ArrowDownToLine, ArrowRight, AudioLines, Check,
   ChevronRight, Clock3, FileImage, FileText, Files, FolderOpen,
@@ -10,7 +11,7 @@ import { initTelegram, tapFeedback } from './telegram';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
 type Task = { id: number; name: string; format: string; time: string };
-type Tool = { title: string; subtitle: string; icon: typeof File; category: string; local: boolean };
+type Tool = { title: string; subtitle: string; icon: LucideIcon; category: string; local: boolean };
 const tools: Tool[] = [
   { title: 'PDF', subtitle: 'Страницы и объединение', icon: FileText, category: 'Документы', local: false },
   { title: 'Фото', subtitle: 'JPG, PNG, WebP', icon: Image, category: 'Изображения', local: true },
@@ -19,7 +20,7 @@ const tools: Tool[] = [
   { title: 'Сканер', subtitle: 'Скоро', icon: ScanLine, category: 'Скоро', local: false },
   { title: 'Пакетно', subtitle: 'Скоро', icon: Files, category: 'Скоро', local: false },
 ];
-const nav: { tab: Tab; label: string; icon: typeof File }[] = [
+const nav: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: 'home', label: 'Главная', icon: FolderOpen },
   { tab: 'tools', label: 'Инструменты', icon: WandSparkles },
   { tab: 'history', label: 'История', icon: Clock3 },
