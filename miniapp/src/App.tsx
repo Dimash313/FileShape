@@ -7,7 +7,8 @@ import {
   UploadCloud, UserRound, WandSparkles, X,
 } from 'lucide-react';
 import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } from './imageTools';
-import { initTelegram, tapFeedback } from './telegram';
+import { initTelegram, tapFeedback, telegramInitData } from './telegram';
+import { actionsFor, downloadBlob, runServerAction } from './api';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
 type Task = { id: number; name: string; format: string; time: string };
@@ -39,7 +40,10 @@ function sizeLabel(size: number) {
 function fileCategory(file: File) {
   if (canConvertLocally(file)) return 'image';
   const name = file.name.toLowerCase();
+  if (/\.(jpg|jpeg|png|webp)$/.test(name)) return 'image';
   if (name.endsWith('.pdf')) return 'pdf';
+  if (name.endsWith('.docx')) return 'docx';
+  if (name.endsWith('.txt')) return 'txt';
   if (/\.(mp3|ogg|oga|m4a|flac|wav)$/.test(name)) return 'audio';
   if (/\.(zip)$/.test(name)) return 'zip';
   return 'other';
@@ -49,6 +53,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [file, setFile] = useState<File | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
+  const [serverAction, setServerAction] = useState('');
+  const [pages, setPages] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [history, setHistory] = useState<Task[]>([]);
@@ -65,6 +71,8 @@ export default function App() {
       return;
     }
     setFile(next);
+    setServerAction('');
+    setPages('');
     setNotice('');
     setTab('home');
   };
@@ -76,14 +84,7 @@ export default function App() {
     try {
       const blob = await convertLocalImage(file, format);
       const filename = `${file.name.replace(/\.[^.]+$/, '') || 'image'}_fileshape.${extensionFor(format)}`;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      downloadBlob(blob, filename);
       setHistory(items => [{ id: Date.now(), name: filename, format: extensionFor(format).toUpperCase(), time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }, ...items].slice(0, 12));
       setNotice('Готово! Файл сохранён на устройство.');
     } catch (error) {
@@ -91,6 +92,37 @@ export default function App() {
     } finally { setBusy(false); }
   };
   const kind = file ? fileCategory(file) : 'other';
+  const serverActions = actionsFor[kind] ?? [];
+  const selectedAction = serverActions.some(option => option.code === serverAction)
+    ? serverAction : (serverActions[0]?.code ?? '');
+  const selectedOption = serverActions.find(option => option.code === selectedAction);
+  const serverConvert = async () => {
+    if (!file || busy || !selectedAction) return;
+    if (selectedOption?.pages && !/^[0-9,\s-]{1,90}$/.test(pages.trim())) {
+      setNotice('Введи номера страниц, например 1,3-5.');
+      return;
+    }
+    setBusy(true);
+    setNotice('Загружаю и обрабатываю файл…');
+    try {
+      const result = await runServerAction(file, selectedAction, pages.trim());
+      if (result.type === 'info') {
+        setNotice(result.text);
+      } else {
+        downloadBlob(result.blob, result.name);
+        setHistory(items => [{
+          id: Date.now(), name: result.name,
+          format: result.name.split('.').pop()?.toUpperCase() ?? 'ФАЙЛ',
+          time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        }, ...items].slice(0, 12));
+        setNotice('Готово! Результат отправлен на загрузку.');
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Ошибка соединения с сервером.');
+    } finally {
+      setBusy(false);
+    }
+  };
   const title = tab === 'home' ? 'Работа с файлами' : tab === 'tools' ? 'Все инструменты' : tab === 'history' ? 'История' : 'Профиль';
 
   return <div className="app-shell">
