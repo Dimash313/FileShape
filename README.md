@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.0 — shared capacity and cancellation regression milestone
+
+The existing three-slot concurrency limit is now tested across both single-file conversions and multi-image PDF jobs, including overload rejection and recovery. An additional test verifies that cancellation restores capacity. Batch processing failure logs no longer include exception tracebacks. This is the first server-reliability milestone; a durable job queue, recovery after process restart, and persistent job state are not implemented yet.
+
 ## FileShape 2.9 — privacy-safe failure logging
 
 Unexpected API and request-middleware failures now log only generic operational markers rather than exception tracebacks, which could expose sensitive filenames or uploaded document details. Added a regression test for private exception messages. The client still receives a generic error and malformed PDFs remain rejected by existing worker validation. This is pre-3.0 server hardening, not a live deployment.
