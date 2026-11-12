@@ -8,10 +8,11 @@ import {
 } from 'lucide-react';
 import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } from './imageTools';
 import { initTelegram, tapFeedback, telegramInitData } from './telegram';
-import { actionsFor, downloadBlob, runServerAction } from './api';
+import { actionsFor, downloadBlob, runMultiImagePdf, runServerAction } from './api';
+import type { UploadProgress } from './api';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
-type Task = { id: number; name: string; format: string; time: string };
+type Task = { id: number; name: string; format: string; time: string; blob?: Blob };
 type Tool = { title: string; subtitle: string; icon: LucideIcon; category: string; local: boolean };
 const tools: Tool[] = [
   { title: 'PDF', subtitle: 'Страницы и объединение', icon: FileText, category: 'Документы', local: false },
@@ -19,7 +20,7 @@ const tools: Tool[] = [
   { title: 'Аудио', subtitle: 'MP3, OGG, WAV', icon: AudioLines, category: 'Медиа', local: false },
   { title: 'Архивы', subtitle: 'Создать и распаковать', icon: Archive, category: 'Архивы', local: false },
   { title: 'Сканер', subtitle: 'Скоро', icon: ScanLine, category: 'Скоро', local: false },
-  { title: 'Пакетно', subtitle: 'Скоро', icon: Files, category: 'Скоро', local: false },
+  { title: 'Пакетно', subtitle: '2–8 фото в один PDF', icon: Files, category: 'PDF', local: false },
 ];
 const nav: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: 'home', label: 'Главная', icon: FolderOpen },
@@ -56,13 +57,64 @@ export default function App() {
   const [serverAction, setServerAction] = useState('');
   const [pages, setPages] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [notice, setNotice] = useState('');
   const [history, setHistory] = useState<Task[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const batchInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
-  const pick = () => { tapFeedback(); inputRef.current?.click(); };
+  const pick = () => { tapFeedback(); setBatchMode(false); inputRef.current?.click(); };
+  const pickBatch = () => { tapFeedback(); batchInputRef.current?.click(); };
+  const showBatch = () => {
+    tapFeedback(); setBatchMode(true); setBatchFiles([]); setFile(null);
+    setTab('home'); setNotice(''); setProgress(null);
+  };
+  const chooseBatch = (files: File[]) => {
+    if (!files.length) return;
+    if (files.length < 2 || files.length > 8) {
+      setNotice('Выбери от 2 до 8 фотографий.');
+      return;
+    }
+    if (files.some(file => !/\\.(jpg|jpeg|png|webp)$/i.test(file.name) || file.size <= 0)) {
+      setNotice('Поддерживаются только JPG, PNG и WebP.');
+      return;
+    }
+    if (files.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024) {
+      setNotice('Общий размер выбранных фотографий превышает 20 МБ.');
+      return;
+    }
+    setBatchFiles(files); setBatchMode(true); setFile(null); setNotice('');
+  };
+  const reorderBatch = (index: number, change: number) => {
+    setBatchFiles(files => {
+      const next = [...files];
+      const target = index + change;
+      if (target < 0 || target >= next.length) return files;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+  const remember = (name: string, blob: Blob) => {
+    const task: Task = {
+      id: Date.now(), name, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
+      format: name.split('.').pop()?.toUpperCase() ?? 'ФАЙЛ',
+      time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+    };
+    setHistory(items => {
+      let remaining = 35 * 1024 * 1024;
+      return [task, ...items].slice(0, 12).map((item, index) => {
+        if (item.blob && index < 4 && item.blob.size <= remaining) {
+          remaining -= item.blob.size;
+          return item;
+        }
+        return { ...item, blob: undefined };
+      });
+    });
+  };
   const acceptFile = (next?: File) => {
     if (!next) return;
     tapFeedback();
@@ -71,12 +123,14 @@ export default function App() {
       return;
     }
     setFile(next);
+    setBatchFiles([]);
+    setBatchMode(false);
     setServerAction('');
     setPages('');
     setNotice('');
     setTab('home');
   };
-  const clear = () => { setFile(null); setNotice(''); if (inputRef.current) inputRef.current.value = ''; };
+  const clear = () => { setFile(null); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
   const convert = async () => {
     if (!file || !canConvertLocally(file) || busy) return;
     setBusy(true);
@@ -85,7 +139,7 @@ export default function App() {
       const blob = await convertLocalImage(file, format);
       const filename = `${file.name.replace(/\.[^.]+$/, '') || 'image'}_fileshape.${extensionFor(format)}`;
       downloadBlob(blob, filename);
-      setHistory(items => [{ id: Date.now(), name: filename, format: extensionFor(format).toUpperCase(), time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }, ...items].slice(0, 12));
+      remember(filename, blob);
       setNotice('Готово! Файл сохранён на устройство.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось обработать файл.');
@@ -103,24 +157,38 @@ export default function App() {
       return;
     }
     setBusy(true);
-    setNotice('Загружаю и обрабатываю файл…');
+    setNotice('');
+    setProgress({ stage: 'upload', percent: null });
     try {
-      const result = await runServerAction(file, selectedAction, pages.trim());
+      const result = await runServerAction(file, selectedAction, pages.trim(), setProgress);
       if (result.type === 'info') {
         setNotice(result.text);
       } else {
         downloadBlob(result.blob, result.name);
-        setHistory(items => [{
-          id: Date.now(), name: result.name,
-          format: result.name.split('.').pop()?.toUpperCase() ?? 'ФАЙЛ',
-          time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-        }, ...items].slice(0, 12));
+        remember(result.name, result.blob);
         setNotice('Готово! Результат отправлен на загрузку.');
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Ошибка соединения с сервером.');
     } finally {
       setBusy(false);
+      setProgress(null);
+    }
+  };
+  const convertBatch = async () => {
+    if (busy || batchFiles.length < 2 || !telegramInitData()) return;
+    setBusy(true); setNotice(''); setProgress({ stage: 'upload', percent: null });
+    try {
+      const result = await runMultiImagePdf(batchFiles, setProgress);
+      if (result.type === 'file') {
+        downloadBlob(result.blob, result.name);
+        remember(result.name, result.blob);
+        setNotice('Готово! PDF создан из ' + batchFiles.length + ' изображений.');
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось объединить изображения.');
+    } finally {
+      setBusy(false); setProgress(null);
     }
   };
   const title = tab === 'home' ? 'Работа с файлами' : tab === 'tools' ? 'Все инструменты' : tab === 'history' ? 'История' : 'Профиль';
