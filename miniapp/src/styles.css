@@ -83,3 +83,18 @@
 /* 2.7: actionable, accessible PDF selection errors */
 .pdf-inline-error{display:flex;align-items:flex-start;gap:8px;margin:10px 0;padding:10px 12px;border:1px solid #a65b63;background:#39212b;border-radius:10px;color:#ffd6d9;font-size:12px;line-height:1.5}
 .pdf-inline-error svg{flex-shrink:0;margin-top:1px}
+
+/* 3.4: a manual, authenticated, point-in-time queue snapshot. */
+.queue-panel{display:flex;flex-direction:column;gap:12px;padding:16px;margin:15px 0;background:#111e31;border:1px solid #324b6d;border-radius:15px}
+.queue-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.queue-panel-head strong{display:flex;align-items:center;gap:8px;color:#e8f3ff;font-size:14px}
+.queue-panel-head button{min-height:38px;padding:8px 13px;border-radius:9px;border:1px solid #5481b6;background:#1c416c;color:#e4f1ff;font-size:12px;font-weight:650}
+.queue-panel-head button:disabled{opacity:.5}
+.queue-panel p,.queue-panel small{margin:0;color:#a4bedb;font-size:12px;line-height:1.5}
+.queue-panel small{font-size:11px}
+.queue-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.queue-metrics>div{display:flex;flex-direction:column;gap:4px;min-width:0;padding:12px;border-radius:10px;background:#172b45}
+.queue-metrics>div strong{color:#eff6ff;font-size:19px}
+.queue-metrics>div span{color:#a7bfdd;font-size:11px;line-height:1.35}
+.queue-metrics>p{grid-column:1/-1;color:#ffc7aa}
+.queue-panel p.queue-error{color:#ffbfc3}
