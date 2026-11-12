@@ -15,7 +15,7 @@ MAX_PDF_PAGES = 250
 MAX_MERGE_FILES = 5
 MAX_SELECTED_PAGES = 150
 
-IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
+IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
@@ -36,7 +36,7 @@ def convert_image(source: Path, target: Path, fmt: str) -> None:
         raise ValueError("Unsupported image format")
     image = _open_image(source)
     try:
-        if fmt == "JPEG":
+        if fmt in ("JPEG", "PDF"):
             # Transparent pixels turn white, not black.
             if image.mode in ("RGBA", "LA") or "transparency" in image.info:
                 rgba = image.convert("RGBA")
@@ -48,7 +48,10 @@ def convert_image(source: Path, target: Path, fmt: str) -> None:
                 rgb = image.convert("RGB")
                 image.close()
                 image = rgb
-            image.save(target, format="JPEG", quality=88, optimize=True)
+            if fmt == "JPEG":
+                image.save(target, format="JPEG", quality=88, optimize=True)
+            else:
+                image.save(target, format="PDF", resolution=96.0)
         elif fmt == "WEBP":
             image.save(target, format="WEBP", quality=85, method=4)
         else:
