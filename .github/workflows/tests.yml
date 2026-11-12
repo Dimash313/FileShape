@@ -27,3 +27,19 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Build Docker image
         run: docker build --tag fileshape:ci .
+
+  miniapp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and build Mini App
+        run: npm run build
