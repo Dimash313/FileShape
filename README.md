@@ -51,9 +51,9 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 
 ## FileShape 1.0 — reliability foundation (phase 1)
 
-Server-side uploads now undergo content signature checks before format parsers run: PDF magic bytes, JPG/PNG/WebP decoder identification, ZIP/DOCX container recognition, basic audio headers and binary TXT rejection. A renamed file cannot bypass these checks by extension alone. Single-file and multi-image endpoints both enforce validation. Tests cover valid and mislabeled files.
+Server-side uploads now undergo content signature checks before format parsers run: PDF magic bytes, JPG/PNG/WebP decoder identification, ZIP/DOCX container recognition, basic audio headers and binary TXT rejection. A renamed file cannot bypass these checks by extension alone. Single-file and multi-image endpoints both enforce validation. A streaming ASGI ingress guard also enforces the total multipart request size from actual received bytes (including when Content-Length is missing), before multipart parsing. Tests cover valid and mislabeled files.
 
-**Limitations:** signature validation is only an early rejection layer, not proof a document is safe. The full v1.0 reliability gate still requires independent process isolation with CPU/memory/time caps, upload parser/ingress limits, crash recovery, load testing, and live Android/Telegram verification. This commit does not imply those gates are complete or that the service is deployed.
+**Limitations:** signature validation is only an early rejection layer, not proof a document is safe. The full v1.0 reliability gate still requires independent process isolation with CPU/memory/time caps, multipart parser limits beyond the current 21 MB ingress cap, crash recovery, load testing, and live Android/Telegram verification. This commit does not imply those gates are complete or that the service is deployed.
 
 ## FileShape Studio Mini App (v0.9, server hardening v1.0)
 
