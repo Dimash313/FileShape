@@ -22,6 +22,7 @@ from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio
 from services.archive_tools import inspect_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
+from services.upload_validation import validate_upload
 from services.file_tools import (
     IMAGE_FORMATS, compress_image, convert_image, extract_pdf_pages,
     pdf_page_count, remove_pdf_pages, rotate_pdf,
@@ -204,6 +205,7 @@ async def convert(
                 output.write(chunk)
         if read_bytes == 0:
             raise HTTPException(status_code=422, detail="Пустой файл")
+        await asyncio.to_thread(validate_upload, source, suffix)
         info = await asyncio.to_thread(_info_action, source, action)
         if info is not None:
             work.cleanup()
@@ -275,6 +277,7 @@ async def multi_image_pdf(
                     output.write(chunk)
             if count == 0:
                 raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
+            await asyncio.to_thread(validate_upload, path, suffix)
             paths.append(path)
 
         target = Path(work.name) / "fileshape_photos.pdf"
