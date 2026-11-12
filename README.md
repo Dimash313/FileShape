@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.2 — operational readiness
+
+The API now exposes two distinct probes: `GET /health` for lightweight process liveness, and `GET /ready` for dependency readiness. The latter checks that FFmpeg and FFprobe are installed and temporary storage is writable; it returns HTTP 503 if a dependency is missing. Neither probe exposes environment variables or user files. Readiness is an operational signal, **not** proof that all converters work or that the service is production-ready. Monitoring, deployment orchestration and live tests remain pending.
+
 ## FileShape 1.1 — isolated API processing
 
 Server-side uploads now undergo content signature checks before format parsers run: PDF magic bytes, JPG/PNG/WebP decoder identification, ZIP/DOCX container recognition, basic audio headers and binary TXT rejection. A renamed file cannot bypass these checks by extension alone. Single-file and multi-image endpoints both enforce validation. A streaming ASGI ingress guard also enforces the total multipart request size from actual received bytes (including when Content-Length is missing), before multipart parsing. Tests cover valid and mislabeled files.
