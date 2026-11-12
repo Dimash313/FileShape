@@ -53,12 +53,12 @@ function fileCategory(file: File) {
 function ProgressIndicator({ progress }: { progress: UploadProgress }) {
   return <div className="transfer-status" role="status" aria-live="polite">
     <div className="transfer-label">
-      <span>{progress.stage === 'upload' ? 'Загрузка файла' : 'Обработка на сервере'}</span>
+      <span>{progress.stage === 'upload' ? 'Загрузка файла' : 'Ожидание или обработка'}</span>
       <strong>{progress.stage === 'upload' && progress.percent !== null ? progress.percent + '%' : '…'}</strong>
     </div>
     {progress.stage === 'upload' && progress.percent !== null
       ? <div className="transfer-track" role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: progress.percent + '%' }} /></div>
-      : <div className="transfer-wait">Без выдуманных процентов — показываем реальный этап операции.</div>}
+      : <div className="transfer-wait">После загрузки сервер может поставить запрос в очередь. Точный процент обработки пока недоступен.</div>}
   </div>;
 }
 
