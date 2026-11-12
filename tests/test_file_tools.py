@@ -60,9 +60,12 @@ class FileToolsTests(unittest.TestCase):
         source = self.dir / "input.png"
         jpg = self.dir / "out.jpg"
         webp = self.dir / "small.webp"
+        pdf = self.dir / "image.pdf"
         Image.new("RGBA", (32, 32), (255, 0, 0, 0)).save(source)
         convert_image(source, jpg, "JPEG")
         compress_image(source, webp)
+        convert_image(source, pdf, "PDF")
+        self.assertEqual(pdf_page_count(pdf), 1)
         with Image.open(jpg) as output:
             self.assertEqual(output.format, "JPEG")
             self.assertTrue(all(pixel > 235 for pixel in output.getpixel((0, 0))))
