@@ -98,3 +98,6 @@
 .queue-metrics>div span{color:#a7bfdd;font-size:11px;line-height:1.35}
 .queue-metrics>p{grid-column:1/-1;color:#ffc7aa}
 .queue-panel p.queue-error{color:#ffbfc3}
+
+.job-check{display:inline-flex;align-items:center;min-height:30px;margin-top:6px;padding:5px 9px;border-radius:8px;border:1px solid #446c9a;background:#183454;color:#d4e8ff;font-size:11px;font-weight:600;cursor:pointer}
+.job-check:focus-visible{outline:2px solid #8bc2ff;outline-offset:2px}

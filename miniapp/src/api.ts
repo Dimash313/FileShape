@@ -34,8 +34,40 @@ export async function getQueueStatus(): Promise<QueueStatus> {
   }
 }
 
+export type JobStatus = {
+  job_id: string;
+  state: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  created_at: number;
+  updated_at: number;
+};
+
+export async function getJobStatus(jobId: string): Promise<JobStatus> {
+  if (!/^[A-Za-z0-9_-]{24,64}$/.test(jobId)) throw new Error('Некорректный идентификатор задания.');
+  const signed = telegramInitData();
+  if (!signed) throw new Error('Открой приложение внутри Telegram.');
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch('/api/v1/jobs/' + encodeURIComponent(jobId), {
+      headers: { 'X-Telegram-Init-Data': signed },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (response.status === 404) throw new Error('Задание больше не доступно на сервере.');
+    if (!response.ok) throw new Error('Не удалось проверить задание.');
+    const data = await response.json() as JobStatus;
+    if (data.job_id !== jobId || !['queued', 'processing', 'completed', 'failed', 'cancelled'].includes(data.state) ||
+        !Number.isFinite(data.created_at) || !Number.isFinite(data.updated_at)) {
+      throw new Error('Некорректный ответ сервера.');
+    }
+    return data;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export type ServerAction = { code: string; label: string; pages?: boolean };
-export type ServerResult = { type: 'info'; text: string } | { type: 'file'; blob: Blob; name: string };
+export type ServerResult = { type: 'info'; text: string; jobId?: string } | { type: 'file'; blob: Blob; name: string; jobId?: string };
 
 export const actionsFor: Record<string, ServerAction[]> = {
   image: [
@@ -88,7 +120,7 @@ async function postFiles(
   endpoint: string,
   form: FormData,
   onProgress?: ProgressCallback,
-): Promise<{ blob: Blob; contentType: string }> {
+): Promise<{ blob: Blob; contentType: string; jobId?: string }> {
   const signed = telegramInitData();
   if (!signed) throw new Error('Для серверных инструментов открой FileShape через Telegram.');
   return new Promise((resolve, reject) => {
@@ -119,7 +151,8 @@ async function postFiles(
         reject(new Error(detail));
         return;
       }
-      resolve({ blob, contentType: xhr.getResponseHeader('Content-Type') ?? '' });
+      const jobId = xhr.getResponseHeader('X-FileShape-Job-Id') ?? undefined;
+      resolve({ blob, contentType: xhr.getResponseHeader('Content-Type') ?? '', jobId });
     };
     onProgress?.({ stage: 'upload', percent: null });
     xhr.send(form);
@@ -133,15 +166,15 @@ export async function runServerAction(
   data.append('upload', file, file.name);
   data.append('action', action);
   if (pages) data.append('pages', pages);
-  const { blob, contentType } = await postFiles('/api/v1/convert', data, onProgress);
+  const { blob, contentType, jobId } = await postFiles('/api/v1/convert', data, onProgress);
   if (contentType.includes('application/json')) {
     const body = JSON.parse(await blob.text()) as { info: Record<string, unknown> };
-    return { type: 'info', text: friendlyInfo(action, body.info) };
+    return { type: 'info', text: friendlyInfo(action, body.info), jobId };
   }
   const extension = outputExtension[action];
   if (!extension || blob.size === 0) throw new Error('Сервер вернул пустой или неожиданный файл.');
   const base = file.name.replace(/\.[^.]+$/, '').slice(0, 70) || 'file';
-  return { type: 'file', blob, name: base + '_fileshape.' + extension };
+  return { type: 'file', blob, name: base + '_fileshape.' + extension, jobId };
 }
 
 export async function runMultiImagePdf(files: File[], onProgress?: ProgressCallback): Promise<ServerResult> {
@@ -151,11 +184,11 @@ export async function runMultiImagePdf(files: File[], onProgress?: ProgressCallb
   }
   const form = new FormData();
   files.forEach(file => form.append('uploads', file, file.name));
-  const { blob, contentType } = await postFiles('/api/v1/images/pdf', form, onProgress);
+  const { blob, contentType, jobId } = await postFiles('/api/v1/images/pdf', form, onProgress);
   if (!contentType.includes('application/pdf') || blob.size === 0) {
     throw new Error('Сервер не вернул PDF.');
   }
-  return { type: 'file', blob, name: 'fileshape_photos.pdf' };
+  return { type: 'file', blob, name: 'fileshape_photos.pdf', jobId };
 }
 
 export function downloadBlob(blob: Blob, name: string): void {
