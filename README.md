@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.6 — descendant process cleanup
+
+On POSIX, conversion workers run in their own process session. When a request completes, times out or is cancelled, the API signals the worker's entire process group, preventing lingering FFmpeg grandchildren. Linux integration tests check that a timed-out worker's spawned grandchild no longer runs. Non-POSIX platforms still terminate the direct worker only. This is process lifecycle hardening, not a complete OS sandbox.
+
 ## FileShape 1.5 — malformed file regression tests
 
 Integration tests exercise the actual API subprocess worker with truncated PDFs and PNGs, damaged ZIPs, unsafe ZIP paths, invalid DOCX containers and non-UTF-8 text. Each case expects a controlled error, and selected tests verify that valid conversion still works immediately afterward. Multi-image PDF recovery is also covered. These are generated test fixtures, not an exhaustive corpus or proof that hostile documents are harmless. Fuzzing and tests against diverse real-world files remain necessary before release.
