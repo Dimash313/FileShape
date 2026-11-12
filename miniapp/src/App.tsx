@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Archive, ArrowDownToLine, ArrowRight, AudioLines, Check,
-  ChevronRight, Clock3, File, FileImage, FileText, Files, FolderOpen,
+  ChevronRight, Clock3, FileImage, FileText, Files, FolderOpen,
   Image, Info, LockKeyhole, RotateCcw, ScanLine, Settings2, Sparkles,
   UploadCloud, UserRound, WandSparkles, X,
 } from 'lucide-react';
