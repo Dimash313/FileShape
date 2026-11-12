@@ -18,6 +18,7 @@ from starlette.background import BackgroundTask
 
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
+from api.observability import RequestTrace
 from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
 from config import get_settings
@@ -83,6 +84,8 @@ api.add_middleware(
     max_bytes=MAX_REQUEST_BYTES,
     paths={"/api/v1/convert", "/api/v1/images/pdf"},
 )
+# Outer middleware also observes requests rejected before multipart parsing.
+api.add_middleware(RequestTrace)
 
 
 def authenticated_user(

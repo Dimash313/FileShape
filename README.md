@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.3 — privacy-safe diagnostics
+
+Each API HTTP response includes a random `X-Request-ID` for troubleshooting. The server logs only that ID, a fixed route category, HTTP status and elapsed milliseconds; it deliberately excludes file names, contents, Telegram authentication data and user identifiers. Unknown URLs are grouped as `other`. This is basic observability, not full production monitoring or a load-test result. Operators should still configure log retention, access controls and reverse-proxy privacy settings before deployment.
+
 ## FileShape 1.2 — operational readiness
 
 The API now exposes two distinct probes: `GET /health` for lightweight process liveness, and `GET /ready` for dependency readiness. The latter checks that FFmpeg and FFprobe are installed and temporary storage is writable; it returns HTTP 503 if a dependency is missing. Neither probe exposes environment variables or user files. Readiness is an operational signal, **not** proof that all converters work or that the service is production-ready. Monitoring, deployment orchestration and live tests remain pending.
