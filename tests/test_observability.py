@@ -43,6 +43,31 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIn("route=other", "\n".join(captured.output))
         self.assertNotIn("private-name-123", "\n".join(captured.output))
 
+    def test_unhandled_exception_logs_no_private_message_or_traceback(self):
+        from api.observability import RequestTrace
+
+        secret = "sensitive-file-name-secret.pdf"
+
+        async def failing_app(scope, receive, send):
+            raise RuntimeError(secret)
+
+        trace = RequestTrace(failing_app)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(event):
+            return None
+
+        import asyncio
+        with self.assertLogs("fileshape.requests", level="ERROR") as captured:
+            with self.assertRaisesRegex(RuntimeError, secret):
+                asyncio.run(trace({"type": "http", "path": "/api/v1/convert"}, receive, send))
+        combined = "\\n".join(captured.output)
+        self.assertIn("route=convert", combined)
+        self.assertNotIn(secret, combined)
+        self.assertNotIn("Traceback", combined)
+
     def test_oversized_upload_receives_request_id(self):
         response = self.client.post(
             "/api/v1/convert",
