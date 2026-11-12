@@ -180,7 +180,7 @@ export default function App() {
   const validPageSelection = !selectedOption?.pages || (
     selectedPages.length <= 90 &&
     selectedPages.split(',').every(part => {
-      const match = part.trim().match(/^(\\d+)(?:\\s*-\\s*(\\d+))?$/);
+      const match = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
       if (!match) return false;
       const first = Number(match[1]);
       const last = match[2] ? Number(match[2]) : first;
