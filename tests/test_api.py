@@ -13,6 +13,8 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from api.auth import InvalidInitData, verify_init_data
+from api.admission import AdmissionQueue
+from api import server
 from api.server import api
 
 TOKEN = "987654:testing-token-only"
@@ -51,6 +53,11 @@ class TelegramAuthTests(unittest.TestCase):
 
 class APITests(unittest.TestCase):
     def setUp(self):
+        # TestClient instances share the imported ASGI app; isolate each
+        # request test from shutdown in other app lifecycles.
+        queue = patch.object(server, "admission", AdmissionQueue())
+        queue.start()
+        self.addCleanup(queue.stop)
         self.env = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
         self.env.start()
         self.addCleanup(self.env.stop)
