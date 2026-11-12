@@ -65,6 +65,7 @@ function ProgressIndicator({ progress }: { progress: UploadProgress }) {
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [file, setFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
   const [serverAction, setServerAction] = useState('');
   const [pages, setPages] = useState('');
@@ -79,6 +80,18 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
+  // Browser-only preview: never upload just to display an image.
+  // Revoke object URLs whenever the file changes or the component unmounts.
+  useEffect(() => {
+    if (!file || !canConvertLocally(file)) {
+      setImagePreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
   const pick = () => { if (busy) return; tapFeedback(); setBatchMode(false); inputRef.current?.click(); };
   const pickBatch = () => { if (busy) return; tapFeedback(); batchInputRef.current?.click(); };
   const showBatch = () => {
@@ -253,6 +266,15 @@ export default function App() {
         </div> : <section className="selected-file">
           <div className="section-head"><h2>Выбранный файл</h2><button className="text-button" disabled={busy} onClick={clear}>Сбросить <X size={14}/></button></div>
           <div className="file-card"><div className="file-icon"><FileText size={24}/></div><div className="file-details"><strong title={file.name}>{file.name}</strong><span>{sizeLabel(file.size)} · {file.name.split('.').pop()?.toUpperCase() ?? 'Файл'}</span></div><Check size={19} className="file-check"/></div>
+          {kind === 'image' && imagePreviewUrl && <div className="file-preview">
+            <div className="file-preview-heading"><Image size={16}/> Предпросмотр изображения</div>
+            <img src={imagePreviewUrl} alt="Предпросмотр выбранного изображения" className="file-preview-image" />
+            <p>Изображение отображается на устройстве без отправки на сервер.</p>
+          </div>}
+          {kind === 'pdf' && <div className="file-preview pdf-overview">
+            <div className="file-preview-heading"><FileText size={16}/> PDF-документ</div>
+            <p>Размер: {sizeLabel(file.size)}. Для количества страниц выбери «Количество страниц» ниже. Просмотр отдельных страниц пока не реализован.</p>
+          </div>}
           <div className="editor-steps" aria-label="Этапы обработки">
             <span className="editor-step done"><Check size={13}/> Файл выбран</span>
             <span className="editor-step current">2 · Настройка</span>
