@@ -50,6 +50,18 @@ function fileCategory(file: File) {
   return 'other';
 }
 
+function ProgressIndicator({ progress }: { progress: UploadProgress }) {
+  return <div className="transfer-status" role="status" aria-live="polite">
+    <div className="transfer-label">
+      <span>{progress.stage === 'upload' ? 'Загрузка файла' : 'Обработка на сервере'}</span>
+      <strong>{progress.stage === 'upload' && progress.percent !== null ? progress.percent + '%' : '…'}</strong>
+    </div>
+    {progress.stage === 'upload' && progress.percent !== null
+      ? <div className="transfer-track" role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: progress.percent + '%' }} /></div>
+      : <div className="transfer-wait">Без выдуманных процентов — показываем реальный этап операции.</div>}
+  </div>;
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [file, setFile] = useState<File | null>(null);
@@ -79,7 +91,7 @@ export default function App() {
       setNotice('Выбери от 2 до 8 фотографий.');
       return;
     }
-    if (files.some(file => !/\\.(jpg|jpeg|png|webp)$/i.test(file.name) || file.size <= 0)) {
+    if (files.some(file => !/\.(jpg|jpeg|png|webp)$/i.test(file.name) || file.size <= 0)) {
       setNotice('Поддерживаются только JPG, PNG и WebP.');
       return;
     }
@@ -195,6 +207,8 @@ export default function App() {
 
   return <div className="app-shell">
     <input ref={inputRef} className="visually-hidden" type="file" onChange={e => acceptFile(e.target.files?.[0])} />
+    <input ref={batchInputRef} className="visually-hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+      onChange={e => chooseBatch(Array.from(e.target.files ?? []))} />
     <header className="topbar">
       <div className="brand">
         <div className="brand-icon"><Files size={22} strokeWidth={2.4} /></div>
