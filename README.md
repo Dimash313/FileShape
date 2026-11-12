@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.0 — editor workflow foundation
+
+The Mini App now shows a three-stage file workflow (selection, settings, result), a preflight summary of the chosen server action, and inline page-range validation before submission. Operation buttons and file replacement are disabled while a conversion is running, preventing accidental state changes during an in-flight request. Archive descriptions now accurately reflect the current ZIP listing capability. This is the first editor milestone, not a claim that every editing tool or a full preview is implemented.
+
 ## FileShape 1.9 — conversion output verification
 
 The pre-2.0 regression suite now exercises real authenticated API requests and worker subprocesses across image conversion (PNG/JPEG/WebP/PDF/compression), PDF editing (rotate, extract, first page, remove, info), and TXT/DOCX conversion. It parses resulting images, PDFs and Word documents instead of relying only on HTTP status codes. These tests cover representative generated fixtures, not the full variety of real-world files or deployment performance. Further format-specific tests and hardware stress tests remain release requirements.

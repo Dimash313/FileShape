@@ -18,7 +18,7 @@ const tools: Tool[] = [
   { title: 'PDF', subtitle: 'Страницы и объединение', icon: FileText, category: 'Документы', local: false },
   { title: 'Фото', subtitle: 'JPG, PNG, WebP', icon: Image, category: 'Изображения', local: true },
   { title: 'Аудио', subtitle: 'MP3, OGG, WAV', icon: AudioLines, category: 'Медиа', local: false },
-  { title: 'Архивы', subtitle: 'Создать и распаковать', icon: Archive, category: 'Архивы', local: false },
+  { title: 'Архивы', subtitle: 'Просмотреть ZIP', icon: Archive, category: 'Архивы', local: false },
   { title: 'Сканер', subtitle: 'Скоро', icon: ScanLine, category: 'Скоро', local: false },
   { title: 'Пакетно', subtitle: '2–8 фото в один PDF', icon: Files, category: 'PDF', local: false },
 ];
@@ -79,14 +79,15 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
-  const pick = () => { tapFeedback(); setBatchMode(false); inputRef.current?.click(); };
-  const pickBatch = () => { tapFeedback(); batchInputRef.current?.click(); };
+  const pick = () => { if (busy) return; tapFeedback(); setBatchMode(false); inputRef.current?.click(); };
+  const pickBatch = () => { if (busy) return; tapFeedback(); batchInputRef.current?.click(); };
   const showBatch = () => {
+    if (busy) return;
     tapFeedback(); setBatchMode(true); setBatchFiles([]); setFile(null);
     setTab('home'); setNotice(''); setProgress(null);
   };
   const chooseBatch = (files: File[]) => {
-    if (!files.length) return;
+    if (busy || !files.length) return;
     if (files.length < 2 || files.length > 8) {
       setNotice('Выбери от 2 до 8 фотографий.');
       return;
@@ -128,7 +129,7 @@ export default function App() {
     });
   };
   const acceptFile = (next?: File) => {
-    if (!next) return;
+    if (busy || !next) return;
     tapFeedback();
     if (next.size > 20 * 1024 * 1024) {
       setNotice('Максимальный размер файла для этого интерфейса — 20 МБ.');
@@ -142,7 +143,7 @@ export default function App() {
     setNotice('');
     setTab('home');
   };
-  const clear = () => { setFile(null); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
+  const clear = () => { if (busy) return; setFile(null); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
   const convert = async () => {
     if (!file || !canConvertLocally(file) || busy) return;
     setBusy(true);
@@ -162,9 +163,11 @@ export default function App() {
   const selectedAction = serverActions.some(option => option.code === serverAction)
     ? serverAction : (serverActions[0]?.code ?? '');
   const selectedOption = serverActions.find(option => option.code === selectedAction);
+  const selectedPages = pages.trim();
+  const validPageSelection = !selectedOption?.pages || /^[0-9,\s-]{1,90}$/.test(selectedPages) && selectedPages.split(',').every(part => /^\d+$|^\d+\s*-\s*\d+$/.test(part.trim()));
   const serverConvert = async () => {
     if (!file || busy || !selectedAction) return;
-    if (selectedOption?.pages && !/^[0-9,\s-]{1,90}$/.test(pages.trim())) {
+    if (!validPageSelection) {
       setNotice('Введи номера страниц, например 1,3-5.');
       return;
     }
@@ -222,7 +225,7 @@ export default function App() {
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
         {batchMode ? <section className="selected-file">
-          <div className="section-head"><h2>Фото → один PDF</h2><button type="button" className="text-button" onClick={clear}>Закрыть <X size={14}/></button></div>
+          <div className="section-head"><h2>Фото → один PDF</h2><button type="button" className="text-button" disabled={busy} onClick={clear}>Закрыть <X size={14}/></button></div>
           <p className="batch-intro">Выбери от 2 до 8 изображений. Порядок ниже станет порядком страниц PDF.</p>
           <button type="button" className="secondary-button full" disabled={busy} onClick={pickBatch}><UploadCloud size={17}/> Выбрать фотографии</button>
           {batchFiles.length > 0 && <div className="batch-list">
@@ -248,8 +251,13 @@ export default function App() {
           <button type="button" className="primary-button" onClick={pick}>Выбрать файл <ArrowRight size={17}/></button>
           <div className="upload-footnote"><LockKeyhole size={13}/> До 20 МБ · Безопасная обработка</div>
         </div> : <section className="selected-file">
-          <div className="section-head"><h2>Выбранный файл</h2><button className="text-button" onClick={clear}>Сбросить <X size={14}/></button></div>
+          <div className="section-head"><h2>Выбранный файл</h2><button className="text-button" disabled={busy} onClick={clear}>Сбросить <X size={14}/></button></div>
           <div className="file-card"><div className="file-icon"><FileText size={24}/></div><div className="file-details"><strong title={file.name}>{file.name}</strong><span>{sizeLabel(file.size)} · {file.name.split('.').pop()?.toUpperCase() ?? 'Файл'}</span></div><Check size={19} className="file-check"/></div>
+          <div className="editor-steps" aria-label="Этапы обработки">
+            <span className="editor-step done"><Check size={13}/> Файл выбран</span>
+            <span className="editor-step current">2 · Настройка</span>
+            <span className="editor-step">3 · Результат</span>
+          </div>
           {kind === 'image' ? <div className="convert-panel">
             <div className="panel-title"><Sparkles size={17}/> Быстрая конвертация</div>
             <p>Выберите формат для сохранения изображения на устройство.</p>
@@ -262,17 +270,23 @@ export default function App() {
             <div className="server-options">
               {serverActions.map(option => <button type="button" key={option.code}
                 className={selectedAction === option.code ? 'server-option active' : 'server-option'}
-                onClick={() => { setServerAction(option.code); setNotice(''); }}>{option.label}</button>)}
+                disabled={busy} aria-pressed={selectedAction === option.code}
+                onClick={() => { setServerAction(option.code); setPages(''); setNotice(''); }}>{option.label}</button>)}
             </div>
             {selectedOption?.pages && <label className="pages-field">Номера страниц
               <input type="text" value={pages} onChange={event => setPages(event.target.value)}
-                placeholder="Например: 1,3-5" maxLength={90} />
+                placeholder="Например: 1,3-5" maxLength={90} disabled={busy} aria-invalid={!validPageSelection} />
             </label>}
-            <button className="primary-button full" disabled={busy || !telegramInitData()} onClick={serverConvert}>
+            <div className="editor-review">
+              <strong>Перед обработкой</strong>
+              <span>{selectedOption?.label ?? 'Выберите действие'} · {sizeLabel(file.size)}</span>
+              {selectedOption?.pages && <span>{validPageSelection ? 'Страницы: ' + selectedPages : 'Укажи страницы: 1,3-5'}</span>}
+            </div>
+            <button className="primary-button full" disabled={busy || !telegramInitData() || !validPageSelection} onClick={serverConvert}>
               {busy ? 'Обрабатываю…' : 'Выполнить'} <ArrowRight size={17}/>
             </button>
           </div> : kind !== 'image' ? <div className="pending-panel"><Info size={20}/><div><strong>Формат пока не поддерживается</strong><p>Попробуй PDF, TXT, DOCX, ZIP, изображение или аудио.</p></div></div> : null}
-          <button type="button" className="secondary-button full" onClick={pick}><RotateCcw size={16}/> Выбрать другой файл</button>
+          <button type="button" className="secondary-button full" disabled={busy} onClick={pick}><RotateCcw size={16}/> Выбрать другой файл</button>
         </section>}
         {progress && <ProgressIndicator progress={progress} />}
         <div className="section-head tools-head"><h2>Быстрые инструменты</h2><button className="text-button" onClick={() => setTab('tools')}>Все <ChevronRight size={17}/></button></div>
@@ -280,7 +294,7 @@ export default function App() {
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
       {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}</span></div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
-      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 1.9</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
+      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.0</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
     <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
