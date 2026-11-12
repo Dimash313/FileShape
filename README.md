@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.8 — PDF selection regression tests
+
+Added regression tests for page-range syntax, duplicate pages, ordering, 150-page selection limits, 250-page document limits, extract/remove output integrity, and rejection of invalid page selections through the authenticated API. This release focuses on automated safety coverage rather than new UI controls.
+
 ## FileShape 2.7 — actionable PDF selection feedback
 
 The Mini App displays an accessible inline message when page selection is missing, malformed, exceeds the 90-character field limit or 150 selected-page limit, or would remove every page. The same validation blocks submission and informs the preflight summary. This is client-side guidance; the server still performs authoritative PDF checks.
