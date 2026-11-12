@@ -136,6 +136,11 @@ async def stop_accepting_conversions():
 
 @api.on_event("startup")
 async def remove_abandoned_workspaces():
+    # Each application lifecycle needs an open waiting room. A previous
+    # graceful shutdown must not poison a subsequent startup in the process.
+    global admission
+    if admission.closing:
+        admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
     # Only workspaces older than one hour and without a held lock.
     await asyncio.to_thread(cleanup_orphans)
 
