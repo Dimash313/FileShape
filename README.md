@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.4 — PDF page number grid
+
+After the user explicitly requests PDF page count, the Mini App displays an accessible grid of numbered page buttons for extract/remove operations. Tapping a page toggles its selection and synchronizes the existing manual input. Consecutive selections are compacted into ranges, with a bounded 90-character input and the existing server-side checks. The grid displays numbers, **not rendered PDF thumbnails**. Manual input and quick presets remain available.
+
 ## FileShape 2.3 — on-demand PDF page count
 
 The Mini App can explicitly request PDF page count from the existing authenticated server endpoint, displaying the result before editing. Once known, page-range validation is limited to the actual number of pages. Selecting another file resets the count. This sends the PDF to the server only when the user requests inspection; it is not an offline PDF parser or visual page preview.
