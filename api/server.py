@@ -60,7 +60,20 @@ if allowed_origin:
         allow_headers=["X-Telegram-Init-Data", "Content-Type"],
     )
 
-slots = asyncio.Semaphore(3)
+def configured_worker_capacity() -> int:
+    """Bound concurrent workers; deploy with sufficient RAM for this setting."""
+    raw = os.environ.get("FILESHAPE_MAX_CONCURRENT_JOBS", "3")
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError("FILESHAPE_MAX_CONCURRENT_JOBS must be an integer") from None
+    if not 1 <= value <= 10:
+        raise RuntimeError("FILESHAPE_MAX_CONCURRENT_JOBS must be between 1 and 10")
+    return value
+
+
+MAX_CONCURRENT_JOBS = configured_worker_capacity()
+slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 
