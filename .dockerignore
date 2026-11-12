@@ -23,3 +23,7 @@ venv
 *.jpg
 *.jpeg
 *.webp
+
+# Private persistent job metadata and SQLite sidecars
+state/
+*.sqlite3*

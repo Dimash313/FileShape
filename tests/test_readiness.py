@@ -1,5 +1,7 @@
 """Readiness checks must fail closed without exposing infrastructure details."""
 import unittest
+import tempfile
+import os
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -10,6 +12,13 @@ from api.server import api
 
 
 class ReadinessTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        env = patch.dict(os.environ, {"FILESHAPE_STATE_DIR": directory.name})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_all_dependencies_available(self):
         with patch("api.readiness.shutil.which", return_value="/usr/bin/program"):
             result = readiness_status()

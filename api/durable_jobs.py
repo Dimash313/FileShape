@@ -1,4 +1,4 @@
-"""SQLite-backed job *metadata* prototype; not connected to conversion routes.
+"""Bounded SQLite-backed job metadata used by server conversions.
 
 Stores owner IDs, opaque job IDs and timestamps only. Never stores file paths,
 names, uploaded bytes or results. Recovery marks interrupted jobs failed;
@@ -9,13 +9,29 @@ import secrets
 import sqlite3
 import stat
 import time
+import math
+import threading
+from functools import wraps
 from pathlib import Path
 
-from api.jobs import JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
+from api.jobs import JobCapacityExceeded, JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
+
+
+def serialized(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class DurableJobStore:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, max_entries: int = 1000, retention_seconds: float = 3600):
+        if type(max_entries) is not int or max_entries < 1 or not math.isfinite(retention_seconds) or retention_seconds <= 0:
+            raise ValueError("Invalid store settings")
+        self.max_entries = max_entries
+        self.retention_seconds = retention_seconds
+        self._lock = threading.RLock()
         self.path = str(path)
         # The parent directory must be private and service-owned. SQLite opens
         # sidecars by pathname; untrusted directory writers cannot be supported.
@@ -23,7 +39,7 @@ class DurableJobStore:
             self._prepare_file(Path(self.path), create=True)
             for suffix in ("-wal", "-shm", "-journal"):
                 self._prepare_file(Path(self.path + suffix), create=False)
-        self._db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+        self._db = sqlite3.connect(self.path, timeout=5, isolation_level=None, check_same_thread=False)
         try:
             self._initialize()
         except BaseException:
@@ -72,6 +88,7 @@ class DurableJobStore:
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_updated ON jobs(state, updated_at)")
 
+    @serialized
     def close(self) -> None:
         self._db.close()
 
@@ -85,19 +102,31 @@ class DurableJobStore:
     def _snapshot(row) -> JobSnapshot:
         return JobSnapshot(row[0], row[1], row[2], row[3])
 
+    @serialized
     def create(self, owner_id: int) -> JobSnapshot:
-        if type(owner_id) is not int or owner_id <= 0:
+        if type(owner_id) is not int or not 0 < owner_id <= 2**63 - 1:
             raise ValueError("Invalid owner")
         now = time.time()
         job_id = secrets.token_urlsafe(24)
-        self._db.execute(
-            "INSERT INTO jobs(job_id,owner_id,state,created_at,updated_at) VALUES(?,?,?,?,?)",
-            (job_id, owner_id, "queued", now, now),
-        )
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self.prune_terminal(self.retention_seconds)
+            if self._db.execute("SELECT count(*) FROM jobs").fetchone()[0] >= self.max_entries:
+                raise JobCapacityExceeded()
+            self._db.execute(
+                "INSERT INTO jobs(job_id,owner_id,state,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (job_id, owner_id, "queued", now, now),
+            )
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
         return JobSnapshot(job_id, "queued", now, now)
 
+    @serialized
     def get(self, job_id: str, owner_id: int) -> JobSnapshot:
-        if type(owner_id) is not int:
+        self.prune_terminal(self.retention_seconds)
+        if type(owner_id) is not int or not 0 < owner_id <= 2**63 - 1:
             raise JobNotFound()
         row = self._db.execute(
             "SELECT job_id,state,created_at,updated_at FROM jobs WHERE job_id=? AND owner_id=?",
@@ -107,6 +136,7 @@ class DurableJobStore:
             raise JobNotFound()
         return self._snapshot(row)
 
+    @serialized
     def transition(self, job_id: str, owner_id: int, state: str) -> JobSnapshot:
         item = self.get(job_id, owner_id)
         if state not in TRANSITIONS[item.state]:
@@ -120,6 +150,7 @@ class DurableJobStore:
             raise JobStateError()
         return JobSnapshot(job_id, state, item.created_at, now)
 
+    @serialized
     def mark_interrupted_failed(self) -> int:
         """Run only when all workers are stopped; does not replay any work."""
         return self._db.execute(
@@ -127,8 +158,9 @@ class DurableJobStore:
             (time.time(),),
         ).rowcount
 
+    @serialized
     def prune_terminal(self, retention_seconds: float = 3600) -> int:
-        if retention_seconds <= 0:
+        if not math.isfinite(retention_seconds) or retention_seconds <= 0:
             raise ValueError("Invalid retention")
         return self._db.execute(
             "DELETE FROM jobs WHERE state IN ('completed','failed','cancelled') AND updated_at<=?",
