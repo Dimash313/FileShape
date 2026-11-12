@@ -2,7 +2,7 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.9 — batch images and real upload progress)
+## Implemented (v1.0 foundation — upload validation hardening)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.
 
@@ -49,7 +49,13 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
-## FileShape Studio Mini App (v0.9)
+## FileShape 1.0 — reliability foundation (phase 1)
+
+Server-side uploads now undergo content signature checks before format parsers run: PDF magic bytes, JPG/PNG/WebP decoder identification, ZIP/DOCX container recognition, basic audio headers and binary TXT rejection. A renamed file cannot bypass these checks by extension alone. Single-file and multi-image endpoints both enforce validation. Tests cover valid and mislabeled files.
+
+**Limitations:** signature validation is only an early rejection layer, not proof a document is safe. The full v1.0 reliability gate still requires independent process isolation with CPU/memory/time caps, upload parser/ingress limits, crash recovery, load testing, and live Android/Telegram verification. This commit does not imply those gates are complete or that the service is deployed.
+
+## FileShape Studio Mini App (v0.9, server hardening v1.0)
 
 A mobile-first dark-blue React + TypeScript interface is in `miniapp/`. Four tabs, browser-side JPG/PNG/WebP conversion, downloadable results retained in limited session memory, and an **authenticated Python API** for supported file tools.
 
