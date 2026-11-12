@@ -5,6 +5,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from api.readiness import readiness_status
+from api import server
 from api.server import api
 
 
@@ -29,6 +30,14 @@ class ReadinessTests(unittest.TestCase):
                 result = readiness_status()
         self.assertEqual(result["status"], "unavailable")
         self.assertFalse(result["checks"]["temporary_storage"])
+
+    def test_queue_reopens_after_clean_restart(self):
+        with TestClient(api):
+            self.assertFalse(server.admission.closing)
+        self.assertTrue(server.admission.closing)
+        with TestClient(api):
+            self.assertFalse(server.admission.closing)
+        self.assertTrue(server.admission.closing)
 
     def test_http_readiness_status_and_liveness(self):
         with TestClient(api) as client:
