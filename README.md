@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.3 — graceful queue shutdown
+
+When the API process begins a graceful shutdown, the in-memory admission queue closes: new requests are rejected and waiting conversions wake promptly with HTTP 503 and Retry-After, rather than remaining stuck until the 90-second queue timeout. Added tests for waiting requests, closing-state admission and a simultaneous slot-release/shutdown race to prevent permit leaks.
+
+**Important:** This does **not** persist or resume uploaded jobs after a crash or restart. Active jobs may still be interrupted by server termination. Durable job IDs, external storage and a persistent shared worker queue require a separate design and deployment.
+
 ## FileShape 3.2 — bounded in-process waiting queue
 
 Single-file conversions and multi-image PDF jobs now share an in-process waiting room (20 waiting requests maximum, up to 90 seconds of waiting). The worker count is still configured with `FILESHAPE_MAX_CONCURRENT_JOBS`, defaulting to 3 and supporting up to 10 when hardware has been verified. When capacity is occupied, new requests wait for a semaphore slot in arrival order rather than immediately receiving HTTP 429. If the waiting room is full, the server returns HTTP 429 with Retry-After; if waiting times out, it returns HTTP 503 with Retry-After. The request remains connected and the Mini App shows an honest waiting/processing indicator without inventing percentages. Tests cover shared single/batch admission, 10 active workers plus an eleventh waiter, queue overflow, FIFO behavior, cancellation and timeout cleanup.

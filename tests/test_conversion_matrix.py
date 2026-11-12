@@ -18,6 +18,8 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
+from api.admission import AdmissionQueue
+from api import server
 from api.server import api
 
 TOKEN = "987654:testing-token-only"
@@ -60,6 +62,11 @@ def docx_bytes():
 
 class ConversionMatrixTests(unittest.TestCase):
     def setUp(self):
+        # TestClient instances share the imported ASGI app; isolate each
+        # request test from shutdown in other app lifecycles.
+        queue = patch.object(server, "admission", AdmissionQueue())
+        queue.start()
+        self.addCleanup(queue.stop)
         env = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
         env.start()
         self.addCleanup(env.stop)

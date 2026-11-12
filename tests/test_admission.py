@@ -2,7 +2,7 @@
 import asyncio
 import unittest
 
-from api.admission import AdmissionQueue, QueueFull, QueueTimeout
+from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 
 
 class AdmissionQueueTests(unittest.IsolatedAsyncioTestCase):
@@ -72,6 +72,39 @@ class AdmissionQueueTests(unittest.IsolatedAsyncioTestCase):
         slots.release()
         await gate.acquire(slots)
 
+    async def test_shutdown_rejects_new_and_wakes_waiting_requests(self):
+        slots = asyncio.Semaphore(1)
+        await slots.acquire()
+        gate = AdmissionQueue(max_waiters=2, wait_seconds=10)
+        tasks = [asyncio.create_task(gate.acquire(slots)) for _ in range(2)]
+        try:
+            await self.wait_for_waiters(gate, 2)
+            gate.close()
+            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 1)
+            self.assertTrue(all(isinstance(result, QueueClosed) for result in results))
+            self.assertEqual(gate.waiting, 0)
+            with self.assertRaises(QueueClosed):
+                await gate.acquire(slots)
+            self.assertEqual(slots._value, 0)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_shutdown_acquire_race_does_not_leak_permit(self):
+        slots = asyncio.Semaphore(1)
+        await slots.acquire()
+        gate = AdmissionQueue(max_waiters=1, wait_seconds=10)
+        pending = asyncio.create_task(gate.acquire(slots))
+        await self.wait_for_waiters(gate, 1)
+        slots.release()
+        gate.close()
+        with self.assertRaises(QueueClosed):
+            await asyncio.wait_for(pending, 1)
+        self.assertEqual(gate.waiting, 0)
+        self.assertEqual(slots._value, 1)
+
     async def test_waiters_run_in_arrival_order(self):
         slots = asyncio.Semaphore(1)
         await slots.acquire()
@@ -97,6 +130,21 @@ class AdmissionQueueTests(unittest.IsolatedAsyncioTestCase):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class AdmissionMultiLoopTests(unittest.TestCase):
+    def test_queue_handles_sequential_event_loops_without_false_shutdown(self):
+        gate = AdmissionQueue(max_waiters=1, wait_seconds=1)
+
+        async def acquire_in_new_loop():
+            slots = asyncio.Semaphore(1)
+            await gate.acquire(slots)
+            slots.release()
+
+        # TestClient runs requests on separate loops when not using lifespan.
+        for _ in range(3):
+            asyncio.run(acquire_in_new_loop())
+        self.assertFalse(gate.closing)
 
 
 if __name__ == "__main__":
