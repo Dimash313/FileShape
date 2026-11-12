@@ -44,7 +44,7 @@ class RequestTrace:
         try:
             await self.app(scope, receive, traced_send)
         except Exception:
-            logger.exception("request_failed id=%s route=%s", trace_id, route)
+            logger.error("request_failed id=%s route=%s", trace_id, route)
             raise
         finally:
             elapsed_ms = round((time.monotonic() - started) * 1000)
