@@ -21,6 +21,7 @@ from api.ingress import UploadIngressGuard
 from api.observability import RequestTrace
 from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
+from api.workspaces import Workspace, cleanup_orphans
 from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import inspect_zip
@@ -113,6 +114,12 @@ async def enforce_rate_limit(user_id: int) -> None:
                     del recent_requests[key]
 
 
+@api.on_event("startup")
+async def remove_abandoned_workspaces():
+    # Only workspaces older than one hour and without a held lock.
+    await asyncio.to_thread(cleanup_orphans)
+
+
 @api.get("/health")
 async def health():
     return {"status": "ok"}
@@ -199,7 +206,7 @@ async def convert(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=429, detail="Сервер занят. Повтори позже.") from None
 
-    work = tempfile.TemporaryDirectory(prefix="fileshape_api_")
+    work = Workspace(prefix="fileshape_api_")
     try:
         source = Path(work.name) / ("source" + suffix)
         read_bytes = 0
@@ -276,7 +283,7 @@ async def multi_image_pdf(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=429, detail="Сервер занят. Попробуй позже.") from None
 
-    work = tempfile.TemporaryDirectory(prefix="fileshape_batch_")
+    work = Workspace(prefix="fileshape_batch_")
     try:
         paths = []
         total = 0

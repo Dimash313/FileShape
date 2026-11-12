@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 1.8 — crash-recovery temporary workspace cleanup
+
+The Linux API now uses private temporary workspaces with held advisory locks. At API startup it scans at most 500 workspace entries and deletes only FileShape workspaces older than one hour whose locks are no longer held. Active, recent and unrelated directories are preserved. Regression tests cover these cases. This is bounded startup recovery, not a periodic disk janitor; operational disk monitoring and container restart policy are still required.
+
 ## FileShape 1.7 — cancellation-safe temporary file cleanup
 
 Both single-file and multi-image API handlers now explicitly clean their temporary directories when an asyncio request task is cancelled. Regression tests cancel an in-progress worker and assert that temporary files are removed and all three API processing slots are available again. This covers application-level task cancellation; a hard OS crash still requires host-level temporary-storage housekeeping.
