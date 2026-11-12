@@ -132,5 +132,20 @@ class AdmissionQueueTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
+class AdmissionMultiLoopTests(unittest.TestCase):
+    def test_queue_handles_sequential_event_loops_without_false_shutdown(self):
+        gate = AdmissionQueue(max_waiters=1, wait_seconds=1)
+
+        async def acquire_in_new_loop():
+            slots = asyncio.Semaphore(1)
+            await gate.acquire(slots)
+            slots.release()
+
+        # TestClient runs requests on separate loops when not using lifespan.
+        for _ in range(3):
+            asyncio.run(acquire_in_new_loop())
+        self.assertFalse(gate.closing)
+
+
 if __name__ == "__main__":
     unittest.main()
