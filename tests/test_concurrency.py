@@ -27,7 +27,7 @@ def signed_init_data(user_id: int) -> str:
         "auth_date": str(int(time.time())),
         "user": json.dumps({"id": user_id}, separators=(",", ":")),
     }
-    check = "\\n".join(f"{key}={value}" for key, value in sorted(data.items()))
+    check = "\n".join(f"{key}={value}" for key, value in sorted(data.items()))
     secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
     data["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
     return urlencode(data)
