@@ -1,5 +1,7 @@
 """Request correlation is stable per response and excludes private data."""
 import unittest
+import os
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -21,11 +23,12 @@ class ObservabilityTests(unittest.TestCase):
 
     def test_log_does_not_include_private_request_details(self):
         secret = "private-token-should-not-be-logged"
-        with self.assertLogs("fileshape.requests", level="INFO") as captured:
-            response = self.client.get(
-                "/api/v1/session",
-                headers={"X-Telegram-Init-Data": secret},
-            )
+        with patch.dict(os.environ, {"BOT_TOKEN": "987654:testing-token-only"}):
+            with self.assertLogs("fileshape.requests", level="INFO") as captured:
+                response = self.client.get(
+                    "/api/v1/session",
+                    headers={"X-Telegram-Init-Data": secret},
+                )
         self.assertEqual(response.status_code, 401)
         combined = "\n".join(captured.output)
         self.assertIn("route=session", combined)
