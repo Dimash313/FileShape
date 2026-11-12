@@ -49,6 +49,10 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 2.3 — on-demand PDF page count
+
+The Mini App can explicitly request PDF page count from the existing authenticated server endpoint, displaying the result before editing. Once known, page-range validation is limited to the actual number of pages. Selecting another file resets the count. This sends the PDF to the server only when the user requests inspection; it is not an offline PDF parser or visual page preview.
+
 ## FileShape 2.2 — PDF page selection shortcuts
 
 The Mini App now provides touch-friendly shortcuts for selecting the first page, pages 1–3, pages 1–5, and clearing the selection. The page input still supports comma-separated numbers and ranges. Client-side validation rejects zero, reversed ranges, values over the PDF processing limit of 250, and malformed syntax before upload. The backend remains authoritative and rejects pages that do not exist in the actual document. This milestone does not implement visual PDF thumbnails or page drag-and-drop.
