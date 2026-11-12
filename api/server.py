@@ -258,7 +258,7 @@ async def convert(
         raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
     except Exception:
         work.cleanup()
-        logger.exception("FileShape API processing failed")
+        logger.error("FileShape API processing failed")
         raise HTTPException(status_code=422, detail="Не удалось прочитать или обработать файл") from None
     finally:
         slots.release()
