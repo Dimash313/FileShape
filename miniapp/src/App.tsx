@@ -223,12 +223,13 @@ export default function App() {
     }
   }
   const applyBulkSelection = (mode: 'all' | 'clear' | 'invert') => {
-    if (busy || pdfPageCount === null || !validPageSelection) return;
+    if (busy) return;
     if (mode === 'clear') {
       setPages('');
       setNotice('');
       return;
     }
+    if (pdfPageCount === null || !validPageSelection) return;
     if (mode === 'all') {
       if (pdfPageCount > 150) {
         setNotice('За одну операцию можно выбрать не более 150 страниц.');
