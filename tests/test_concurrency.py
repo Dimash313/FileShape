@@ -4,6 +4,7 @@ No external services are used. The expensive worker is replaced with a
 controllable async stub so overload behavior is deterministic.
 """
 import asyncio
+from collections import defaultdict, deque
 import hashlib
 import hmac
 import json
@@ -18,6 +19,7 @@ from unittest.mock import patch
 import httpx
 from PIL import Image
 
+from api.admission import AdmissionQueue
 from api.server import api
 from api import server
 TOKEN = "987654:testing-token-only"
@@ -46,6 +48,12 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         capacity = patch.object(server, 'slots', asyncio.Semaphore(3))
         capacity.start()
         self.addCleanup(capacity.stop)
+        queue = patch.object(server, 'admission', AdmissionQueue(max_waiters=1, wait_seconds=3))
+        queue.start()
+        self.addCleanup(queue.stop)
+        limits = patch.object(server, 'recent_requests', defaultdict(deque))
+        limits.start()
+        self.addCleanup(limits.stop)
         self.environment = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
         self.environment.start()
         self.addCleanup(self.environment.stop)
@@ -66,7 +74,7 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             files={"upload": ("photo.png", self.image, "image/png")},
         )
 
-    async def test_fourth_request_rejected_while_three_are_processing(self):
+    async def test_fourth_request_waits_while_three_are_processing(self):
         entered = 0
         peak = 0
         active = 0
@@ -92,13 +100,18 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             tasks = [asyncio.create_task(self.submit()) for _ in range(3)]
             try:
                 await asyncio.wait_for(started.wait(), timeout=5)
-                fourth = await self.submit()
-                self.assertEqual(fourth.status_code, 429, fourth.text)
+                fourth_task = asyncio.create_task(self.submit())
+                for _ in range(150):
+                    if server.admission.waiting == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertEqual(server.admission.waiting, 1)
+                self.assertFalse(fourth_task.done())
                 self.assertEqual(entered, 3)
                 self.assertEqual(peak, 3)
             finally:
                 release.set()
-                responses = await asyncio.gather(*tasks)
+                responses = await asyncio.gather(*tasks, fourth_task)
         self.assertTrue(all(response.status_code == 200 for response in responses))
         self.assertEqual(active, 0)
         self.assertEqual(server.slots._value, 3)
@@ -138,13 +151,20 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
                      asyncio.create_task(self.submit())]
             try:
                 await asyncio.wait_for(started.wait(), timeout=5)
-                overloaded_batch = await submit_batch()
-                self.assertEqual(overloaded_batch.status_code, 429, overloaded_batch.text)
+                fourth_task = asyncio.create_task(submit_batch())
+                for _ in range(150):
+                    if server.admission.waiting == 1:
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertEqual(server.admission.waiting, 1)
                 self.assertEqual(entered, 3)
+                rejected = await self.submit()
+                self.assertEqual(rejected.status_code, 429, rejected.text)
+                self.assertEqual(rejected.headers.get("retry-after"), "15")
             finally:
                 release.set()
-                responses = await asyncio.gather(*tasks)
-        self.assertEqual([r.status_code for r in responses], [200, 200, 200])
+                responses = await asyncio.gather(*tasks, fourth_task)
+        self.assertEqual([r.status_code for r in responses], [200, 200, 200, 200])
         self.assertEqual(server.slots._value, 3)
 
     async def test_worker_cancellation_restores_capacity(self):

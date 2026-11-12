@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.2 — bounded in-process waiting queue
+
+Single-file conversions and multi-image PDF jobs now share an in-process waiting room (20 waiting requests maximum, up to 90 seconds of waiting). The worker count is still configured with `FILESHAPE_MAX_CONCURRENT_JOBS`, defaulting to 3 and supporting up to 10 when hardware has been verified. When capacity is occupied, new requests wait for a semaphore slot in arrival order rather than immediately receiving HTTP 429. If the waiting room is full, the server returns HTTP 429 with Retry-After; if waiting times out, it returns HTTP 503 with Retry-After. The request remains connected and the Mini App shows an honest waiting/processing indicator without inventing percentages. Tests cover shared single/batch admission, 10 active workers plus an eleventh waiter, queue overflow, FIFO behavior, cancellation and timeout cleanup.
+
+**Limits:** This is **not** persistent background processing. The queue is local to one API process and does not survive restarts; the client must keep the request open, and reverse-proxy HTTP timeouts must allow queued requests to finish. Each queued multipart upload may use temporary disk space. Multi-process deployments need a separate shared queue and global worker limits before increasing traffic.
+
 ## FileShape 3.1 — configurable worker concurrency
 
 The maximum number of simultaneous conversion jobs is now configurable with `FILESHAPE_MAX_CONCURRENT_JOBS` (integer 1–10). Default remains 3 until real server memory and CPU capacity have been measured; setting 10 is an opt-in deployment decision. A worker can use up to 512 MiB, so ten workers may need approximately 5 GiB of RAM before API/OS overhead. Includes validation tests. This is not a persistent queue, and capacity is per API process, not globally shared across replicas.
