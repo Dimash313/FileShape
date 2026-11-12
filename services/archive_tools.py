@@ -4,7 +4,6 @@ Never use ZipFile.extractall() on user archives; user paths are untrusted.
 """
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import stat
 import zipfile
 
@@ -63,7 +62,7 @@ def unpack_zip(source: Path, folder: Path) -> list[tuple[Path, str]]:
     result = []
     actual_total = 0
     with zipfile.ZipFile(source, "r") as archive:
-        for index, info in enumerate(info for info in archive.infolist() if not info.is_dir(), 1):
+        for index, info in enumerate((info for info in archive.infolist() if not info.is_dir()), 1):
             # Basename only: prevent Zip Slip, even when folders are nested.
             raw_name = PurePosixPath(info.filename).name
             clean_name = re.sub(r"[\x00-\x1f\x7f]", "_", raw_name).strip(" .")
