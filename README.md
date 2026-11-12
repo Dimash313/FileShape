@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.8 — SQLite job metadata persistence prototype
+
+Adds a standalone `api/durable_jobs.py` SQLite-backed metadata store and tests for persistence across reopen, owner-only access, strict lifecycle transitions, terminal metadata expiry and explicitly marking interrupted queued/processing records **failed** after a restart. Only job IDs, owner IDs, states and timestamps are persisted; no file names, file paths, uploads or results. SQLite transactions guard state updates against stale transitions.
+
+**Not yet enabled in production conversion endpoints.** The active API still uses the in-memory registry from 3.6. This module is a tested foundation for a later migration, **not** a persistent processing queue or restart recovery. Recovery deliberately does not replay jobs. Multi-replica ownership, bounded retention scheduling, filesystem encryption/permissions and safe durable upload/result storage require further design.
+
 ## FileShape 3.7 — job status in session history
 
 The Mini App now reads `X-FileShape-Job-Id` from successful single-file and batch conversion responses, attaches the ID to the local session-history entry, and offers a manual **Проверить статус** action. This calls the authenticated, owner-only `GET /api/v1/jobs/{job_id}` endpoint with an eight-second timeout and validates the response. Statuses are shown alongside recent operations; locally converted images do not receive server IDs. No background polling or fabricated progress percentage.
