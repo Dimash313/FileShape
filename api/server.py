@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
-from api.admission import AdmissionQueue, QueueFull, QueueTimeout
+from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.observability import RequestTrace
@@ -129,6 +129,11 @@ async def enforce_rate_limit(user_id: int) -> None:
                     del recent_requests[key]
 
 
+@api.on_event("shutdown")
+async def stop_accepting_conversions():
+    admission.close()
+
+
 @api.on_event("startup")
 async def remove_abandoned_workspaces():
     # Only workspaces older than one hour and without a held lock.
@@ -218,6 +223,8 @@ async def convert(
     await enforce_rate_limit(user_id)
     try:
         await admission.acquire(slots)
+    except QueueClosed:
+        raise HTTPException(status_code=503, detail="Сервер перезапускается. Повтори запрос позже.", headers={"Retry-After": "10"}) from None
     except QueueFull:
         raise HTTPException(
             status_code=429,
