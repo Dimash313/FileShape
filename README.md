@@ -49,6 +49,12 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.9 — SQLite metadata hardening before live integration
+
+The standalone SQLite metadata store now tightens database file permissions to owner-only (0600 on POSIX), rejects symlink/non-file database paths, and uses SQLite FULL synchronous mode for durable transaction commits. Files are created with mode 0600 before SQLite opens them. Existing WAL/SHM/journal files are checked before connection; symlinks, hardlinks and non-regular files are rejected. Initialization failures close the connection. Tests cover competing transitions from two connections, stale updates, legitimate processing cancellation, private sidecars under a permissive umask and connection cleanup.
+
+**Deployment caution:** This is not a complete defense against a hostile process that can replace parent directory entries; configure a private, service-owned directory on a trusted filesystem and protect its backups and WAL/SHM files. Run the service with a single worker until a shared job-store migration and multi-process startup semantics are designed. The live API still uses its existing in-memory job registry. No persistent files or restart recovery.
+
 ## FileShape 3.8 — SQLite job metadata persistence prototype
 
 Adds a standalone `api/durable_jobs.py` SQLite-backed metadata store and tests for persistence across reopen, owner-only access, strict lifecycle transitions, terminal metadata expiry and explicitly marking interrupted queued/processing records **failed** after a restart. Only job IDs, owner IDs, states and timestamps are persisted; no file names, file paths, uploads or results. SQLite transactions guard state updates against stale transitions.
