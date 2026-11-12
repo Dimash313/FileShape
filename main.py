@@ -63,6 +63,7 @@ def file_menu(kind: str) -> InlineKeyboardMarkup:
         ])
     return buttons([
         [("→ JPG", "img:JPEG"), ("→ PNG", "img:PNG"), ("→ WebP", "img:WEBP")],
+        [("📄 → PDF", "img:PDF")],
         [("🗜 Оптимизировать WebP", "img:compress")],
     ])
 
@@ -281,7 +282,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         "pdf:info", "pdf:first", "pdf:extract", "pdf:rotate", "pdf:merge"
     }
     valid_image = category == "image" and action in {
-        "img:JPEG", "img:PNG", "img:WEBP", "img:compress"
+        "img:JPEG", "img:PNG", "img:WEBP", "img:PDF", "img:compress"
     }
     if not file or not size_allowed(size) or not (valid_pdf or valid_image):
         await callback.answer("Недопустимое действие.", show_alert=True)
@@ -334,7 +335,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         await asyncio.to_thread(compress_image, source, target)
                     else:
                         fmt = action.split(":", 1)[1]
-                        ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}[fmt]
+                        ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}[fmt]
                         target = folder / ("converted" + ext)
                         await asyncio.to_thread(convert_image, source, target, fmt)
                     await send_result(callback.message, target)
