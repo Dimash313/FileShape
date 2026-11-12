@@ -18,6 +18,8 @@ import zipfile
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from api.admission import AdmissionQueue
+from api import server
 from api.server import api
 from api.worker_runner import run_worker, WorkerFailed
 
@@ -51,6 +53,11 @@ def make_zip(files):
 
 class MalformedFileAPITests(unittest.TestCase):
     def setUp(self):
+        # TestClient instances share the imported ASGI app; isolate each
+        # request test from shutdown in other app lifecycles.
+        queue = patch.object(server, "admission", AdmissionQueue())
+        queue.start()
+        self.addCleanup(queue.stop)
         self.environment = patch.dict(os.environ, {"BOT_TOKEN": TOKEN})
         self.environment.start()
         self.addCleanup(self.environment.stop)
