@@ -1,4 +1,5 @@
 """SQLite job metadata persistence and privacy tests."""
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,38 @@ class DurableJobStoreTests(unittest.TestCase):
             columns = {row[1] for row in store._db.execute("PRAGMA table_info(jobs)")}
             self.assertEqual(columns, {"job_id", "owner_id", "state", "created_at", "updated_at"})
             self.assertEqual(set(job.public()), {"job_id", "state", "created_at", "updated_at"})
+
+    def test_stale_concurrent_transition_is_rejected(self):
+        # Two separate connections see the same queued state. Only one may
+        # commit a transition; the other must not overwrite the winner.
+        with DurableJobStore(self.path) as first, DurableJobStore(self.path) as second:
+            job = first.create(11)
+            stale = second.get(job.job_id, 11)
+            self.assertEqual(stale.state, "queued")
+            first.transition(job.job_id, 11, "processing")
+            with self.assertRaises(JobStateError):
+                second.transition(job.job_id, 11, "cancelled")
+            self.assertEqual(first.get(job.job_id, 11).state, "processing")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
+    def test_database_file_is_private(self):
+        with DurableJobStore(self.path) as store:
+            store.create(11)
+            self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        os.chmod(self.path, 0o644)
+        with DurableJobStore(self.path):
+            self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+    def test_reject_symlink_database(self):
+        target = Path(self.tmp.name) / "real.sqlite3"
+        target.write_bytes(b"")
+        link = Path(self.tmp.name) / "link.sqlite3"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlinks unavailable")
+        with self.assertRaises(ValueError):
+            DurableJobStore(link)
 
     def test_invalid_owners_and_retention(self):
         with DurableJobStore(self.path) as store:
