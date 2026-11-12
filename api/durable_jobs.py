@@ -4,6 +4,7 @@ Stores owner IDs, opaque job IDs and timestamps only. Never stores file paths,
 names, uploaded bytes or results. Recovery marks interrupted jobs failed;
 it cannot resume conversions without a durable, privacy-safe file pipeline.
 """
+import os
 import secrets
 import sqlite3
 import time
@@ -15,9 +16,22 @@ from api.jobs import JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
 class DurableJobStore:
     def __init__(self, path: str | Path):
         self.path = str(path)
+        # Service metadata is not an upload workspace. Reject symlinks and
+        # tighten permissions on existing and newly created database files.
+        if self.path != ":memory:":
+            target = Path(self.path)
+            if target.is_symlink():
+                raise ValueError("Job database must not be a symlink")
+            if target.exists() and not target.is_file():
+                raise ValueError("Job database path must be a regular file")
+            if target.exists():
+                os.chmod(target, 0o600)
         self._db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+        if self.path != ":memory:":
+            os.chmod(self.path, 0o600)
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=FULL")
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 job_id TEXT PRIMARY KEY,
