@@ -2,7 +2,7 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.7 — Mini App preview + bot v0.6)
+## Implemented (v0.8 — authenticated Mini App API + Telegram bot)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.\n\n**Reusable results**\n- Each successfully generated file up to 20 MB includes its own action buttons. You can edit/convert that result again without downloading and re-uploading it.\n- The bot accepts actions on generated files only in the owner's private chat.\n- Outputs larger than 20 MB are sent without action buttons because the standard Telegram Bot API cannot re-download them.\n- Input file cards show filename, type and size.
 
@@ -46,13 +46,22 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
-## FileShape Studio Mini App (v0.7 preview)
+## FileShape Studio Mini App (v0.8)
 
-A responsive dark-blue React + TypeScript interface lives in `miniapp/`. It includes four tabs (Home, Tools, Session History, Profile), a file picker, drag-and-drop on desktop, and **working local JPG/PNG/WebP conversion** via browser Canvas. Converted images are downloaded to the device; processing stays in the browser and history is in-memory only.
+A mobile-first dark-blue React + TypeScript interface is in `miniapp/`. Four tabs, browser-side JPG/PNG/WebP conversion, temporary session history, and an **authenticated Python API** for supported file tools.
 
-**Not implemented in the Mini App yet:** server uploads, Telegram authentication verification, PDF/audio/ZIP processing, persistent history, PRO billing and BotFather Mini App registration. These operations remain available only through the existing bot once deployed. Do not describe the Mini App as a production backend-connected service.
+The Mini App now sends selected files to `/api/v1/convert` using **Telegram.WebApp.initData** in the `X-Telegram-Init-Data` header. The server validates the Telegram HMAC signature with `BOT_TOKEN`, validates `auth_date` (max age one hour), and derives user ID from the signed data. **Never trust initDataUnsafe or a user ID sent by the browser.**
 
-To preview the Mini App:
+Supported Mini App API actions:
+- PDF: count, first page, select pages, remove pages, rotate 90 degrees
+- Images: create single-page PDF, optimize to WebP (plus local JPG/PNG/WebP conversion)
+- Audio: inspect, convert to MP3/OGG/WAV
+- Documents: DOCX ⇄ TXT, text info
+- ZIP: list contents (extract/build still available through Telegram bot, not Mini App)
+
+No accounts, payment processing, stored file history or production monitoring exist yet. API temporary files are removed on completion; size limits (20 MB input, 45 MB output), per-user request rate limits and a global concurrency cap are enforced. API clients must run inside Telegram; ordinary browser previews can only use local image conversion.
+
+### Preview locally
 
 ```bash
 cd miniapp
@@ -60,9 +69,20 @@ npm install
 npm run dev
 ```
 
-For a production build: `npm run build` (output `miniapp/dist`). Host the built static assets on HTTPS, then register that HTTPS URL as a Mini App with BotFather. The Telegram Web App script is loaded in `index.html`; the UI also works in a regular browser. The Python bot is **not** automatically connected to this frontend.
+Build assets for HTTPS hosting with `npm run build` (output `miniapp/dist`). Server actions are **not usable** in an ordinary browser, even during development, because they require signed Telegram initData.
 
-Before implementing server-side uploads, add server-side Telegram initData verification, authorization, request limits, private per-user job storage and automatic deletion. Never trust client-provided user IDs.
+### Production wiring (not deployed automatically)
+
+1. Provision a Linux VPS with Docker Engine, Docker Compose, Caddy and a domain name. Point the domain DNS at that VPS.
+2. Copy `.env.example` to a private `.env` and enter your genuine **BOT_TOKEN**. Add `MINIAPP_URL=https://your-real-domain.example`. Do not commit this file.
+3. Run `docker compose up -d --build`. This starts the existing polling bot plus an API on **127.0.0.1:8000**, not exposed directly to the internet.
+4. Build the Mini App using Node 22: `cd miniapp && npm install && npm run build`. Install its `dist` files at `/srv/fileshape/miniapp/dist` on the VPS.
+5. Configure Caddy with the example `deploy/Caddyfile.example` (replace the domain). It serves the frontend and proxies `/api/*` to the API **under one HTTPS origin**. Caddy also applies a request-body limit.
+6. Register the HTTPS Mini App URL in BotFather and open the bot's `/start` button. Test signed uploads, conversion and downloads before allowing public access.
+
+The reverse proxy MUST use HTTPS and cap request bodies near 22 MB. The API itself also validates uploaded file sizes, but the HTTP multipart parser needs an ingress limit to avoid enormous pre-parsed requests. A same-origin proxy avoids needing CORS. `MINIAPP_ORIGIN` is optional and should only be set to a single exact HTTPS origin if serving across separate origins.
+
+The deployment instructions are for an operator with access to a VPS. **The code being present on GitHub does not mean the Mini App or API is online.**
 
 ## Deploy with Docker Compose (Linux VPS)
 
@@ -103,7 +123,7 @@ Automated tests also run in GitHub Actions for commits to `main`.
 - More advanced PDF manipulation and batch tools
 - Rich DOCX editing and DOCX → PDF conversion
 - Additional audio formats and advanced archive tools
-- Additional navigation, progress feedback and PRO subscription infrastructure
-- Cloud hosting, production limits, monitoring and persistent job management
+- Live job progress, refined navigation and PRO subscription infrastructure
+- Hosted HTTPS deployment, production monitoring and persistent job management
 
 These roadmap features are **not implemented yet**.

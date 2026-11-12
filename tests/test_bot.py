@@ -1,15 +1,26 @@
 """Validate handler import and basic user-facing menus without a bot token."""
 import unittest
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 from aiogram.types import Audio, Chat, Document, Message, Voice
 
-from main import attachment, classify_extension, file_menu, send_result, size_allowed
+from main import attachment, classify_extension, file_menu, miniapp_keyboard, send_result, size_allowed
 
 
 class BotMenuTests(unittest.TestCase):
+    def test_miniapp_launch_only_with_https(self):
+        with patch.dict("os.environ", {"MINIAPP_URL": ""}):
+            self.assertIsNone(miniapp_keyboard())
+        with patch.dict("os.environ", {"MINIAPP_URL": "http://invalid.example"}):
+            self.assertIsNone(miniapp_keyboard())
+        with patch.dict("os.environ", {"MINIAPP_URL": "https://example.com/studio"}):
+            menu = miniapp_keyboard()
+            self.assertIsNotNone(menu)
+            self.assertEqual(menu.inline_keyboard[0][0].web_app.url, "https://example.com/studio")
+
     def test_menus(self):
         pdf = file_menu("pdf")
         image = file_menu("image")

@@ -1,0 +1,19 @@
+# Example: replace the domain with your own HTTPS hostname and configure DNS.
+# Run Caddy on the VPS host; Docker Compose binds the API to 127.0.0.1:8000.
+fileshape.example.com {
+    encode gzip zstd
+    root * /srv/fileshape/miniapp/dist
+
+    @api path /api/*
+    handle @api {
+        request_body {
+            max_size 22MB
+        }
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
+}

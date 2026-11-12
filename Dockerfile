@@ -17,6 +17,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=fileshape:fileshape main.py config.py ./
 COPY --chown=fileshape:fileshape services ./services
+COPY --chown=fileshape:fileshape api ./api
 
 USER fileshape
 CMD ["python", "main.py"]
