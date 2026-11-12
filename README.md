@@ -49,13 +49,13 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
-## FileShape 1.0 — reliability foundation (phase 1)
+## FileShape 1.1 — isolated API processing
 
 Server-side uploads now undergo content signature checks before format parsers run: PDF magic bytes, JPG/PNG/WebP decoder identification, ZIP/DOCX container recognition, basic audio headers and binary TXT rejection. A renamed file cannot bypass these checks by extension alone. Single-file and multi-image endpoints both enforce validation. A streaming ASGI ingress guard also enforces the total multipart request size from actual received bytes (including when Content-Length is missing), before multipart parsing. Tests cover valid and mislabeled files.
 
-**Limitations:** signature validation is only an early rejection layer, not proof a document is safe. The full v1.0 reliability gate still requires independent process isolation with CPU/memory/time caps, multipart parser limits beyond the current 21 MB ingress cap, crash recovery, load testing, and live Android/Telegram verification. This commit does not imply those gates are complete or that the service is deployed.
+**v1.1 hardening:** API conversion and file inspection now run in disposable subprocesses with a 45-second wall-clock timeout; on Linux, workers also have address-space, CPU and output-file caps. Timed-out processes are killed and reaped. This is process-level containment, **not** a complete sandbox (no filesystem/network namespace or seccomp). The Telegram bot's own handlers are not yet moved into these workers. Further release gates include multipart parser limits beyond the 21 MB ingress cap, crash recovery, load testing and live Android/Telegram verification. This commit does not imply those gates are complete or that the service is deployed.
 
-## FileShape Studio Mini App (v0.9, server hardening v1.0)
+## FileShape Studio Mini App (v0.9 UI, server hardening v1.1)
 
 A mobile-first dark-blue React + TypeScript interface is in `miniapp/`. Four tabs, browser-side JPG/PNG/WebP conversion, downloadable results retained in limited session memory, and an **authenticated Python API** for supported file tools.
 
