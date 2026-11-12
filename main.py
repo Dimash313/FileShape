@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import suppress
 import logging
+import os
 from pathlib import Path
 import tempfile
 
@@ -15,6 +16,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 
 from config import get_settings
@@ -52,6 +54,20 @@ class MergeState(StatesGroup):
 
 class ZipState(StatesGroup):
     collecting = State()
+
+
+def miniapp_keyboard() -> InlineKeyboardMarkup | None:
+    url = os.getenv("MINIAPP_URL", "").strip()
+    if not url.startswith("https://") or " " in url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="✨ Открыть FileShape Studio",
+                web_app=WebAppInfo(url=url),
+            )
+        ]]
+    )
 
 
 def buttons(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
@@ -183,7 +199,8 @@ async def start(message: Message, state: FSMContext):
         "📁 FileShape | Инструменты для файлов\n\n"
         "Пришли PDF, DOCX, TXT, ZIP, фото или аудио.\n"
         "Другие файлы можно собрать в ZIP.\n"
-        "Файлы до 20 МБ. Для выхода из операции: /cancel."
+        "Файлы до 20 МБ. Для выхода из операции: /cancel.",
+        reply_markup=miniapp_keyboard() if message.chat.type == "private" else None,
     )
 
 
