@@ -2,7 +2,7 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## Implemented (v0.3)
+## Implemented (v0.4)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.
 
@@ -10,12 +10,19 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - Show number of pages.
 - Extract the first page or select pages (for example: `1,3-5`).
 - Rotate all pages 90 degrees clockwise.
+- Remove selected pages (keeps at least one page).
 - Combine 2–5 PDFs in the order they are sent (`/done` to finish, `/cancel` to cancel).
 
 **Images**
 - Convert JPG, PNG and WebP to JPG/PNG/WebP or to a one-page PDF.
 - Optimize to WebP with quality 72 (smaller output is *not* guaranteed).
 - Accept images as Telegram photos or as documents; sending as a document preserves original quality.
+
+**Audio**
+- Accept MP3, WAV, OGG/OGA, M4A and FLAC as documents or audio; also accept Telegram voice messages.
+- Convert to MP3 (128 kbps), OGG/Opus (64 kbps) or WAV (16 kHz mono).
+- Show codec and duration. Limit: 10 minutes of audio per operation.
+- Requires **FFmpeg and ffprobe** installed on the runtime host; neither is supplied by pip.
 
 **DOCX / TXT**
 - Convert DOCX → plain UTF-8 TXT (text and tables only; formatting is not preserved).
@@ -37,14 +44,16 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - Processing concurrency: up to 3 operations.
 - Source and result files reside in temporary folders and are deleted after processing.
 - The bot has no database or persistent user-file storage.
+- The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
 ## Run locally
 
 1. Install Python **3.11 or newer**.
 2. Install dependencies: `python -m pip install -r requirements.txt`.
-3. Copy `.env.example` to `.env`.
-4. Put the token created in BotFather into `.env` as `BOT_TOKEN=...`. **Never commit your actual token.**
-5. Start the bot: `python main.py`.
+3. Install FFmpeg (for audio). For example, on Ubuntu: `sudo apt-get install ffmpeg`. Verify with `ffmpeg -version` and `ffprobe -version`.
+4. Copy `.env.example` to `.env`.
+5. Put the token created in BotFather into `.env` as `BOT_TOKEN=...`. **Never commit your actual token.**
+6. Start the bot: `python main.py`.
 
 The process must remain running for long polling to respond. GitHub is only source control; creating a repository does not host the bot.
 
@@ -60,7 +69,7 @@ Automated tests also run in GitHub Actions for commits to `main`.
 
 - More advanced PDF manipulation and batch tools
 - Rich DOCX editing and DOCX → PDF conversion
-- Audio conversion and advanced archive tools
+- Additional audio formats and advanced archive tools
 - More polished interface and PRO subscription infrastructure
 - Cloud hosting, production limits, monitoring and persistent job management
 
