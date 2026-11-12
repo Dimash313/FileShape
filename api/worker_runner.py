@@ -6,6 +6,7 @@ The API remains responsible for authentication, upload limits and cleanup.
 import asyncio
 import json
 import os
+import signal
 from pathlib import Path
 import sys
 
@@ -36,9 +37,12 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
     if timeout <= 0:
         raise ValueError("Timeout must be positive")
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    # preexec_fn is safe here because this API uses a single event-loop thread.
-    # Other platforms still get a hard wall-clock timeout, without rlimits.
-    kwargs = {"preexec_fn": _resource_limits} if sys.platform.startswith("linux") else {}
+    # A new POSIX session gives this job its own process group. Kill the
+    # entire group on timeout/cancellation, including FFmpeg grandchildren.
+    # Other platforms still get a wall-clock timeout for the direct child.
+    kwargs = {"start_new_session": True} if os.name == "posix" else {}
+    if sys.platform.startswith("linux"):
+        kwargs["preexec_fn"] = _resource_limits
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "api.worker",
         stdin=asyncio.subprocess.PIPE,
@@ -65,6 +69,16 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
             raise WorkerFailed(str(detail)[:200])
         return result
     finally:
-        if proc.returncode is None:
+        # Even if the worker already exited, a grandchild may still hold the
+        # process group. Only signal our freshly-created POSIX session.
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif proc.returncode is None:
             proc.kill()
-            await proc.communicate()
+        if proc.returncode is None:
+            # Reap after cancellation without allowing a second cancellation
+            # to abandon the subprocess.
+            await asyncio.shield(proc.wait())
