@@ -216,12 +216,53 @@ export default function App() {
   const selectedPageNumbers = new Set<number>();
   if (validPageSelection && selectedPages) {
     for (const part of selectedPages.split(',')) {
-      const [start, end] = part.trim().split(/\\s*-\\s*/).map(Number);
+      const [start, end] = part.trim().split(/\s*-\s*/).map(Number);
       for (let page = start; page <= (end ?? start); page += 1) {
         selectedPageNumbers.add(page);
       }
     }
   }
+  const applyBulkSelection = (mode: 'all' | 'clear' | 'invert') => {
+    if (busy || pdfPageCount === null || !validPageSelection) return;
+    if (mode === 'clear') {
+      setPages('');
+      setNotice('');
+      return;
+    }
+    if (mode === 'all') {
+      if (pdfPageCount > 150) {
+        setNotice('За одну операцию можно выбрать не более 150 страниц.');
+        return;
+      }
+      if (selectedAction === 'pdf:remove') {
+        setNotice('Нельзя удалить все страницы PDF. Оставь хотя бы одну.');
+        return;
+      }
+      setPages('1-' + pdfPageCount);
+      setNotice('');
+      return;
+    }
+    const inverted = Array.from({ length: pdfPageCount }, (_, index) => index + 1)
+      .filter(page => !selectedPageNumbers.has(page));
+    if (inverted.length > 150 || (selectedAction === 'pdf:remove' && inverted.length === pdfPageCount)) {
+      setNotice('Такой выбор нельзя выполнить: максимум 150 страниц, и нельзя удалить все страницы.');
+      return;
+    }
+    const ranges: string[] = [];
+    for (let index = 0; index < inverted.length;) {
+      let end = index;
+      while (end + 1 < inverted.length && inverted[end + 1] === inverted[end] + 1) end += 1;
+      ranges.push(end === index ? String(inverted[index]) : inverted[index] + '-' + inverted[end]);
+      index = end + 1;
+    }
+    const next = ranges.join(',');
+    if (next.length > 90) {
+      setNotice('Выбор слишком сложный. Используй диапазоны в поле выше.');
+      return;
+    }
+    setPages(next);
+    setNotice('');
+  };
   const togglePdfPage = (page: number) => {
     if (busy || !validPageSelection) return;
     const next = new Set(selectedPageNumbers);
@@ -236,6 +277,10 @@ export default function App() {
       index = end + 1;
     }
     const value = chunks.join(',');
+    if (next.size > 150 || (selectedAction === 'pdf:remove' && pdfPageCount !== null && next.size === pdfPageCount)) {
+      setNotice('Максимум 150 страниц; нельзя удалить все страницы PDF.');
+      return;
+    }
     if (value.length > 90) {
       setNotice('Слишком много выбранных страниц. Используй диапазоны в поле выше.');
       return;
@@ -243,14 +288,17 @@ export default function App() {
     setPages(value);
     setNotice('');
   };
-  const addPageSelection = (value: string) => {
+  const safePageSelection = validPageSelection &&
+    selectedPageNumbers.size <= 150 &&
+    !(selectedAction === 'pdf:remove' && pdfPageCount !== null && selectedPageNumbers.size === pdfPageCount);
+    const addPageSelection = (value: string) => {
     if (busy) return;
     setPages(current => current.trim() ? current.trim() + ',' + value : value);
     setNotice('');
   };
   const serverConvert = async () => {
     if (!file || busy || !selectedAction) return;
-    if (!validPageSelection) {
+    if (!safePageSelection) {
       setNotice('Укажи корректные номера страниц от 1 до 250, например 1,3-5.');
       return;
     }
@@ -386,6 +434,12 @@ export default function App() {
                 <strong>Выбери страницы</strong>
                 <span>{selectedPageNumbers.size} из {pdfPageCount}</span>
               </div>
+              <div className="pdf-bulk-actions">
+                <button type="button" disabled={busy || !validPageSelection || pdfPageCount > 150 || selectedAction === 'pdf:remove'} onClick={() => applyBulkSelection('all')}>Выбрать все</button>
+                <button type="button" disabled={busy || !validPageSelection} onClick={() => applyBulkSelection('invert')}>Инвертировать</button>
+                <button type="button" disabled={busy} onClick={() => applyBulkSelection('clear')}>Снять выбор</button>
+              </div>
+              {!safePageSelection && <small className="pdf-selection-warning">Максимум 150 страниц за операцию. Нельзя удалить все страницы документа.</small>}
               <div className="pdf-page-grid" role="group" aria-label="Выбор номеров страниц">
                 {Array.from({ length: pdfPageCount }, (_, index) => index + 1).map(page => <button
                   key={page} type="button" disabled={busy || !validPageSelection}
@@ -402,7 +456,7 @@ export default function App() {
               <span>{selectedOption?.label ?? 'Выберите действие'} · {sizeLabel(file.size)}</span>
               {selectedOption?.pages && <span>{validPageSelection ? 'Страницы: ' + selectedPages : 'Укажи страницы: 1,3-5'}</span>}
             </div>
-            <button className="primary-button full" disabled={busy || !telegramInitData() || !validPageSelection} onClick={serverConvert}>
+            <button className="primary-button full" disabled={busy || !telegramInitData() || !safePageSelection} onClick={serverConvert}>
               {busy ? 'Обрабатываю…' : 'Выполнить'} <ArrowRight size={17}/>
             </button>
           </div> : kind !== 'image' ? <div className="pending-panel"><Info size={20}/><div><strong>Формат пока не поддерживается</strong><p>Попробуй PDF, TXT, DOCX, ZIP, изображение или аудио.</p></div></div> : null}
@@ -414,7 +468,7 @@ export default function App() {
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
       {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}</span></div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
-      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.4</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
+      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.5</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
     <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
