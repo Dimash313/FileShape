@@ -69,6 +69,7 @@ export default function App() {
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
   const [serverAction, setServerAction] = useState('');
   const [pages, setPages] = useState('');
+  const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [batchMode, setBatchMode] = useState(false);
@@ -149,6 +150,7 @@ export default function App() {
       return;
     }
     setFile(next);
+    setPdfPageCount(null);
     setBatchFiles([]);
     setBatchMode(false);
     setServerAction('');
@@ -156,7 +158,7 @@ export default function App() {
     setNotice('');
     setTab('home');
   };
-  const clear = () => { if (busy) return; setFile(null); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
+  const clear = () => { if (busy) return; setFile(null); setPdfPageCount(null); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
   const convert = async () => {
     if (!file || !canConvertLocally(file) || busy) return;
     setBusy(true);
@@ -176,7 +178,30 @@ export default function App() {
   const selectedAction = serverActions.some(option => option.code === serverAction)
     ? serverAction : (serverActions[0]?.code ?? '');
   const selectedOption = serverActions.find(option => option.code === selectedAction);
-  const selectedPages = pages.trim();
+  const inspectPdf = async () => {
+    if (!file || kind !== 'pdf' || busy || !telegramInitData()) return;
+    setBusy(true);
+    setNotice('');
+    setProgress({ stage: 'upload', percent: null });
+    try {
+      const result = await runServerAction(file, 'pdf:info', '', setProgress);
+      if (result.type !== 'info') throw new Error('Сервер вернул неожиданный ответ.');
+      const match = result.text.match(/Страниц:\s*(\d+)/);
+      const count = match ? Number(match[1]) : NaN;
+      if (!Number.isSafeInteger(count) || count < 1 || count > 250) {
+        throw new Error('Не удалось определить количество страниц.');
+      }
+      setPdfPageCount(count);
+      setNotice('Информация о PDF получена.');
+    } catch (error) {
+      setPdfPageCount(null);
+      setNotice(error instanceof Error ? error.message : 'Не удалось прочитать PDF.');
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+    const selectedPages = pages.trim();
   const validPageSelection = !selectedOption?.pages || (
     selectedPages.length <= 90 &&
     selectedPages.split(',').every(part => {
@@ -184,7 +209,7 @@ export default function App() {
       if (!match) return false;
       const first = Number(match[1]);
       const last = match[2] ? Number(match[2]) : first;
-      return first >= 1 && last <= 250 && first <= last;
+      return first >= 1 && last <= (pdfPageCount ?? 250) && first <= last;
     })
   );
   const addPageSelection = (value: string) => {
@@ -287,7 +312,9 @@ export default function App() {
           </div>}
           {kind === 'pdf' && <div className="file-preview pdf-overview">
             <div className="file-preview-heading"><FileText size={16}/> PDF-документ</div>
-            <p>Размер: {sizeLabel(file.size)}. Для количества страниц выбери «Количество страниц» ниже. Просмотр отдельных страниц пока не реализован.</p>
+            <p>Размер: {sizeLabel(file.size)} · {pdfPageCount === null ? 'Количество страниц ещё не проверено' : 'Страниц: ' + pdfPageCount}</p>
+            <button type="button" className="pdf-inspect-button" disabled={busy || !telegramInitData()} onClick={inspectPdf}>{busy ? 'Проверка…' : pdfPageCount === null ? 'Узнать количество страниц' : 'Проверить ещё раз'}</button>
+            <p>Проверка отправляет PDF на сервер Telegram Mini App. Просмотр страниц пока не реализован.</p>
           </div>}
           <div className="editor-steps" aria-label="Этапы обработки">
             <span className="editor-step done"><Check size={13}/> Файл выбран</span>
@@ -321,7 +348,7 @@ export default function App() {
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1-5')}>1–5</button>
                 <button type="button" disabled={busy} onClick={() => { setPages(''); setNotice(''); }}>Очистить</button>
               </div>
-              <small>Можно объединять: 1,3-5. Диапазоны от 1 до 250; страницы должны существовать в документе.</small>
+              <small>Можно объединять: 1,3-5. Диапазоны от 1 до {pdfPageCount ?? 250}. Для точной проверки сначала узнай количество страниц.</small>
             </div>}
             <div className="editor-review">
               <strong>Перед обработкой</strong>
@@ -340,7 +367,7 @@ export default function App() {
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
       {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}</span></div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
-      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.2</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
+      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.3</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
     <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
