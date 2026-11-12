@@ -1,5 +1,39 @@
 import { telegramInitData } from './telegram';
 
+export type QueueStatus = {
+  capacity: number;
+  active: number;
+  waiting: number;
+  waiting_limit: number;
+  accepting: boolean;
+};
+
+export async function getQueueStatus(): Promise<QueueStatus> {
+  const signed = telegramInitData();
+  if (!signed) throw new Error('Открой приложение внутри Telegram, чтобы проверить очередь.');
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch('/api/v1/queue', {
+      headers: { 'X-Telegram-Init-Data': signed },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error('Не удалось получить нагрузку сервера. Попробуй позже.');
+    const status = await response.json() as QueueStatus;
+    if (
+      !Number.isInteger(status.capacity) || status.capacity < 1 ||
+      !Number.isInteger(status.active) || status.active < 0 || status.active > status.capacity ||
+      !Number.isInteger(status.waiting) || status.waiting < 0 ||
+      !Number.isInteger(status.waiting_limit) || status.waiting_limit < 0 ||
+      typeof status.accepting !== 'boolean'
+    ) throw new Error('Сервер вернул некорректный статус очереди.');
+    return status;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export type ServerAction = { code: string; label: string; pages?: boolean };
 export type ServerResult = { type: 'info'; text: string } | { type: 'file'; blob: Blob; name: string };
 

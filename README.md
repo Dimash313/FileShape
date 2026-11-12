@@ -49,6 +49,14 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 3.4 — visible queue load (not job recovery)
+
+Adds authenticated `GET /api/v1/queue` with coarse per-process counters: configured worker capacity, workers in use, number waiting, waiting-room limit, and whether the API still accepts conversion requests. It uses existing signed Telegram Mini App authentication, shares the per-user 12-requests/minute rate limiter, and is returned with `Cache-Control: no-store`. No usernames, Telegram user IDs, filenames, or uploaded content are returned.
+
+The Mini App profile now has a manual **Обновить** button to show the snapshot. It is a one-time server-state sample, not a progress percentage, job status or an estimate of when a particular user's file will finish. Counters reflect a single API process, not totals across replicas. Tests cover auth, data minimization, active/waiting numbers and shutdown state.
+
+**Next foundation steps:** durable job IDs, explicitly scoped job lifecycle and safe metadata retention. Version 3.4 still does **not** persist uploads, create background jobs or restore conversions after process crashes.
+
 ## FileShape 3.3 — graceful queue shutdown
 
 When the API process begins a graceful shutdown, the in-memory admission queue closes: new requests are rejected and waiting conversions wake promptly with HTTP 503 and Retry-After, rather than remaining stuck until the 90-second queue timeout. Added tests for waiting requests, closing-state admission and a simultaneous slot-release/shutdown race to prevent permit leaks.
