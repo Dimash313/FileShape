@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
 from api.auth import InvalidInitData, verify_init_data
+from api.ingress import UploadIngressGuard
 from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import inspect_zip
@@ -75,18 +76,11 @@ def file_kind(filename: str) -> tuple[str, str]:
     return "other", suffix
 
 
-@api.middleware("http")
-async def reject_oversized_requests(request: Request, call_next):
-    if request.url.path in {"/api/v1/convert", "/api/v1/images/pdf"}:
-        length = request.headers.get("content-length")
-        if length:
-            try:
-                parsed = int(length)
-            except ValueError:
-                return JSONResponse({"detail": "Недопустимая длина запроса"}, status_code=400)
-            if parsed > MAX_REQUEST_BYTES:
-                return JSONResponse({"detail": "Файл превышает лимит 20 МБ"}, status_code=413)
-    return await call_next(request)
+api.add_middleware(
+    UploadIngressGuard,
+    max_bytes=MAX_REQUEST_BYTES,
+    paths={"/api/v1/convert", "/api/v1/images/pdf"},
+)
 
 
 def authenticated_user(
