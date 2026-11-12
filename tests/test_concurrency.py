@@ -98,6 +98,65 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(active, 0)
         self.assertEqual(slots._value, 3)
 
+    async def test_batch_and_single_share_capacity_and_recover(self):
+        entered = 0
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_worker(payload):
+            nonlocal entered
+            entered += 1
+            if entered == 3:
+                started.set()
+            await release.wait()
+            directory = Path(payload["work"])
+            if payload["operation"] == "batch":
+                (directory / "fileshape_photos.pdf").write_bytes(b"%PDF-1.4\\n%%EOF")
+                return {"ok": True}
+            target = directory / "converted.jpg"
+            target.write_bytes(b"jpeg-test-output")
+            return {"ok": True, "filename": target.name}
+
+        async def submit_batch():
+            return await self.client.post(
+                "/api/v1/images/pdf",
+                headers=self.headers,
+                files=[
+                    ("uploads", ("one.png", self.image, "image/png")),
+                    ("uploads", ("two.png", self.image, "image/png")),
+                ],
+            )
+
+        with patch("api.server.run_worker", side_effect=blocked_worker):
+            tasks = [asyncio.create_task(self.submit()),
+                     asyncio.create_task(submit_batch()),
+                     asyncio.create_task(self.submit())]
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                overloaded_batch = await submit_batch()
+                self.assertEqual(overloaded_batch.status_code, 429, overloaded_batch.text)
+                self.assertEqual(entered, 3)
+            finally:
+                release.set()
+                responses = await asyncio.gather(*tasks)
+        self.assertEqual([r.status_code for r in responses], [200, 200, 200])
+        self.assertEqual(slots._value, 3)
+
+    async def test_worker_cancellation_restores_capacity(self):
+        started = asyncio.Event()
+
+        async def hanging_worker(payload):
+            started.set()
+            await asyncio.Event().wait()
+
+        with patch("api.server.run_worker", side_effect=hanging_worker):
+            task = asyncio.create_task(self.submit())
+            await asyncio.wait_for(started.wait(), timeout=5)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(slots._value, 3)
+
     async def test_failed_worker_releases_slot(self):
         async def failed_worker(payload):
             raise ValueError("invalid document")
