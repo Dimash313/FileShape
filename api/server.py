@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
+from api.admission import AdmissionQueue, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.observability import RequestTrace
@@ -74,6 +75,7 @@ def configured_worker_capacity() -> int:
 
 MAX_CONCURRENT_JOBS = configured_worker_capacity()
 slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 
@@ -215,9 +217,19 @@ async def convert(
         raise HTTPException(status_code=422, detail="Слишком длинный диапазон страниц")
     await enforce_rate_limit(user_id)
     try:
-        await asyncio.wait_for(slots.acquire(), timeout=1.0)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=429, detail="Сервер занят. Повтори позже.") from None
+        await admission.acquire(slots)
+    except QueueFull:
+        raise HTTPException(
+            status_code=429,
+            detail="Очередь заполнена. Попробуй повторить позже.",
+            headers={"Retry-After": "15"},
+        ) from None
+    except QueueTimeout:
+        raise HTTPException(
+            status_code=503,
+            detail="Слишком долгое ожидание. Попробуй ещё раз.",
+            headers={"Retry-After": "5"},
+        ) from None
 
     work = Workspace(prefix="fileshape_api_")
     try:
@@ -292,9 +304,19 @@ async def multi_image_pdf(
             raise HTTPException(status_code=422, detail="Поддерживаются только JPG, PNG и WebP")
     await enforce_rate_limit(user_id)
     try:
-        await asyncio.wait_for(slots.acquire(), timeout=1.0)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=429, detail="Сервер занят. Попробуй позже.") from None
+        await admission.acquire(slots)
+    except QueueFull:
+        raise HTTPException(
+            status_code=429,
+            detail="Очередь заполнена. Попробуй повторить позже.",
+            headers={"Retry-After": "15"},
+        ) from None
+    except QueueTimeout:
+        raise HTTPException(
+            status_code=503,
+            detail="Слишком долгое ожидание. Попробуй ещё раз.",
+            headers={"Retry-After": "5"},
+        ) from None
 
     work = Workspace(prefix="fileshape_batch_")
     try:
