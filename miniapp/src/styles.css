@@ -73,3 +73,9 @@
 .pdf-bulk-actions button{min-height:38px;padding:8px 10px;border:1px solid #416187;border-radius:9px;background:#1a3656;color:#d3e6ff;font-size:11px;font-weight:700}
 .pdf-bulk-actions button:disabled{opacity:.45;cursor:not-allowed}
 .pdf-page-picker .pdf-selection-warning{color:#ffb4b4}
+
+/* 2.6: page-grid pagination keeps large PDFs usable on mobile */
+.pdf-grid-navigation{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.pdf-grid-navigation span{font-size:11px;color:#a9c4e8;white-space:nowrap}
+.pdf-grid-navigation button{min-height:36px;padding:7px 12px;border:1px solid #42618a;background:#193452;border-radius:9px;color:#d5e7ff;font-size:12px;font-weight:650}
+.pdf-grid-navigation button:disabled{opacity:.4}
