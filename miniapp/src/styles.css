@@ -44,3 +44,11 @@
 .file-preview-image{display:block;width:100%;height:auto;max-height:250px;object-fit:contain;background:#0a1423;border-radius:10px}
 .file-preview p{font-size:11px;line-height:1.55;color:#9bb0cf;margin:10px 0 0}
 .pdf-overview{border-style:dashed}
+
+/* 2.2 PDF page selection presets for narrow phone screens */
+.page-presets{margin:10px 0 14px;display:flex;flex-direction:column;gap:8px}
+.page-presets>span{font-size:12px;font-weight:650;color:#d1e0f8}
+.page-presets-row{display:flex;flex-wrap:wrap;gap:7px}
+.page-presets-row button{border:1px solid #385779;background:#1b304b;color:#d6e8ff;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:650;min-height:38px}
+.page-presets-row button:disabled{opacity:.45}
+.page-presets small{color:#91a8c6;font-size:11px;line-height:1.5}

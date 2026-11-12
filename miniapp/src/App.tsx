@@ -177,11 +177,25 @@ export default function App() {
     ? serverAction : (serverActions[0]?.code ?? '');
   const selectedOption = serverActions.find(option => option.code === selectedAction);
   const selectedPages = pages.trim();
-  const validPageSelection = !selectedOption?.pages || /^[0-9,\s-]{1,90}$/.test(selectedPages) && selectedPages.split(',').every(part => /^\d+$|^\d+\s*-\s*\d+$/.test(part.trim()));
+  const validPageSelection = !selectedOption?.pages || (
+    selectedPages.length <= 90 &&
+    selectedPages.split(',').every(part => {
+      const match = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+      if (!match) return false;
+      const first = Number(match[1]);
+      const last = match[2] ? Number(match[2]) : first;
+      return first >= 1 && last <= 250 && first <= last;
+    })
+  );
+  const addPageSelection = (value: string) => {
+    if (busy) return;
+    setPages(current => current.trim() ? current.trim() + ',' + value : value);
+    setNotice('');
+  };
   const serverConvert = async () => {
     if (!file || busy || !selectedAction) return;
     if (!validPageSelection) {
-      setNotice('Введи номера страниц, например 1,3-5.');
+      setNotice('Укажи корректные номера страниц от 1 до 250, например 1,3-5.');
       return;
     }
     setBusy(true);
@@ -299,6 +313,16 @@ export default function App() {
               <input type="text" value={pages} onChange={event => setPages(event.target.value)}
                 placeholder="Например: 1,3-5" maxLength={90} disabled={busy} aria-invalid={!validPageSelection} />
             </label>}
+            {selectedOption?.pages && <div className="page-presets" aria-label="Быстрый выбор страниц">
+              <span>Быстрый выбор</span>
+              <div className="page-presets-row">
+                <button type="button" disabled={busy} onClick={() => addPageSelection('1')}>Первая</button>
+                <button type="button" disabled={busy} onClick={() => addPageSelection('1-3')}>1–3</button>
+                <button type="button" disabled={busy} onClick={() => addPageSelection('1-5')}>1–5</button>
+                <button type="button" disabled={busy} onClick={() => { setPages(''); setNotice(''); }}>Очистить</button>
+              </div>
+              <small>Можно объединять: 1,3-5. Диапазоны от 1 до 250; страницы должны существовать в документе.</small>
+            </div>}
             <div className="editor-review">
               <strong>Перед обработкой</strong>
               <span>{selectedOption?.label ?? 'Выберите действие'} · {sizeLabel(file.size)}</span>
@@ -316,7 +340,7 @@ export default function App() {
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
       {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}</span></div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
-      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.1</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
+      {tab === 'profile' && <><p className="lead">Управление вашим рабочим пространством.</p><div className="profile-card"><div className="profile-avatar"><UserRound size={24}/></div><div><strong>FileShape Studio</strong><span>Предварительная версия 2.2</span></div></div><div className="pending-panel"><LockKeyhole size={21}/><div><strong>Приватность прежде всего</strong><p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p></div></div></>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
     <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
