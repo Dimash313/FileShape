@@ -1,4 +1,5 @@
 type TelegramWebApp = {
+  initData?: string;
   ready(): void;
   expand(): void;
   colorScheme?: 'dark' | 'light';
@@ -20,4 +21,8 @@ export function initTelegram() {
 
 export function tapFeedback() {
   window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light');
+}
+
+export function telegramInitData(): string {
+  return window.Telegram?.WebApp?.initData ?? '';
 }
