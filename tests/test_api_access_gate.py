@@ -47,6 +47,27 @@ class ApiAccessGateTests(unittest.IsolatedAsyncioTestCase):
                 await server.authorize_new_processing(11)
             self.assertEqual(ctx.exception.status_code, 503)
 
+    async def test_rate_limit_runs_before_telegram_checks(self):
+        store = SimpleNamespace(premium_expiry=lambda _: None,
+                                list_required_channels=lambda: [(-1001, 1000, None, True)])
+        with patch.object(server, "jobs", store), \
+             patch.object(server, "enforce_rate_limit", new_callable=AsyncMock,
+                          side_effect=HTTPException(status_code=429, detail="limit")), \
+             patch.object(server, "Bot") as bot:
+            with self.assertRaises(HTTPException) as ctx:
+                await server.authorize_new_processing(42)
+            self.assertEqual(ctx.exception.status_code, 429)
+            bot.assert_not_called()
+
+    async def test_invalid_verifier_token_fails_closed(self):
+        store = SimpleNamespace(premium_expiry=lambda _: None,
+                                list_required_channels=lambda: [(-1001, 1000, None, True)])
+        with patch.object(server, "jobs", store), \
+             patch.object(server, "get_settings", side_effect=RuntimeError("no token")):
+            with self.assertRaises(HTTPException) as ctx:
+                await server.authorize_new_processing(42)
+            self.assertEqual(ctx.exception.status_code, 503)
+
     async def test_database_failure_fails_closed(self):
         import sqlite3
         store = SimpleNamespace(premium_expiry=lambda _: (_ for _ in ()).throw(sqlite3.OperationalError("down")))
