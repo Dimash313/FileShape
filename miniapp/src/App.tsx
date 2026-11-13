@@ -389,7 +389,7 @@ export default function App() {
     </header>
     <main>
       <div className="page-kicker">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      <h1>{title}<span className="blue-dot">.</span></h1>
+      <h1>{title}<span className="accent-dot">.</span></h1>
       {(tab === 'home' || tab === 'history') && <BackgroundJobsPanel jobs={background} busy={busy} />}
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
@@ -441,7 +441,7 @@ export default function App() {
           {kind === 'image' ? <div className="convert-panel">
             <div className="panel-title"><Sparkles size={17}/> Быстрая конвертация</div>
             <p>Выберите формат для сохранения изображения на устройство.</p>
-            <div className="format-options">{formats.map(item => <button type="button" key={item.value} className={`format-chip ${format === item.value ? 'active' : ''}`} onClick={() => setFormat(item.value)}>{item.label}</button>)}</div>
+            <div className="format-options">{formats.map(item => <button type="button" key={item.value} aria-pressed={format === item.value} className={`format-chip ${format === item.value ? 'active' : ''}`} onClick={() => setFormat(item.value)}>{item.label}</button>)}</div>
             <button className="primary-button full" disabled={busy} onClick={convert}>{busy ? 'Обрабатываю…' : 'Конвертировать'} <ArrowDownToLine size={17}/></button>
           </div> : null}
           {serverActions.length > 0 ? <div className="convert-panel server-panel">
@@ -518,7 +518,7 @@ export default function App() {
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.5</span></div>
+          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.6</span></div>
         </div>
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">
@@ -542,6 +542,6 @@ export default function App() {
       </>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
-    <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
+    <nav className="bottom-nav" aria-label="Основная навигация">{nav.map(item => <button type="button" key={item.tab} aria-current={tab === item.tab ? 'page' : undefined} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</nav>
   </div>;
 }
