@@ -417,6 +417,8 @@ async def internal_bot_reserve_operation(
         user, timestamp, nonce, signature, scope="reserve:" + request_id
     )
     await authorize_new_processing(user_id)
+    # Prevent repeated invalid bot uploads from bypassing HTTP rate controls.
+    await enforce_rate_limit(user_id)
     digest = hashlib.sha256(b"fileshape-bot-operation-v1\0" + request_id.encode("ascii")).hexdigest()
     try:
         item, created = jobs.reserve_bot_operation(user_id, digest)
