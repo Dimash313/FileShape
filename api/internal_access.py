@@ -14,7 +14,7 @@ WINDOW_SECONDS = 30
 MAX_NONCES = 10_000
 _NONCE_RE = re.compile(r"[0-9a-f]{32}")
 _SIG_RE = re.compile(r"[0-9a-f]{64}")
-_SCOPE_RE = re.compile(r"[a-z0-9:_-]{1,128}\\Z")
+_SCOPE_RE = re.compile(r"[a-z0-9:_-]{1,128}\Z")
 
 
 def sign_access_request(token: str, user_id: int, timestamp: int, nonce: str, *, scope: str | None = None) -> str:
