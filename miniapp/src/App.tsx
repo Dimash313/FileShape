@@ -78,6 +78,7 @@ function ProgressIndicator({ progress }: { progress: UploadProgress }) {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
+  const previousTabRef = useRef<Tab>(tab);
   const [file, setFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
@@ -99,6 +100,11 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
+  useEffect(() => {
+    if (previousTabRef.current === tab) return;
+    previousTabRef.current = tab;
+    document.getElementById('screen-title')?.focus();
+  }, [tab]);
   // Browser-only preview: never upload just to display an image.
   // Revoke object URLs whenever the file changes or the component unmounts.
   useEffect(() => {
@@ -403,7 +409,7 @@ export default function App() {
     </header>
     <main id="main-content" tabIndex={-1}>
       <div className="page-kicker">{pageKickers[tab]}</div>
-      <h1 id="screen-title">{title}<span className="blue-dot">.</span></h1>
+      <h1 id="screen-title" tabIndex={-1}>{title}<span className="blue-dot">.</span></h1>
       {(tab === 'home' || tab === 'history') && <BackgroundJobsPanel jobs={background} busy={busy} />}
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
