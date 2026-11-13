@@ -11,7 +11,15 @@ import secrets
 import sqlite3
 import time
 
-from api.durable_jobs import serialized
+from functools import wraps
+
+
+def serialized(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
