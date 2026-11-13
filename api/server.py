@@ -35,7 +35,7 @@ from api.internal_access import ReplayGuard
 from api.campaign_bridge import JoinReplayGuard
 from api.campaign_owner import make_campaign_router
 from api.campaign_revocations import dispatch_campaign_revocations
-from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
+from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError, JobRegistry
 from api.job_runtime import JobRuntime
 from api.usage_ledger import OperationQuotaExceeded, OperationConcurrencyExceeded
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
@@ -724,6 +724,10 @@ def new_job(user_id: int) -> str:
     if jobs is None:
         raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
+        # Legacy in-memory test harness cannot persist quota reservations.
+        # Production startup always installs a durable store with JobRuntime.
+        if job_runtime is None and isinstance(jobs, JobRegistry):
+            return jobs.create(user_id).job_id
         return jobs.create(user_id, metered=True).job_id
     except JobCapacityExceeded:
         raise HTTPException(status_code=503, detail="Слишком много активных заданий. Повтори позже.", headers={"Retry-After": "15"}) from None
