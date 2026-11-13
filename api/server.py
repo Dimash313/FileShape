@@ -364,9 +364,15 @@ async def internal_campaign_join(
     # Bound JSON before parsing; never accept multipart or large payloads.
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         raise HTTPException(status_code=415, detail="JSON required")
-    body = await request.body()
-    if len(body) > 1024:
-        raise HTTPException(status_code=413, detail="Payload too large")
+    # Stream with a hard cap: never buffer an untrusted large request body.
+    parts = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > 1024:
+            raise HTTPException(status_code=413, detail="Payload too large")
+        parts.append(chunk)
+    body = b"".join(parts)
     try:
         import json
         payload = json.loads(body)
