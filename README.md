@@ -8,7 +8,9 @@ A Telegram file editor and converter by **IhsanSoft**, written in Python with ai
 and `create_idempotent(..., metered=True)` can now reserve allowance and
 create a queued job in **one** `BEGIN IMMEDIATE` transaction. When an opted-in
 job transitions to completed, failed or cancelled, its accounting decision
-commits atomically with the state change. Rejected queued claims, unaccepted
+commits atomically with the state change. The opted-in path caps active
+reservations at **one Free** or **three Pro** per user; grants preserve
+capacity for outstanding pack refunds. Rejected queued claims, unaccepted
 uploads and interrupted jobs after restart release their reservations.
 Older, unmetered job records are not retroactively billed. The existing
 quota methods retain their public semantics.
