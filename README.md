@@ -49,6 +49,37 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.16 — owner campaign management API (CI validation required)
+
+Set `FILESHAPE_OWNER_ID` to the Telegram numeric user ID of the single
+FileShape owner in the **API environment**. This must never be supplied by
+the Mini App client. Authenticated owner-only routes:
+
+- `POST /api/v1/owner/campaigns/drafts`: create a scheduled duration or
+  confirmed-join-target draft (`chat_id`, `mode`, `starts_at`,
+  `ends_at`, optional `target_joins`).
+- `POST /api/v1/owner/campaigns/{campaign_id}/invite`: request a unique
+  Telegram bot-created private invite and bind it to that draft.
+- `POST /api/v1/owner/campaigns/{campaign_id}/state`: owner-approved
+  `start`, `pause`, `resume` or `stop`.
+- `GET /api/v1/owner/campaigns/{campaign_id}`: read the persisted campaign
+  status and count of confirmed join events.
+
+Every endpoint requires Telegram Mini App HMAC authentication and the
+server-configured owner identity. The bot needs `can_invite_users` admin
+permission in each advertiser channel. A Telegram API failure never creates
+a fictional link. If binding fails after Telegram creates a link, the API
+attempts to revoke it; revocation failures are surfaced as requiring manual
+cleanup. The routes expose **no** advertiser access.
+
+**Remaining limitations:** This is an API for an owner UI, not yet a
+finished visual admin panel. Campaign expiration and automatic invite-link
+revocation are not scheduled, and the join forwarder has no durable outbox.
+Counts are verified join events, not live subscriber totals. A deployment
+must set `FILESHAPE_OWNER_ID` and configure the bot/API bridge before
+these routes can be used. Do not enable public sales before end-to-end
+Telegram testing.
+
 ## FileShape 4.15 — authenticated Telegram campaign join bridge (CI validation required)
 
 Telegram polling now explicitly requests `chat_member` updates. When Telegram
