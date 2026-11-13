@@ -9,7 +9,7 @@ import sqlite3
 import time
 
 from aiogram import Bot
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.campaign_revocations import dispatch_campaign_revocations
@@ -52,6 +52,23 @@ def make_campaign_router(authenticated_user, get_store):
         if store is None or not hasattr(store, "create_campaign"):
             raise HTTPException(status_code=503, detail="Campaign storage unavailable")
         return store, owner_id
+
+    @router.get("")
+    async def list_owner_campaigns(
+        limit: int = Query(default=20, ge=1, le=30),
+        offset: int = Query(default=0, ge=0, le=10000),
+        owner=Depends(authorized_store),
+    ):
+        store, owner_id = owner
+        try:
+            return store.list_campaigns(
+                actor_id=owner_id, owner_id=owner_id,
+                limit=limit, offset=offset,
+            )
+        except (sqlite3.Error, OSError):
+            raise HTTPException(
+                status_code=503, detail="Campaign storage unavailable"
+            ) from None
 
     @router.post("/drafts")
     async def create_draft(data: DraftRequest, owner=Depends(authorized_store)):
