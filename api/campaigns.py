@@ -13,6 +13,12 @@ import time
 
 from functools import wraps
 
+from api.campaign_revocation_store import (
+    initialize_campaign_revocations,
+    queue_campaign_revocation,
+    enqueue_terminal_revocations,
+)
+
 
 def serialized(method):
     @wraps(method)
@@ -61,6 +67,7 @@ def initialize_campaign_tables(db):
         )
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_campaign_state_end ON ad_campaigns(state,ends_at)")
+    initialize_campaign_revocations(db)
 
 
 class CampaignMixin:
@@ -188,6 +195,8 @@ class CampaignMixin:
                 "INSERT INTO owner_audit(actor_id,action,target_chat_id,occurred_at) VALUES(?,?,?,?)",
                 (actor_id, "campaign_" + action, row[0], now),
             )
+            if target == "stopped":
+                queue_campaign_revocation(self._db, campaign_id, row[0], row[4])
             self._db.execute("COMMIT")
         except BaseException:
             self._db.execute("ROLLBACK")
@@ -210,13 +219,13 @@ class CampaignMixin:
         self._db.execute("BEGIN IMMEDIATE")
         try:
             row = self._db.execute(
-                """SELECT state,starts_at,ends_at,invite_link,mode,target_joins,confirmed_joins
+                """SELECT chat_id,state,starts_at,ends_at,invite_link,mode,target_joins,confirmed_joins
                    FROM ad_campaigns WHERE campaign_id=?""",
                 (campaign_id,),
             ).fetchone()
             if row is None:
                 raise KeyError("Unknown campaign")
-            state, start, end, invite, mode, target, count = row
+            chat_id, state, start, end, invite, mode, target, count = row
             if state != "active" or not start <= joined_at < end or invite != observed_invite:
                 self._db.execute("COMMIT")
                 return False
@@ -232,6 +241,8 @@ class CampaignMixin:
                     "UPDATE ad_campaigns SET confirmed_joins=?,state=? WHERE campaign_id=?",
                     (count, next_state, campaign_id),
                 )
+                if next_state == "completed":
+                    queue_campaign_revocation(self._db, campaign_id, chat_id, invite)
             self._db.execute("COMMIT")
             return cursor.rowcount == 1
         except BaseException:
@@ -268,6 +279,7 @@ class CampaignMixin:
                    WHERE state IN ('active','paused') AND ends_at<=?""",
                 (now,),
             ).rowcount
+            enqueue_terminal_revocations(self._db)
             self._db.execute("COMMIT")
             return changed
         except BaseException:
@@ -287,4 +299,21 @@ class CampaignMixin:
             raise KeyError("Unknown campaign")
         keys = ("campaign_id","chat_id","mode","target_joins","starts_at","ends_at",
                 "state","confirmed_joins","invite_link")
-        return dict(zip(keys,row))
+        snapshot = dict(zip(keys,row))
+        revocation = self._db.execute(
+            "SELECT state,attempts,next_attempt_at,revoked_at "
+            "FROM ad_campaign_revocations WHERE campaign_id=?", (campaign_id,),
+        ).fetchone()
+        if revocation is None:
+            snapshot["invite_revocation"] = (
+                "not_applicable" if snapshot["invite_link"] is None
+                else "pending" if snapshot["state"] in {"stopped", "completed"}
+                else "not_due"
+            )
+            snapshot["revoke_attempts"] = 0
+            snapshot["revoked_at"] = None
+        else:
+            snapshot["invite_revocation"] = revocation[0]
+            snapshot["revoke_attempts"] = revocation[1]
+            snapshot["revoked_at"] = revocation[3]
+        return snapshot
