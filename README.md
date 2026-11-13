@@ -49,6 +49,53 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.3 — confirmed job states in the Mini App
+
+Single-file server tools now create HTTP 202 jobs, display confirmed queued /
+processing / completed / failed / cancelled states and offer an authenticated
+result button after completion. Only XHR transferred-byte events produce upload
+percentages. After upload the UI shows validation; conversion has a state label
+rather than an invented percentage. The PDF page inspector, synchronous batch
+photos and browser-only image conversion remain compatible.
+
+Tracking observes one selected job, allows one in-flight poll, waits at least
+10 seconds between status requests and stops on terminal states. A shared
+client budget caps rate-limited API requests at 10/minute beneath the server's
+12/minute limit. Failed requests back off; hiding the app or going offline
+aborts the current status request and pauses polling. Returning online/visible
+resumes without bypassing the request interval. Automatic observation is bounded
+to 30 minutes / 180 attempts; a manual continuation is available after the limit.
+Network errors retain the last confirmed state, never fabricate a failed job.
+
+After an authenticated `/api/v1/session` identifies the owner, the Mini App can
+restore up to 12 local job references (ID, action, timestamps), valid for one hour
+from creation. It stores no filenames, file bytes, result blobs or Telegram
+initData in persistent storage. Invalid, expired or private extra properties are
+removed when references are loaded; while open, expiry is also scheduled. A
+closed WebView cannot run cleanup, so stale storage is purged on the next open.
+Blocked storage leaves current-session operation usable. Clearing references
+only clears this device's links; it does not cancel server jobs or delete server
+metadata. No unconfirmed upload is automatically sent again after a connection
+failure or reopen. Results that expired or disappeared during server restart
+show an explicit unavailable message.
+
+Native Node regression tests use the existing TypeScript compiler, no new
+service or test dependency. `cd miniapp && npm test` exercises polling,
+hidden/offline/resume/disposal, finite budgets, owner-scoped reference retention,
+XHR progress, response validation and authenticated result retrieval. This test
+step is required in GitHub Actions before the production Mini App build.
+For an optional browser smoke, start the dev server with
+`cd miniapp && npm run dev -- --host 127.0.0.1`, then from the repository root
+run `node tools/smoke-miniapp.cjs` with Playwright and Chromium installed.
+`CHROMIUM_BIN` and `FILESHAPE_SMOKE_URL` can override the executable and localhost
+URL. The script verifies queued/processing/completed, hidden/offline pause,
+terminal stop, authenticated result headers and reopen without resubmission.
+It uses mocks and writes only test screenshots under `/tmp`.
+
+Mobile Chromium checks use test Telegram/API responses; they do **not** establish
+real Android Telegram WebView compatibility or production deployment. Owner
+cancel/retry controls remain the next 4.4 milestone.
+
 ## FileShape 4.2 — asynchronous conversion API and private result downloads
 
 `POST /api/v1/jobs` accepts the same multipart `upload`, `action`, and optional

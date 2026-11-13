@@ -41,5 +41,7 @@ jobs:
           node-version: "22"
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
+      - name: Test background job tracking
+        run: npm test
       - name: Typecheck and build Mini App
         run: npm run build

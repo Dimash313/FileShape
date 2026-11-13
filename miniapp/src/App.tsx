@@ -10,6 +10,7 @@ import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } 
 import { initTelegram, tapFeedback, telegramInitData } from './telegram';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
 import type { QueueStatus, UploadProgress } from './api';
+import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
 type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: string };
@@ -53,12 +54,12 @@ function fileCategory(file: File) {
 function ProgressIndicator({ progress }: { progress: UploadProgress }) {
   return <div className="transfer-status" role="status" aria-live="polite">
     <div className="transfer-label">
-      <span>{progress.stage === 'upload' ? 'Загрузка файла' : 'Ожидание или обработка'}</span>
+      <span>{progress.stage === 'upload' ? 'Загрузка файла' : progress.stage === 'validation' ? 'Проверка файла сервером' : 'Ожидание или обработка'}</span>
       <strong>{progress.stage === 'upload' && progress.percent !== null ? progress.percent + '%' : '…'}</strong>
     </div>
     {progress.stage === 'upload' && progress.percent !== null
       ? <div className="transfer-track" role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: progress.percent + '%' }} /></div>
-      : <div className="transfer-wait">После загрузки сервер может поставить запрос в очередь. Точный процент обработки пока недоступен.</div>}
+      : <div className="transfer-wait">{progress.stage === 'upload' ? 'Передаём файл на сервер…' : 'Файл загружен. Дождись подтверждения сервера.'}</div>}
   </div>;
 }
 
@@ -146,6 +147,14 @@ export default function App() {
       });
     });
   };
+  const background = useBackgroundJobs(result => {
+    if (result.type === 'info') setNotice(result.text);
+    else {
+      downloadBlob(result.blob, result.name);
+      remember(result.name, result.blob, result.jobId);
+      setNotice('Результат передан браузеру для сохранения.');
+    }
+  });
   const checkJob = async (item: Task) => {
     if (!item.jobId) return;
     try {
@@ -322,29 +331,15 @@ export default function App() {
     setNotice('');
   };
   const serverConvert = async () => {
-    if (!file || busy || !selectedAction) return;
-    if (!safePageSelection) {
-      setNotice(pageSelectionError || 'Проверь выбранные страницы.');
-      return;
-    }
-    setBusy(true);
-    setNotice('');
-    setProgress({ stage: 'upload', percent: null });
+    if (!file || busy || !selectedAction || !background.canSubmit) return;
+    if (!safePageSelection) { setNotice(pageSelectionError || 'Проверь выбранные страницы.'); return; }
+    setBusy(true); setNotice(''); setProgress({ stage: 'upload', percent: null });
     try {
-      const result = await runServerAction(file, selectedAction, pages.trim(), setProgress);
-      if (result.type === 'info') {
-        setNotice(result.text);
-      } else {
-        downloadBlob(result.blob, result.name);
-        remember(result.name, result.blob, result.jobId);
-        setNotice('Готово! Результат отправлен на загрузку.');
-      }
+      await background.create(file, selectedAction, pages.trim(), setProgress);
+      setNotice('Задание принято. Статус и кнопка результата доступны в разделе заданий.');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Ошибка соединения с сервером.');
-    } finally {
-      setBusy(false);
-      setProgress(null);
-    }
+      setNotice(error instanceof Error ? error.message : 'Номер задания не подтверждён. Автоматическая повторная отправка не выполняется.');
+    } finally { setBusy(false); setProgress(null); }
   };
   const convertBatch = async () => {
     if (busy || batchFiles.length < 2 || !telegramInitData()) return;
@@ -391,6 +386,7 @@ export default function App() {
     <main>
       <div className="page-kicker">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
       <h1>{title}<span className="blue-dot">.</span></h1>
+      {(tab === 'home' || tab === 'history') && <BackgroundJobsPanel jobs={background} busy={busy} />}
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
         {batchMode ? <section className="selected-file">
@@ -446,7 +442,7 @@ export default function App() {
           </div> : null}
           {serverActions.length > 0 ? <div className="convert-panel server-panel">
             <div className="panel-title"><Sparkles size={17}/> Серверные инструменты</div>
-            <p>{telegramInitData() ? 'Файл обрабатывается во временной папке сервера и удаляется после отправки.' : 'Для серверной обработки открой приложение внутри Telegram.'}</p>
+            <p>{telegramInitData() ? 'Файл проверяется на сервере. Принятое задание работает в фоне; результат хранится до часа и может исчезнуть после перезапуска.' : 'Для серверной обработки открой приложение внутри Telegram.'}</p>
             <div className="server-options">
               {serverActions.map(option => <button type="button" key={option.code}
                 className={selectedAction === option.code ? 'server-option active' : 'server-option'}
@@ -502,8 +498,8 @@ export default function App() {
               <span>{selectedOption?.label ?? 'Выберите действие'} · {sizeLabel(file.size)}</span>
               {selectedOption?.pages && <span>{safePageSelection ? 'Страницы: ' + selectedPages : pageSelectionError}</span>}
             </div>
-            <button className="primary-button full" disabled={busy || !telegramInitData() || !safePageSelection} onClick={serverConvert}>
-              {busy ? 'Обрабатываю…' : 'Выполнить'} <ArrowRight size={17}/>
+            <button className="primary-button full" disabled={busy || !telegramInitData() || !background.canSubmit || !safePageSelection} onClick={serverConvert}>
+              {busy ? 'Загружаю и проверяю…' : background.active ? (background.status ? 'Задание принято' : 'Проверяем статус') : 'Выполнить в фоне'} <ArrowRight size={17}/>
             </button>
           </div> : kind !== 'image' ? <div className="pending-panel"><Info size={20}/><div><strong>Формат пока не поддерживается</strong><p>Попробуй PDF, TXT, DOCX, ZIP, изображение или аудио.</p></div></div> : null}
           <button type="button" className="secondary-button full" disabled={busy} onClick={pick}><RotateCcw size={16}/> Выбрать другой файл</button>
@@ -518,7 +514,7 @@ export default function App() {
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.2</span></div>
+          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.3</span></div>
         </div>
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">
@@ -537,7 +533,7 @@ export default function App() {
         </section>
         <div className="pending-panel"><LockKeyhole size={21}/><div>
           <strong>Приватность прежде всего</strong>
-          <p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. Сервер не хранит историю.</p>
+          <p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. На сервере остаются ограниченные по сроку метаданные заданий. Ссылки без файлов, имён и данных авторизации действуют до часа и очищаются при работе приложения или следующем открытии.</p>
         </div></div>
       </>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}

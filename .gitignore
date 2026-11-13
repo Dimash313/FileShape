@@ -222,3 +222,6 @@ __marimo__/
 # Private persistent job metadata and SQLite sidecars
 state/
 *.sqlite3*
+
+# Compiled native-node frontend regression tests
+miniapp/.test-dist/
