@@ -1,10 +1,11 @@
 """Bounded SQLite-backed job metadata used by server conversions.
 
-Stores owner IDs, opaque job IDs and timestamps only. Never stores file paths,
-names, uploaded bytes or results. Recovery marks interrupted jobs failed;
+Stores owner IDs, opaque job IDs, states, timestamps and admission digests.
+Never stores raw idempotency keys, file paths, names, uploaded bytes or results. Recovery marks interrupted jobs failed;
 it cannot resume conversions without a durable, privacy-safe file pipeline.
 """
 import os
+import re
 import secrets
 import sqlite3
 import stat
@@ -15,6 +16,17 @@ from functools import wraps
 from pathlib import Path
 
 from api.jobs import JobCapacityExceeded, JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
+
+
+_ADMISSION_HASH = re.compile(r"[0-9a-f]{64}\Z")
+
+
+class IdempotencyConflict(Exception):
+    """The owner already claimed this key for a different operation."""
+
+
+class IdempotencyPending(Exception):
+    """The matching operation has not completed upload validation/admission."""
 
 
 def serialized(method):
@@ -76,6 +88,7 @@ class DurableJobStore:
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")
+        self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 job_id TEXT PRIMARY KEY,
@@ -83,6 +96,17 @@ class DurableJobStore:
                 state TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
+            )
+        """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS admissions (
+                owner_id INTEGER NOT NULL,
+                key_hash TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE CASCADE,
+                accepted INTEGER NOT NULL DEFAULT 0 CHECK (accepted IN (0, 1)),
+                created_at REAL NOT NULL,
+                PRIMARY KEY (owner_id, key_hash)
             )
         """)
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
@@ -102,26 +126,109 @@ class DurableJobStore:
     def _snapshot(row) -> JobSnapshot:
         return JobSnapshot(row[0], row[1], row[2], row[3])
 
-    @serialized
-    def create(self, owner_id: int) -> JobSnapshot:
+    @staticmethod
+    def _validate_owner(owner_id: int) -> None:
         if type(owner_id) is not int or not 0 < owner_id <= 2**63 - 1:
             raise ValueError("Invalid owner")
-        now = time.time()
+
+    @staticmethod
+    def _validate_admission_hash(value: str) -> None:
+        if not isinstance(value, str) or _ADMISSION_HASH.fullmatch(value) is None:
+            raise ValueError("Invalid admission hash")
+
+    def _insert_queued(self, owner_id: int, now: float) -> JobSnapshot:
+        """Caller holds the connection lock and a write transaction."""
+        if self._db.execute("SELECT count(*) FROM jobs").fetchone()[0] >= self.max_entries:
+            raise JobCapacityExceeded()
         job_id = secrets.token_urlsafe(24)
+        self._db.execute(
+            "INSERT INTO jobs(job_id,owner_id,state,created_at,updated_at) VALUES(?,?,?,?,?)",
+            (job_id, owner_id, "queued", now, now),
+        )
+        return JobSnapshot(job_id, "queued", now, now)
+
+    @serialized
+    def create(self, owner_id: int) -> JobSnapshot:
+        self._validate_owner(owner_id)
+        now = time.time()
         self._db.execute("BEGIN IMMEDIATE")
         try:
             self.prune_terminal(self.retention_seconds)
-            if self._db.execute("SELECT count(*) FROM jobs").fetchone()[0] >= self.max_entries:
-                raise JobCapacityExceeded()
-            self._db.execute(
-                "INSERT INTO jobs(job_id,owner_id,state,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (job_id, owner_id, "queued", now, now),
-            )
+            job = self._insert_queued(owner_id, now)
             self._db.execute("COMMIT")
         except BaseException:
             self._db.execute("ROLLBACK")
             raise
-        return JobSnapshot(job_id, "queued", now, now)
+        return job
+
+    @serialized
+    def create_idempotent(self, owner_id: int, key_hash: str, fingerprint: str) -> tuple[JobSnapshot, bool]:
+        """Claim an owner-scoped operation without returning unvalidated IDs.
+
+        An accepted duplicate returns its current metadata even at capacity.
+        A pending duplicate never replaces the first upload's claim. Digests
+        are validated before any storage access; raw keys/content stay outside
+        this store. Rejected admissions must be removed with discard_queued.
+        """
+        self._validate_owner(owner_id)
+        self._validate_admission_hash(key_hash)
+        self._validate_admission_hash(fingerprint)
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self.prune_terminal(self.retention_seconds)
+            existing = self._db.execute(
+                """SELECT a.fingerprint,a.accepted,j.job_id,j.state,j.created_at,j.updated_at
+                   FROM admissions AS a JOIN jobs AS j ON j.job_id=a.job_id
+                   WHERE a.owner_id=? AND a.key_hash=? AND j.owner_id=?""",
+                (owner_id, key_hash, owner_id),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != fingerprint:
+                    raise IdempotencyConflict()
+                if not existing[1]:
+                    raise IdempotencyPending()
+                job = self._snapshot(existing[2:])
+                is_new = False
+            else:
+                job = self._insert_queued(owner_id, now)
+                self._db.execute(
+                    """INSERT INTO admissions(owner_id,key_hash,fingerprint,job_id,accepted,created_at)
+                       VALUES(?,?,?,?,0,?)""",
+                    (owner_id, key_hash, fingerprint, job.job_id, now),
+                )
+                is_new = True
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+        return job, is_new
+
+    @serialized
+    def accept_admission(self, job_id: str, owner_id: int, key_hash: str) -> None:
+        """Publish only a mapping belonging to this owner, key and job."""
+        if type(owner_id) is not int or not 0 < owner_id <= 2**63 - 1:
+            raise JobNotFound()
+        self._validate_admission_hash(key_hash)
+        changed = self._db.execute(
+            """UPDATE admissions SET accepted=1
+               WHERE job_id=? AND owner_id=? AND key_hash=?
+                 AND EXISTS(SELECT 1 FROM jobs WHERE job_id=? AND owner_id=?)""",
+            (job_id, owner_id, key_hash, job_id, owner_id),
+        ).rowcount
+        if changed != 1:
+            raise JobNotFound()
+
+    @serialized
+    def discard_pending_admissions(self) -> int:
+        """After exclusive startup ownership, remove never-accepted uploads.
+
+        No caller received these operation IDs; they must not become replayable
+        accepted jobs merely because an API process restarted during validation.
+        """
+        return self._db.execute(
+            "DELETE FROM jobs WHERE job_id IN (SELECT job_id FROM admissions WHERE accepted=0)"
+        ).rowcount
 
     @serialized
     def get(self, job_id: str, owner_id: int) -> JobSnapshot:

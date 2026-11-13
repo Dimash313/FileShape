@@ -1,4 +1,5 @@
 import { telegramInitData } from './telegram.js';
+import { createIdempotencyKey } from './jobSubmission.js';
 
 export type QueueStatus = {
   capacity: number;
@@ -171,6 +172,7 @@ async function postFiles(
   onProgress?: ProgressCallback,
   background = false,
   signal?: AbortSignal,
+  idempotencyKey?: string,
 ): Promise<{ blob: Blob; contentType: string; jobId?: string }> {
   const signed = telegramInitData();
   if (!signed) throw new Error('Для серверных инструментов открой FileShape через Telegram.');
@@ -185,6 +187,7 @@ async function postFiles(
     xhr.timeout = 180_000;
     xhr.responseType = 'blob';
     xhr.setRequestHeader('X-Telegram-Init-Data', signed);
+    if (idempotencyKey) xhr.setRequestHeader('Idempotency-Key', idempotencyKey);
     xhr.upload.onprogress = event => {
       if (event.lengthComputable && event.total > 0) {
         onProgress?.({ stage: 'upload', percent: Math.min(100, Math.round(100 * event.loaded / event.total)) });
@@ -220,13 +223,51 @@ async function postFiles(
 
 export async function createBackgroundJob(
   file: File, action: string, pages: string, onProgress?: ProgressCallback, signal?: AbortSignal,
+  idempotencyKey: string = createIdempotencyKey(),
 ): Promise<JobStatus> {
+  validateSubmissionKey(idempotencyKey);
   const form = new FormData();
   form.append('upload', file, file.name);
   form.append('action', action);
   if (pages) form.append('pages', pages);
-  const { blob, contentType } = await postFiles('/api/v1/jobs', form, onProgress, true, signal);
+  const { blob, contentType } = await postFiles('/api/v1/jobs', form, onProgress, true, signal, idempotencyKey);
   if (!contentType.includes('application/json') || blob.size > 65536) throw new Error('Не удалось подтвердить номер задания.');
+  return validateJobStatus(JSON.parse(await blob.text()));
+}
+
+function validateSubmissionKey(value: string) {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(value)) throw new Error('Некорректное подтверждение отправки.');
+}
+
+export async function cancelBackgroundJob(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(jobId)) throw new Error('Некорректный идентификатор задания.');
+  const signed = telegramInitData();
+  if (!signed) throw new JobApiError(401, 'Открой приложение внутри Telegram.');
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  reserveRequest();
+  const request = requestController(signal, 125_000);
+  try {
+    const response = await fetch('/api/v1/jobs/' + encodeURIComponent(jobId) + '/cancel', {
+      method: 'POST', headers: { 'X-Telegram-Init-Data': signed }, cache: 'no-store', signal: request.controller.signal,
+    });
+    if (response.status === 401) throw new JobApiError(401, 'Сессия Telegram устарела. Открой Mini App заново.');
+    if (response.status === 404) throw new JobApiError(404, 'Задание недоступно. Отмена не подтверждена.');
+    if (response.status !== 200) throw new JobApiError(response.status, 'Сервер не подтвердил отмену. Проверка статуса продолжится.');
+    return validateJobStatus(await response.json(), jobId);
+  } finally { request.cleanup(); }
+}
+
+export async function retryBackgroundJob(
+  jobId: string, file: File, action: string, pages: string, idempotencyKey: string,
+  onProgress?: ProgressCallback, signal?: AbortSignal,
+): Promise<JobStatus> {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(jobId)) throw new Error('Некорректный идентификатор задания.');
+  validateSubmissionKey(idempotencyKey);
+  const form = new FormData();
+  form.append('upload', file, file.name); form.append('action', action);
+  if (pages) form.append('pages', pages);
+  const { blob, contentType } = await postFiles('/api/v1/jobs/' + encodeURIComponent(jobId) + '/retry', form, onProgress, true, signal, idempotencyKey);
+  if (!contentType.includes('application/json') || blob.size > 65536) throw new Error('Не удалось подтвердить номер повторного задания.');
   return validateJobStatus(JSON.parse(await blob.text()));
 }
 

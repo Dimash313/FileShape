@@ -29,6 +29,7 @@ class JobRuntime:
                 raise RuntimeError("Another API process owns this job store; use one worker") from None
             self._fd = fd
             self.store = DurableJobStore(root / "jobs.sqlite3")
+            self.store.discard_pending_admissions()
             self.store.mark_interrupted_failed()
             self.store.prune_terminal()
         except BaseException:

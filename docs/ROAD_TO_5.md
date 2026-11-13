@@ -8,39 +8,38 @@ This is an implementation checkpoint, not a public-launch announcement.
 - 4.0: PR #40 merged; PR and main Actions succeeded. Real HTTP conversions use bounded owner-scoped SQLite metadata. Exclusive process ownership precedes interrupted-job reconciliation. Metadata-only Docker volume, expiry and cancellation/error cleanup. Disabled ASGI lifespan fails closed. 140 Python tests at that milestone.
 - 4.1: PR #41 merged; PR and main Actions succeeded. Internal bounded dispatcher integrated into HTTP conversion workers; 147 local Python tests and TypeScript/Vite build passed. No throughput claim.
 - 4.2: PR #42 merged; PR and main CI succeeded. HTTP 202, private expiring/quota-reserved results and owner-only download; 200 Python tests, TS/build and a real read-only Docker HTTP conversion/download/IDOR smoke passed. Results are not recovered across restart.
-- 4.3: `feature/background-miniapp-v43` integrates the Mini App with confirmed job states, bounded polling, authenticated result retrieval and owner-scoped short-lived references. Check its PR and post-merge main CI before proceeding. Actual test counts/browser limitations are recorded in its PR.
+- 4.3: PR #43 merged; PR and main CI succeeded. Confirmed Mini App statuses, bounded hidden/offline-aware polling, authenticated result retrieval and owner-scoped references. 200 Python + 35 frontend tests, build and mocked mobile Chromium smoke passed.
+- 4.4: branch `feature/job-controls-v44` implements owner-only cancel, explicit validated reupload retry and durable owner-scoped idempotency. Check its PR/post-merge main CI before proceeding; exact validation results are recorded in the PR. No server input retention increase or automatic replay.
 
 Read the current PR's validation notes for local Docker results. The managed
 execution environment has an 8 GB filesystem and a VFS Docker daemon. Multiple
 images can exhaust that disk. Remove only test images/cache created by the
-current task; preserve source, state volumes and unrelated images. HTTPS builds
+current task; preserve source, state volumes and unrelated images. Inspect
+`docker buildx du --verbose` and target verified cache IDs if cleanup is needed;
+do not use broad cache pruning on a shared builder. HTTPS builds
 in this environment need a trusted proxy CA supplied as a BuildKit secret;
 never disable TLS verification or commit the environment's certificate.
 
-## Next: 4.4 cancellation and retry
+## Next: 4.5 crash recovery and cleanup
 
-Start only after 4.3 PR and post-merge main CI succeed, on a new branch from
-updated main. Add owner-checked cancellation using the existing submission
-handles. Await worker cleanup and settle terminal metadata explicitly before
-responding; preserve a completed result if cancellation loses the completion
-race. Missing and other-owner job IDs must remain indistinguishable. Queued
-cancellation must remove files even though `_execute` never starts.
+Start only after 4.4 PR and post-merge main CI succeed, on a new branch from
+updated main. Preserve the exclusive JobRuntime lock before any recovery:
+accepted queued/processing records become failed, unaccepted admission claims
+are deleted, and no input is replayed. Reconcile per-boot artifacts and metadata
+without promising result recovery after restart. The existing janitor scans at
+most 500 entries; improve fairness/cursor behavior so a full first batch cannot
+starve old later entries. Preserve active locks and leased downloads.
 
-Define a bounded retry-input policy consistent with minimal retention. Retry
-only with a valid input (or require an explicit reupload if it expired); do not
-promise a server copy after restart. Add bounded owner-scoped idempotency for
-create/retry so accidental repeats do not duplicate work. Keep the existing
-input/output/disk quotas, TTL and state transition guards. Add frontend controls
-with clear confirmed outcomes, preserving 4.3 polling stop/pause behavior.
-
-Cover active and queued cancellation, repeat cancellation, cross-user access,
-completion races, process-group cleanup, invalid/expired retry input, duplicate
-keys, overload, restart and shutdown. Use the per-version Python / frontend
-native tests / TypeScript build / Docker / PR CI / post-merge main sequence.
+Exercise hard worker/API crashes, startup with mixed states and leftover files,
+active/expired download races, transient deletion failures, directory attacks,
+disk exhaustion and idempotent repeated cleanup. Keep byte/entry reservations
+and finite TTLs accurate, including slow downloads and failed metadata updates.
+Make shutdown bounded/correct without deleting a live worker's files. Record
+actual recovery/retention limits in operations documentation. Use the normal
+Python/frontend/build/Docker/PR/main CI gates before 4.6.
 
 ## Remaining sequence (not implemented)
 
-- 4.4: owner-only queued/running cancellation, process cleanup, completion races, retry with a valid retained input, idempotent duplicate protection.
 - 4.5: crash reconciliation, periodic orphan/result cleanup, bounded disk, active artifact protection and worker shutdown fault tests. No unsafe replay.
 - 4.6: premium dark/blue accessible mobile UI, preserving every working tool; history/profile/navigation and all empty/error/loading states.
 - 4.7: reproducible CPU/RAM/process/queue/disk/SQLite load tests and measured report. Keep safe concurrency until deployment-class hardware is measured.
@@ -55,7 +54,7 @@ build. In this managed environment, ASGI TestClient tests need execution outside
 the restricted sandbox; they hung on the first request inside it. Run native
 Node tests outside that sandbox too: the restricted child-process IPC reporter
 can show only passing files rather than all subtests. A real 4.3 run reports
-35 individual frontend checks.
+at least 35 individual frontend checks (4.4 adds more).
 
 ```sh
 python -m compileall -q main.py config.py api services tests

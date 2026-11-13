@@ -49,6 +49,54 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.4 — owner-only cancellation and explicit retry
+
+`POST /api/v1/jobs/{job_id}/cancel` authenticates the owner, cancels queued or
+running background work and waits for subprocess/file cleanup before returning
+a confirmed snapshot. Terminal jobs are idempotent no-ops. If completion wins
+the race, the response stays completed and the result is preserved; missing
+active handles return 503 rather than claiming cancellation. The Mini App stops
+the previous poll while cancelling and applies only a response for the current
+selected job. A network error is not confirmation of cancellation.
+
+`POST /api/v1/jobs/{job_id}/retry` requires an owned failed/cancelled original,
+a valid multipart reupload (`upload`, `action`, optional `pages`) and an
+`Idempotency-Key`. It returns HTTP 202 with a new job ID, without changing the
+original terminal record. Inputs are not retained longer on the server for this
+feature: the new upload is size/content-checked again under the same limits.
+The UI can reuse one valid in-memory source from this session or asks for a new
+file after reopen/reset/expiry. PDF extract/remove retry ranges are explicitly
+re-entered/validated, including the 150-unique-page cap; no missing page selection
+is invented. No conversion is automatically replayed after restart.
+
+Create also accepts `Idempotency-Key` (optional for older API clients; the Mini
+App always supplies a cryptographically generated key). Keys are URL-safe ASCII
+strings of 16–128 characters. SQLite stores an owner-scoped SHA-256 key digest
+and fingerprint of actual upload bytes plus action/suffix/pages/retry parent,
+not raw keys or files. An accepted identical request returns the same ID even
+when artifact quota is full. A pending identical request returns 409 with
+Retry-After; changed bytes/parameters under the same key return 409. Different
+owners have separate namespaces. Pending and job insertion are atomic; rejected
+admissions cascade away, while confirmed mappings expire with terminal metadata.
+Startup removes unaccepted claims only after acquiring the exclusive process
+lock. Idempotency lasts only as long as the associated metadata; it is not a
+permanent exactly-once execution guarantee.
+
+After an ambiguous response, the Mini App offers a **manual** resend of the same
+in-memory intent/key; it never silently resubmits a file. One source up to 20 MiB
+and its key/parameters stay only in memory, clear on reset/forget/expiry/owner
+change and are not persisted in localStorage. The one-hour cache deadline is
+deferred only while a bounded upload is active so an accepted new ID is not
+lost at the expiry boundary. After reopen, only confirmed job references can be
+restored; a missing source must be chosen again. Clearing local links does not
+cancel server work. CORS allows the idempotency header only under the configured
+exact origin, and retry bodies use the same pre-multipart ingress cap.
+
+Optional controls browser regression: with Playwright/Chromium and the localhost
+dev server, run `node tools/smoke-miniapp-controls.cjs`. It mocks Telegram/API,
+checks cancel -> retry -> result and crosses parent-reference expiry during an
+in-flight retry. This is not real Telegram WebView validation or deployment.
+
 ## FileShape 4.3 — confirmed job states in the Mini App
 
 Single-file server tools now create HTTP 202 jobs, display confirmed queued /
