@@ -29,7 +29,7 @@ from api.job_manager import JobManager, ManagerClosed, ManagerFull
 from api.observability import RequestTrace
 from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
-from api.workspaces import Workspace, cleanup_orphans
+from api.workspaces import Workspace, OrphanCleaner, cleanup_orphans
 from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import inspect_zip
@@ -88,6 +88,8 @@ job_runtime = None
 metadata_maintenance = None
 job_manager = None
 background_jobs = None
+orphan_cleaner = None
+shutdown_task = None
 download_slots = asyncio.Semaphore(4)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
@@ -145,19 +147,44 @@ async def enforce_rate_limit(user_id: int) -> None:
 async def maintain_metadata(store):
     while True:
         await asyncio.sleep(60)
+        # A database outage must not prevent expiry or orphan cleanup.
+        operations = []
+        if background_jobs is not None:
+            operations.extend((background_jobs.reconcile, background_jobs.artifacts.reconcile))
+        operations.append(store.prune_terminal)
+        for operation in operations:
+            try:
+                operation()
+            except (sqlite3.Error, OSError, ValueError, RuntimeError):
+                logger.error("Job maintenance operation failed")
         try:
-            if background_jobs is not None:
-                background_jobs.artifacts.prune()
-            store.prune_terminal()
-            await asyncio.to_thread(cleanup_orphans)
-        except (sqlite3.Error, OSError):
-            logger.error("Job metadata maintenance failed")
+            await asyncio.to_thread(orphan_cleaner.sweep if orphan_cleaner is not None else cleanup_orphans)
+        except (OSError, ValueError, RuntimeError):
+            logger.error("Workspace cleanup failed")
 
 
 @api.on_event("shutdown")
 async def stop_accepting_conversions():
-    global job_runtime, metadata_maintenance, jobs, job_manager, background_jobs
+    global shutdown_task
     admission.close()
+    if shutdown_task is None:
+        shutdown_task = asyncio.create_task(close_runtime_resources())
+    interrupted = False
+    while not shutdown_task.done():
+        try:
+            await asyncio.shield(shutdown_task)
+        except asyncio.CancelledError:
+            interrupted = True
+    shutdown_task.result()
+    if interrupted:
+        raise asyncio.CancelledError()
+
+
+async def close_runtime_resources():
+    """Retain instance/artifact ownership until every writer has stopped."""
+    global job_runtime, metadata_maintenance, jobs, job_manager, background_jobs, orphan_cleaner
+    if background_jobs is not None:
+        await background_jobs.stop_preparing()
     if job_manager is not None:
         await job_manager.close()
         job_manager = None
@@ -166,36 +193,65 @@ async def stop_accepting_conversions():
             background_jobs.close()
     finally:
         background_jobs = None
-        if metadata_maintenance is not None:
-            metadata_maintenance.cancel()
-            await asyncio.gather(metadata_maintenance, return_exceptions=True)
-            metadata_maintenance = None
-        if job_runtime is not None:
+        try:
+            if metadata_maintenance is not None:
+                metadata_maintenance.cancel()
+                await asyncio.gather(metadata_maintenance, return_exceptions=True)
+                metadata_maintenance = None
+        finally:
             try:
-                job_runtime.close()
+                if orphan_cleaner is not None:
+                    try:
+                        await asyncio.to_thread(orphan_cleaner.close)
+                    finally:
+                        orphan_cleaner = None
             finally:
-                job_runtime = None
-        jobs = None
+                try:
+                    if job_runtime is not None:
+                        try:
+                            job_runtime.close()
+                        finally:
+                            job_runtime = None
+                finally:
+                    jobs = None
 
 
 @api.on_event("startup")
 async def remove_abandoned_workspaces():
-    global admission, jobs, job_runtime, metadata_maintenance, job_manager, background_jobs
+    global admission, jobs, job_runtime, metadata_maintenance, job_manager, background_jobs, orphan_cleaner, shutdown_task
     if job_runtime is not None:
         raise RuntimeError("API lifecycle already started")
+    shutdown_task = None
     runtime = JobRuntime(os.environ.get("FILESHAPE_STATE_DIR", "./state"))
+    cleaner = OrphanCleaner()
+    artifacts = None
+    manager = None
     try:
-        await asyncio.to_thread(cleanup_orphans)
+        await asyncio.to_thread(cleaner.sweep)
         artifacts = ArtifactStore()
+        manager = JobManager(MAX_CONCURRENT_JOBS, max_pending=20)
+        service = BackgroundJobs(runtime.store, manager, artifacts, lambda payload: run_worker(payload), MAX_INPUT_BYTES, MAX_RESULT_BYTES)
     except BaseException:
-        runtime.close()
+        try:
+            try:
+                if manager is not None:
+                    await manager.close()
+            finally:
+                if artifacts is not None:
+                    artifacts.close()
+        finally:
+            try:
+                await asyncio.to_thread(cleaner.close)
+            finally:
+                runtime.close()
         raise
     if admission.closing:
         admission = AdmissionQueue(max_waiters=20, wait_seconds=90.0)
-    job_manager = JobManager(MAX_CONCURRENT_JOBS, max_pending=20)
+    job_manager = manager
     job_runtime = runtime
     jobs = runtime.store
-    background_jobs = BackgroundJobs(jobs, job_manager, artifacts, lambda payload: run_worker(payload), MAX_INPUT_BYTES, MAX_RESULT_BYTES)
+    orphan_cleaner = cleaner
+    background_jobs = service
     metadata_maintenance = asyncio.create_task(maintain_metadata(jobs))
 
 
@@ -208,6 +264,12 @@ async def health():
 async def ready():
     result = await asyncio.to_thread(readiness_status)
     result["checks"]["job_metadata"] = job_runtime is not None
+    try:
+        result["checks"]["artifact_storage"] = background_jobs is not None and background_jobs.artifacts.has_disk_margin()
+    except OSError:
+        result["checks"]["artifact_storage"] = False
+    if not result["checks"]["artifact_storage"]:
+        result["status"] = "unavailable"
     if job_runtime is None:
         result["status"] = "unavailable"
     return JSONResponse(
@@ -321,6 +383,20 @@ async def retry_background_job(
         })
     finally:
         await upload.close()
+
+
+class BoundedFileResponse(FileResponse):
+    """Compatibility downloads must release workspaces on disconnect/deadline."""
+    timeout_seconds = 120
+
+    async def __call__(self, scope, receive, send):
+        cleanup, self.background = self.background, None
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                await super().__call__(scope, receive, send)
+        finally:
+            if cleanup is not None:
+                await cleanup()
 
 
 class ResultStream(StreamingResponse):
@@ -545,7 +621,7 @@ async def convert(
                 raise HTTPException(status_code=413, detail="Результат слишком большой")
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             jobs.transition(job_id, user_id, "completed")
-            return FileResponse(
+            return BoundedFileResponse(
                 target,
                 filename=target.name,
                 media_type=content_type,
@@ -624,7 +700,7 @@ async def multi_image_pdf(
             if target.stat().st_size > MAX_RESULT_BYTES:
                 raise HTTPException(status_code=413, detail="Результат слишком большой")
             jobs.transition(job_id, user_id, "completed")
-            return FileResponse(
+            return BoundedFileResponse(
                 target,
                 filename=target.name,
                 media_type="application/pdf",

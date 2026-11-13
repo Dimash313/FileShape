@@ -125,7 +125,11 @@ class ArtifactStoreTests(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     store.prune()
             self.assertEqual(store.reserved_bytes, 12)
-            self.assertEqual(store.prune(), 2)
+            # The first failed pass still marks the other expired lease as
+            # unavailable, while its open fd keeps the bytes charged.
+            with self.assertRaises(ArtifactUnavailable):
+                store.open_result(SECOND)
+            self.assertEqual(store.prune(), 1)
             self.assertFalse(item.path.exists())
             self.assertTrue(second.path.exists())
             self.assertEqual(store.prune(), 0)
