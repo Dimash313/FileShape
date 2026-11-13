@@ -31,6 +31,7 @@ class MeteredDurableJobsTests(unittest.TestCase):
             store.transition(rejected.job_id, 11, "failed")
             self.assertEqual(store.usage_snapshot(11)["daily_used"], 9)
             last = store.create(11, metered=True)
+            store.transition(last.job_id, 11, "processing")
             store.transition(last.job_id, 11, "completed")
             with self.assertRaises(OperationQuotaExceeded):
                 store.create(11, metered=True)
@@ -58,6 +59,7 @@ class MeteredDurableJobsTests(unittest.TestCase):
             store.grant_operation_pack(11, 10, "grant:pack:metered:0001")
             for _ in range(10):
                 prior = store.create(11, metered=True)
+                store.transition(prior.job_id, 11, "processing")
                 store.transition(prior.job_id, 11, "completed")
             job = store.create(11, metered=True)
             self.assertEqual(store.usage_snapshot(11)["pack_remaining"], 9)
