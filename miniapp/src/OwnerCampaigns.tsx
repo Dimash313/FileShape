@@ -5,7 +5,7 @@ import {
   Copy, Link2, Plus, RefreshCw, ShieldCheck, Square, UsersRound,
 } from 'lucide-react';
 import {
-  CampaignApiError, changeCampaignState, createCampaign,
+  changeCampaignState, createCampaign,
   createCampaignInvite, listCampaigns,
 } from './campaignsApi';
 import type { Campaign, CampaignAction, CampaignMode, CampaignPage } from './campaignsApi';
