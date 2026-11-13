@@ -49,6 +49,59 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.2 — asynchronous conversion API and private result downloads
+
+`POST /api/v1/jobs` accepts the same multipart `upload`, `action`, and optional
+`pages` as the single-file converter. Signed Telegram authorization is required.
+The API validates the operation, actual upload size and content identification
+in a bounded subprocess, safely stores a private temporary input and responds
+**HTTP 202** with `job_id`, `state`, `created_at`, `updated_at` and a status
+`Location` header. Invalid uploads are rejected before acceptance. Unaccepted
+metadata reservations are removed so invalid/overloaded requests do not consume
+the 1,000 accepted-record capacity.
+
+Use authenticated `GET /api/v1/jobs/{job_id}` for state and
+`GET /api/v1/jobs/{job_id}/result` for the completed file (or JSON inspection
+result). A known ID never bypasses the owner check: other owners and missing
+records both return 404. Pending results return 409; failed/cancelled, expired
+or unavailable results return 404. Download filenames are server-controlled;
+no original filename is retained. Downloads are repeatable during retention,
+carry no-store/nosniff headers and require the initData header, not a public URL.
+
+Results live for **one hour after completion**, with cleanup every 60 seconds
+and on quota reservation/access. Inputs are deleted on success; rejected,
+failed and cancelled operations release files. A 256 MiB logical artifact-byte
+budget reserves input plus worst-case 50 MiB worker output before upload,
+then shrinks to actual completed files. The 1,000-artifact count also bounds
+filesystem overhead; use the deployment tmpfs/disk limit for physical space.
+Conservative reservations can reject a burst before the 20-place dispatcher
+queue fills. The existing 20 MiB input, 45 MiB accepted output, subprocess RAM,
+CPU and execution limits remain. Upload saving has a 30-second deadline;
+preacceptance validation/admission waits at most 90 seconds plus cancellation
+cleanup. Downloads are limited to four concurrent streams and 120 seconds.
+Open downloads pin their disk quota until closed, including during expiry.
+
+The manager uses fixed consumers and submission handles, with no task spawned
+per background HTTP request. Status reaches completed only after verifying and
+finalizing output. SQLite errors, timeouts, worker exceptions and queued/running
+cancellation are cleaned up. Shared process execution remains bounded across
+old and new endpoints. The queue snapshot now counts actual manager operations
+and both bounded waiting rooms; it is still per process, not a throughput metric.
+
+**Restart/operation limits:** metadata survives restart; uploads/results do not.
+Graceful shutdown cancels work, waits for subprocess cleanup and deletes this
+boot's artifacts. A crash leaves locked-workspace artifacts that the bounded
+startup/periodic janitor removes once older than one hour and unlocked. No job
+is replayed. Use a trusted private local filesystem and one API worker/replica.
+Artifact files remain outside SQLite and the metadata backup volume. Rejected
+new jobs can return 429 (queue full) or 503 (quota/store/shutdown), with Retry-After
+where appropriate. Keep disk monitoring and the configured container limits.
+
+The old `/api/v1/convert` and `/api/v1/images/pdf` routes remain compatible.
+The Mini App still uses those routes until the 4.3 frontend integration; this
+backend release does not yet add live polling or a cancel/retry button. No
+public deployment or conversion recovery is claimed.
+
 ## FileShape 4.1 — bounded internal JobManager
 
 Production HTTP conversions now dispatch subprocess work through `api/job_manager.py`: a fixed number of consumers, a bounded queue, a 50-second outer operation deadline and explicit error/cancellation propagation. The existing shared HTTP admission limit and subprocess CPU/RAM/output/time limits remain in force. Worker count stays at the configured value (default 3), with no throughput claim or increase to 10.

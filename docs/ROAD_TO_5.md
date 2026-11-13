@@ -6,7 +6,8 @@ This is an implementation checkpoint, not a public-launch announcement.
 
 - 3.9: PR #39 merged; PR and main Actions succeeded. SQLite secure creation, sidecar checks, private permissions, CAS stale-state regression, legitimate processing cancellation and failed-initialization cleanup. 130 Python tests at that milestone.
 - 4.0: PR #40 merged; PR and main Actions succeeded. Real HTTP conversions use bounded owner-scoped SQLite metadata. Exclusive process ownership precedes interrupted-job reconciliation. Metadata-only Docker volume, expiry and cancellation/error cleanup. Disabled ASGI lifespan fails closed. 140 Python tests at that milestone.
-- 4.1: `feature/job-manager-v41` contains the internal bounded dispatcher integrated into HTTP conversion workers. Its PR/merge/main CI status must be checked on GitHub before proceeding. Local Python suite: 147 tests passed; TypeScript/Vite build passed. CPU, RAM, output and wall-time limits remain in `api/worker_runner.py`. No processing throughput claim.
+- 4.1: PR #41 merged; PR and main Actions succeeded. Internal bounded dispatcher integrated into HTTP conversion workers; 147 local Python tests and TypeScript/Vite build passed. No throughput claim.
+- 4.2: branch `feature/background-api-v42` implements HTTP 202, bounded submission handles, private TTL/quota artifacts and owner-only result download. Check its PR and post-merge main CI before proceeding. Exact validation results are recorded in the PR. No upload/result recovery across restart.
 
 Read the current PR's validation notes for local Docker results. The managed
 execution environment has an 8 GB filesystem and a VFS Docker daemon. Multiple
@@ -15,33 +16,21 @@ current task; preserve source, state volumes and unrelated images. HTTPS builds
 in this environment need a trusted proxy CA supplied as a BuildKit secret;
 never disable TLS verification or commit the environment's certificate.
 
-## Next: 4.2 background API
+## Next: 4.3 Mini App background integration
 
-Begin only after the 4.1 PR and post-merge main CI succeed. Create a new branch
-from updated main and keep the old HTTP routes compatible.
-
-1. Extend `JobManager` with a bounded submission handle so HTTP 202 can return
-   without creating a task per request. Consume background errors explicitly;
-   preserve the tested cleanup-before-cancellation-completion ordering.
-2. Add a private, service-owned artifact directory with explicit TTL and disk
-   reservations. Keep file bytes outside SQLite. Persist only the minimal
-   operation manifest needed to locate/validate a result; use opaque job IDs
-   and fixed server-controlled filenames, never client-supplied paths.
-3. Validate owner/auth, action, actual upload size and safe content checks
-   before acceptance. Resource-intensive validation belongs in bounded workers.
-   A successful create response must contain a real stored job ID and HTTP 202.
-4. Let the worker own queued -> processing -> terminal transitions. Finalize
-   output before recording completed. On rejection, cancellation or failure,
-   release reservations, processes and files consistently.
-5. Add owner-only result retrieval, with authorization before filesystem access,
-   symlink/path checks and safe download lifetime during cleanup. Knowing an ID
-   must never grant access. Limit result retention; do not promise conversion
-   recovery after restart.
-6. Integrate startup/shutdown and artifact expiry with existing exclusive
-   `JobRuntime` ownership. Never mark jobs failed before acquiring its lock.
-7. Test HTTP 202, real conversion/result integrity, unauthenticated access,
-   cross-owner access, known-ID attacks, overload, size limits, worker failure,
-   expiry, download/cleanup races, cancellation and restart semantics.
+Begin only after the 4.2 PR and post-merge main CI succeed. Start a separate
+branch from updated main. In `miniapp/src/api.ts`, use POST `/api/v1/jobs`
+for single-file server tools; preserve existing local image conversion and
+synchronous batch photos until equivalent async batch support exists. Keep
+actual XHR upload-byte progress. Poll GET `/api/v1/jobs/{job_id}` with bounded
+intervals compatible with the shared 12 requests/minute rate limit, stop on
+terminal states and abort in-flight polling on hidden/offline/unmount. Handle
+reopen without storing uploaded bytes or initData. Fetch the owner-authenticated
+result as a blob only after completed; a 404 can mean TTL expiry or restart,
+so present that honestly and allow reupload. Show confirmed states, never an
+invented conversion percentage. Test upload -> queued -> processing -> download,
+error/cancelled, hidden/offline/reopen and terminal polling stop. Follow the
+per-version validation/PR/CI/main sequence below.
 
 ## Remaining sequence (not implemented)
 

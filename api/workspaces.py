@@ -53,7 +53,7 @@ def cleanup_orphans(now=None):
         scanned += 1
         if path.is_symlink() or not path.is_dir():
             continue
-        if not path.name.startswith(("fileshape_api_", "fileshape_batch_")):
+        if not path.name.startswith(("fileshape_api_", "fileshape_batch_", "fileshape_background_")):
             continue
         try:
             if path.stat().st_mtime > cutoff:
