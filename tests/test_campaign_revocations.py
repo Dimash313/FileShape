@@ -181,6 +181,7 @@ class RevocationDispatcherTests(unittest.IsolatedAsyncioTestCase):
             self.store, bot=bot, now=171), 0)
         self.assertEqual(bot.revoke_chat_invite_link.await_count, 1)
         bot.revoke_chat_invite_link.side_effect = None
+        bot.revoke_chat_invite_link.return_value = True
         self.assertEqual(await dispatch_campaign_revocations(
             self.store, bot=bot, now=172), 1)
         self.assertEqual(self.store.campaign_snapshot(
