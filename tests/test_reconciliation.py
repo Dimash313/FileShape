@@ -107,11 +107,12 @@ class ReconciliationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_opt_in_metered_background_validation_failure_refunds(self):
         with patch.object(self.manager, "run", new=AsyncMock(side_effect=WorkerFailed("bad input"))):
-            with self.assertRaises(WorkerFailed):
+            with self.assertRaises(HTTPException) as failure:
                 await self.service.create(
                     UploadFile(file=BytesIO(b"hello"), filename="input.txt"),
                     "txt:info", ".txt", "", OWNER, metered=True,
                 )
+        self.assertEqual(failure.exception.status_code, 422)
         self.assertEqual(self.store.usage_snapshot(OWNER)["daily_used"], 0)
 
     async def test_queued_cancel_metadata_recovers_without_replaying_work(self):
