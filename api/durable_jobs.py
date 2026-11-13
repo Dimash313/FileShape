@@ -186,7 +186,7 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
         if metered:
             # Admission and quota are a single durable write transaction:
             # a rejected charge cannot leave an orphaned queued job.
-            self._reserve_operation_in_transaction(owner_id, self._job_operation_key(job_id), now)
+            self._reserve_operation_in_transaction(owner_id, self._job_operation_key(job_id), now, limit_active=True)
         return JobSnapshot(job_id, "queued", now, now)
 
     @staticmethod
