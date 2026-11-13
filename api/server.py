@@ -654,6 +654,28 @@ async def conversion_job(user_id, uploads):
                 await upload.close()
 
 
+@api.get("/api/v1/usage")
+async def usage_status(user_id: int = Depends(authenticated_user)):
+    """Owner-scoped persisted allowances, explicitly not active metering.
+
+    Do not expose these counts as an enforced balance until every conversion
+    admission path has been wired to reserve and settle operations.
+    """
+    await enforce_rate_limit(user_id)
+    if jobs is None or not hasattr(jobs, "usage_snapshot"):
+        raise HTTPException(status_code=503, detail="Учёт операций временно недоступен")
+    try:
+        snapshot = jobs.usage_snapshot(user_id)
+    except (sqlite3.Error, ValueError, OverflowError, OSError):
+        logger.error("Usage snapshot unavailable")
+        raise HTTPException(status_code=503, detail="Учёт операций временно недоступен") from None
+    return JSONResponse({
+        **snapshot,
+        "enforced": False,
+        "purchases_enabled": False,
+    }, headers={"Cache-Control": "no-store"})
+
+
 @api.get("/api/v1/session")
 async def session(user_id: int = Depends(authenticated_user)):
     return {"ok": True, "user_id": user_id, "max_upload_bytes": MAX_INPUT_BYTES}
