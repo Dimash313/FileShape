@@ -109,6 +109,21 @@ class DurableJobStore:
                 PRIMARY KEY (owner_id, key_hash)
             )
         """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS premium_entitlements (
+                owner_id INTEGER PRIMARY KEY,
+                expires_at REAL NOT NULL CHECK (expires_at > 0)
+            )
+        """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS premium_grants (
+                grant_key TEXT PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                seconds INTEGER NOT NULL CHECK (seconds > 0),
+                granted_at REAL NOT NULL,
+                resulting_expiry REAL NOT NULL
+            )
+        """)
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_updated ON jobs(state, updated_at)")
 
@@ -291,3 +306,64 @@ class DurableJobStore:
             "DELETE FROM jobs WHERE state IN ('completed','failed','cancelled') AND updated_at<=?",
             (time.time() - retention_seconds,),
         ).rowcount
+
+    @serialized
+    def premium_expiry(self, owner_id: int) -> float | None:
+        """Read durable UTC epoch expiry; no user files or payment secrets stored."""
+        self._validate_owner(owner_id)
+        row = self._db.execute(
+            "SELECT expires_at FROM premium_entitlements WHERE owner_id=?",
+            (owner_id,),
+        ).fetchone()
+        return None if row is None else float(row[0])
+
+    @serialized
+    def grant_premium(self, owner_id: int, seconds: int, grant_key: str, *,
+                      now: float | None = None) -> tuple[float, bool]:
+        """Atomically extend expiry; grant_key deduplicates payment/referral retries.
+
+        This primitive does not verify payment, referral qualification or admin
+        authorization. Only a trusted caller may supply an approved grant_key.
+        """
+        self._validate_owner(owner_id)
+        if type(seconds) is not int or not 1 <= seconds <= 366 * 86400:
+            raise ValueError("Invalid Premium duration")
+        if not isinstance(grant_key, str) or re.fullmatch(r"[A-Za-z0-9:_-]{12,160}", grant_key) is None:
+            raise ValueError("Invalid Premium grant key")
+        if now is None:
+            now = time.time()
+        if not isinstance(now, (int, float)) or not math.isfinite(now) or now <= 0:
+            raise ValueError("Invalid grant timestamp")
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self._db.execute(
+                "SELECT owner_id,seconds,resulting_expiry FROM premium_grants WHERE grant_key=?",
+                (grant_key,),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != owner_id or existing[1] != seconds:
+                    raise ValueError("Premium grant key conflict")
+                expiry, created = float(existing[2]), False
+            else:
+                row = self._db.execute(
+                    "SELECT expires_at FROM premium_entitlements WHERE owner_id=?",
+                    (owner_id,),
+                ).fetchone()
+                base = max(float(now), float(row[0])) if row else float(now)
+                expiry = base + seconds
+                self._db.execute(
+                    """INSERT INTO premium_entitlements(owner_id,expires_at) VALUES(?,?)
+                       ON CONFLICT(owner_id) DO UPDATE SET expires_at=excluded.expires_at""",
+                    (owner_id, expiry),
+                )
+                self._db.execute(
+                    """INSERT INTO premium_grants(grant_key,owner_id,seconds,granted_at,resulting_expiry)
+                       VALUES(?,?,?,?,?)""",
+                    (grant_key, owner_id, seconds, now, expiry),
+                )
+                created = True
+            self._db.execute("COMMIT")
+            return expiry, created
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
