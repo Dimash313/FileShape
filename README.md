@@ -2,29 +2,42 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## FileShape 4.23 — atomic quota-backed job lifecycle (under development)
+## FileShape 4.23 — enforced quota across API, Mini App and bot (PR in review)
 
-**Stage 1 only, not enabled for processing:** `DurableJobStore.create(..., metered=True)`
-and `create_idempotent(..., metered=True)` can now reserve allowance and
-create a queued job in **one** `BEGIN IMMEDIATE` transaction. When an opted-in
-job transitions to completed, failed or cancelled, its accounting decision
-commits atomically with the state change. The opted-in path caps active
-reservations at **one Free** or **three Pro** per user; grants preserve
-capacity for outstanding pack refunds. Rejected queued claims, unaccepted
-uploads and interrupted jobs after restart release their reservations.
-Older, unmetered job records are not retroactively billed. BackgroundJobs
-also accepts an explicit internal `metered=True` option for creation and retry,
-which is deliberately not passed by the public endpoints yet. The existing
-quota methods retain their public semantics.
+Every operation must first obtain a durable reservation from the **one**
+API-owned SQLite ledger; the request is rejected if the daily allowance/pack
+is exhausted or the user's concurrent-operation cap is reached. A single
+completed user-requested task (including a PDF merge, ZIP build/extract or
+information inspection) consumes one operation, **not one per input file**.
+Free allows **10 operations per 00:00–23:59 UTC day / one active request**;
+existing Pro entitlements allow **100 / three**, but the file transport limit
+is still **20 MiB**, not a promised 100 MiB paid upload. No billing is enabled.
 
-**Do not enable purchases or show enforced usage:** bot actions, API legacy
-conversions, background submissions, retries and all result delivery/cancel
-paths still need an audited end-to-end integration. The existing
-`/api/v1/usage` reply must continue to declare `enforced: false` and
-`purchases_enabled: false`. This stage has no payment or new paid API.
-Regression tests verify atomic admission/settlement, quota races, replay,
-tenant isolation and restart refunds. Follow-up 4.23 commits will wire every
-entry point and verify entire CI before merge.
+- Direct API and Mini App conversions, image batches, background jobs and
+  retries reserve quota with the job record. Completed jobs commit once;
+  rejected, failed, cancelled and interrupted jobs release quota. Replayed
+  accepted idempotency keys do not reserve twice.
+- Bot single-file conversions/info and multi-stage PDF page selection/merge
+  and ZIP packaging/extraction use **signed, scoped** internal
+  `/internal/v1/operations/{reserve,settle}` calls. The bot cannot open the
+  API SQLite or forge balances. A successful Telegram result dispatch commits;
+  a download, conversion or delivery failure releases its claim.
+- Opaque bot request hashes and expiry timestamps are stored without
+  user filenames, bytes or bot tokens. A lost response retries the same key;
+  unfinished processing leases expire after 30 minutes and are refunded,
+  including after an API restart. A deployment without the internal API
+  metering gate **fails closed** for all new bot conversions.
+- `GET /api/v1/usage` marks `enforced: true` only when the durable API
+  runtime is active, with `purchases_enabled: false`. Pro activation and
+  operation packs remain trusted internal grants only; Telegram Stars
+  payment verification belongs to 4.24. Bot profile and plan purchasing
+  screens remain incomplete until 4.25.
+
+**Release gate:** This section documents an *unmerged PR*, not a production
+deployment. Tests, Docker build, cross-ingress auditing and final-head
+GitHub Actions must pass before merge. The production bot must use the
+Compose internal access URL (or equivalent trusted
+`FILESHAPE_OPERATION_GATE_URL`) and a running API on the same BOT_TOKEN.
 
 ## FileShape 4.22 — authenticated usage status (read-only)
 
