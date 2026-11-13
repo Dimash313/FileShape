@@ -352,13 +352,13 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
         markup = back_keyboard()
     elif section == "profile":
         text = ("👤 Профиль FileShape\\n\\n"
-                "Тарифы и счётчик операций ещё не внедрены. "
-                "Здесь появится проверенный сервером остаток лимита.")
+                "Сервер учитывает операции: Free — 10 успешных действий в сутки UTC. "
+                "Персональный остаток появится здесь в обновлении профиля.")
         markup = back_keyboard()
     elif section == "plans":
         text = ("💎 Тарифы FileShape\\n\\n"
-                "Free / Pro и пакеты операций запланированы, но ещё не продаются. "
-                "Оплата Stars появится после серверного учёта операций.")
+                "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке. "
+                "Оплата Telegram Stars и покупка пакетов пока недоступны.")
         markup = back_keyboard()
     elif section == "help":
         text = ("❔ Как пользоваться\\n\\n"
