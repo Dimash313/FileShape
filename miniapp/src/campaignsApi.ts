@@ -57,7 +57,7 @@ export function validateCampaign(input: unknown): Campaign {
       (data.mode === 'duration' && data.target_joins !== null)) {
     throw new Error('Некорректные данные рекламной кампании.');
   }
-  return data as Campaign;
+  return data as unknown as Campaign;
 }
 
 export function validateCampaignPage(input: unknown, limit: number): CampaignPage {
