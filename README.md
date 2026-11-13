@@ -49,6 +49,27 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.11 — Mini App admission gate (CI validation required)
+
+The API now checks the signed Telegram user against owner-configured active
+required channels **before accepting new processing** on all four routes:
+`POST /api/v1/jobs`, `POST /api/v1/jobs/{job_id}/retry`,
+`POST /api/v1/convert` and `POST /api/v1/images/pdf`.
+Configuration and Premium expiry come from the API-owned private SQLite
+metadata store. Active Premium bypasses required channels. Without active
+required channels there is no Telegram membership call. Access-check errors
+or unverifiable membership **deny new admissions**, rather than falsely
+confirming subscription. Requests are rate-limited before network checks.
+
+Already accepted jobs remain owner-accessible through status, cancellation
+and result download. The bot and API are distinct processes; the Telegram
+bot's conversions are **not yet gated** and the bot must not open the API's
+single-owner SQLite database as a second writer. The owner must provision
+correct channel IDs and bot membership-inspection permissions before
+enabling required channels. No mandatory channel is added automatically,
+no campaign or payments are activated, and this is not a production
+rollout. CI and merged-main verification are required before release.
+
 ## FileShape 4.6 — monochrome Mini App (verification pending)
 
 The proposed Mini App refresh replaces the earlier blue palette with a consistent
