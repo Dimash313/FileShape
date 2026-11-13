@@ -49,6 +49,35 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.17 — automatic campaign expiry and Telegram invite revocation
+
+A campaign reaches `completed` when its confirmed-join target is hit or its
+scheduled end time passes. The API's existing metadata maintenance loop
+now runs campaign expiry every 60 seconds. Campaigns manually `stopped`
+by the owner are also terminal.
+
+A terminal campaign with a bot-created invite link **atomically queues** a
+Telegram revocation in SQLite. Its pending task survives restarts; migration
+backfills older terminal campaigns. The API attempts revocation immediately
+after a confirmed join or owner stop, and the maintenance loop retries due
+tasks. Telegram must explicitly acknowledge `revoke_chat_invite_link` before
+the API records `invite_revocation: "revoked"`. Otherwise the state stays
+`pending` and bounded backoff is applied (initially 60 seconds, capped at
+one hour). Telegram failures cannot roll back valid join counts or be presented
+as successful revocations. No raw member ID, original Telegram error content,
+or bot token is written into the revocation queue.
+
+The owner campaign snapshot now includes `invite_revocation`
+(`not_applicable`, `not_due`, `pending`, `revoked`),
+`revoke_attempts`, and `revoked_at`. This is separate from the
+campaign's own `state`; a completed campaign **may still have an
+active invitation** until Telegram confirms revocation. Correct operation
+requires the bot to retain invitation management rights and the API to have
+Telegram network access. If the permission is revoked, retries stay pending
+until fixed. The bot cannot retroactively prevent a join between target
+completion and link revocation. No durable delivery outbox for incoming
+`chat_member` events or advertiser-facing admin UI is included yet.
+
 ## FileShape 4.16 — owner campaign management API (CI validation required)
 
 Set `FILESHAPE_OWNER_ID` to the Telegram numeric user ID of the single

@@ -31,6 +31,7 @@ from api.ingress import UploadIngressGuard
 from api.internal_access import ReplayGuard
 from api.campaign_bridge import JoinReplayGuard
 from api.campaign_owner import make_campaign_router
+from api.campaign_revocations import dispatch_campaign_revocations
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
@@ -215,11 +216,18 @@ async def maintain_metadata(store):
         if background_jobs is not None:
             operations.extend((background_jobs.reconcile, background_jobs.artifacts.reconcile))
         operations.append(store.prune_terminal)
+        if hasattr(store, "expire_campaigns"):
+            operations.append(store.expire_campaigns)
         for operation in operations:
             try:
                 operation()
             except (sqlite3.Error, OSError, ValueError, RuntimeError):
                 logger.error("Job maintenance operation failed")
+        if hasattr(store, "pending_campaign_revocations"):
+            try:
+                await dispatch_campaign_revocations(store)
+            except (sqlite3.Error, OSError, ValueError, RuntimeError):
+                logger.error("Campaign revocation reconciliation unavailable")
         try:
             await asyncio.to_thread(orphan_cleaner.sweep if orphan_cleaner is not None else cleanup_orphans)
         except (OSError, ValueError, RuntimeError):
@@ -386,6 +394,12 @@ async def internal_campaign_join(
     except (sqlite3.Error, OSError):
         logger.error("Campaign join storage unavailable")
         raise HTTPException(status_code=503, detail="Campaign storage unavailable") from None
+    if recorded and hasattr(jobs, "pending_campaign_revocations"):
+        # Never roll back a verified join because Telegram revocation is down.
+        try:
+            await dispatch_campaign_revocations(jobs, limit=5)
+        except (sqlite3.Error, OSError, ValueError, RuntimeError):
+            logger.error("Campaign revocation deferred to maintenance")
     return JSONResponse({"recorded": recorded}, headers={"Cache-Control": "no-store"})
 
 

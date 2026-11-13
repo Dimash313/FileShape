@@ -92,4 +92,8 @@ async def revoke_campaign_invite(bot, *, chat_id: int, invite_link: str) -> None
         raise ValueError("Invalid channel")
     if not isinstance(invite_link, str) or not _PRIVATE_INVITE.fullmatch(invite_link):
         raise ValueError("Invalid invite")
-    await bot.revoke_chat_invite_link(chat_id=chat_id, invite_link=invite_link)
+    acknowledged = await bot.revoke_chat_invite_link(
+        chat_id=chat_id, invite_link=invite_link,
+    )
+    if acknowledged is not True:
+        raise RuntimeError("Telegram did not confirm invite revocation")
