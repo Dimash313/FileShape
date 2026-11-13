@@ -5,6 +5,7 @@ clients may omit it or send chunked bodies. This wrapper enforces the cap
 while Starlette consumes the stream, before UploadFile objects are parsed.
 """
 from typing import Any
+import re
 
 from starlette.datastructures import Headers
 
@@ -19,7 +20,9 @@ class UploadIngressGuard:
         self.paths = paths
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("path") not in self.paths:
+        path = scope.get("path", "")
+        dynamic_retry = scope.get("method") == "POST" and re.fullmatch(r"/api/v1/jobs/[^/]+/retry", path) is not None
+        if scope["type"] != "http" or (path not in self.paths and not dynamic_retry):
             await self.app(scope, receive, send)
             return
 

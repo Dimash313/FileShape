@@ -166,3 +166,70 @@ test('caller abort reaches an active status request and clears its request timer
   await assert.rejects(pending, error => error.name === 'AbortError');
   assert.equal(signal.aborted, true);
 });
+
+test('cancel reports the server state including a completion race and authenticates POST', async () => {
+  environment(); const api = await load(); let request;
+  globalThis.fetch = async (url, options) => { request = { url, options }; return Response.json(status('completed')); };
+  const result = await api.cancelBackgroundJob(jobId);
+  assert.equal(result.state, 'completed', 'a finished operation must not be relabelled cancelled');
+  assert.equal(request.url, `/api/v1/jobs/${jobId}/cancel`);
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.headers['X-Telegram-Init-Data'], 'signed-launch-data');
+  assert.equal(request.options.cache, 'no-store');
+});
+
+test('cancel network failure and foreign/mismatched responses never invent cancelled state', async () => {
+  environment(); let api = await load();
+  globalThis.fetch = async () => { throw new Error('offline'); };
+  await assert.rejects(api.cancelBackgroundJob(jobId), /offline/);
+  api = await load(); globalThis.fetch = async () => Response.json(status('cancelled'), { status: 404 });
+  await assert.rejects(api.cancelBackgroundJob(jobId), error => error.status === 404);
+  api = await load(); globalThis.fetch = async () => Response.json({ ...status('cancelled'), job_id: 'B'.repeat(32) });
+  await assert.rejects(api.cancelBackgroundJob(jobId), /ответ/);
+});
+
+test('explicit create key is preserved for manual resubmission of the same request', async () => {
+  environment(); const api = await load(); const headers = [];
+  globalThis.XMLHttpRequest = class {
+    upload = {}; status = 202;
+    open() {} setRequestHeader(name, value) { if (name === 'Idempotency-Key') headers.push(value); }
+    getResponseHeader(name) { return name === 'Content-Type' ? 'application/json' : null; }
+    send() { this.response = new Blob([JSON.stringify(status('queued'))]); queueMicrotask(() => this.onload()); }
+  };
+  const file = new File(['hello'], 'input.txt'); const key = 'same-logical-request-12345';
+  await api.createBackgroundJob(file, 'txt:docx', '', undefined, undefined, key);
+  await api.createBackgroundJob(file, 'txt:docx', '', undefined, undefined, key);
+  assert.deepEqual(headers, [key, key]);
+});
+
+test('retry sends original job ID, new file/parameters and required idempotency header', async () => {
+  environment(); const api = await load(); let request;
+  globalThis.XMLHttpRequest = class {
+    upload = {}; status = 202;
+    open(method, url) { request = { method, url, headers: {} }; }
+    setRequestHeader(name, value) { request.headers[name] = value; }
+    getResponseHeader(name) { return name === 'Content-Type' ? 'application/json' : null; }
+    send(form) { request.form = form; this.response = new Blob([JSON.stringify({ ...status('queued'), job_id: 'B'.repeat(32) })]); queueMicrotask(() => this.onload()); }
+  };
+  const result = await api.retryBackgroundJob(jobId, new File(['%PDF-1'], 'new.pdf'), 'pdf:extract', '1,3-5', 'retry-logical-request-12345');
+  assert.equal(result.job_id, 'B'.repeat(32));
+  assert.equal(request.url, `/api/v1/jobs/${jobId}/retry`);
+  assert.equal(request.headers['Idempotency-Key'], 'retry-logical-request-12345');
+  assert.equal(request.headers['X-Telegram-Init-Data'], 'signed-launch-data');
+  assert.equal(request.form.get('pages'), '1,3-5');
+  assert.equal(request.form.get('action'), 'pdf:extract');
+  assert.equal(await request.form.get('upload').text(), '%PDF-1');
+});
+
+test('unsafe retry IDs or keys and missing auth cannot start a control request', async () => {
+  environment(); const api = await load(); let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw Error('unexpected'); };
+  globalThis.XMLHttpRequest = class { constructor() { calls += 1; throw Error('unexpected'); } };
+  const file = new File(['x'], 'input.txt');
+  await assert.rejects(api.retryBackgroundJob('../secret', file, 'txt:docx', '', 'valid-key-request-12345'));
+  await assert.rejects(api.retryBackgroundJob(jobId, file, 'txt:docx', '', 'bad\r\nheader'));
+  window.Telegram.WebApp.initData = '';
+  await assert.rejects(api.cancelBackgroundJob(jobId));
+  await assert.rejects(api.retryBackgroundJob(jobId, file, 'txt:docx', '', 'valid-key-request-12345'));
+  assert.equal(calls, 0);
+});

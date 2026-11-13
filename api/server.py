@@ -65,7 +65,7 @@ if allowed_origin:
         CORSMiddleware,
         allow_origins=[allowed_origin],
         allow_methods=["GET", "POST"],
-        allow_headers=["X-Telegram-Init-Data", "Content-Type"],
+        allow_headers=["X-Telegram-Init-Data", "Content-Type", "Idempotency-Key"],
     )
 
 def configured_worker_capacity() -> int:
@@ -260,6 +260,7 @@ async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
 async def create_background_job(
     upload: UploadFile = FileField(...), action: str = Form(...),
     pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     try:
         kind, suffix = file_kind(upload.filename or "")
@@ -271,7 +272,50 @@ async def create_background_job(
         # Constants remain patchable in boundary tests; one event-loop instance.
         background_jobs.max_input = MAX_INPUT_BYTES
         background_jobs.max_result = MAX_RESULT_BYTES
-        item = await background_jobs.create(upload, action, suffix, pages, user_id)
+        item = await background_jobs.create(upload, action, suffix, pages, user_id, idempotency_key=idempotency_key)
+        return JSONResponse(item.public(), status_code=202, headers={
+            "Cache-Control": "no-store", "Location": f"/api/v1/jobs/{item.job_id}",
+        })
+    finally:
+        await upload.close()
+
+
+@api.post("/api/v1/jobs/{job_id}/cancel")
+async def cancel_background_job(job_id: str, user_id: int = Depends(authenticated_user)):
+    await enforce_rate_limit(user_id)
+    if background_jobs is None:
+        raise HTTPException(503, "Обработчики не запущены")
+    try:
+        item = await background_jobs.cancel(job_id, user_id)
+    except JobNotFound:
+        raise HTTPException(404, "Задание не найдено") from None
+    except sqlite3.Error:
+        raise HTTPException(503, "Хранилище временно недоступно") from None
+    return JSONResponse(item.public(), headers={"Cache-Control": "no-store"})
+
+
+@api.post("/api/v1/jobs/{job_id}/retry", status_code=202)
+async def retry_background_job(
+    job_id: str, upload: UploadFile = FileField(...), action: str = Form(...),
+    pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    try:
+        kind, suffix = file_kind(upload.filename or "")
+        if action not in SUPPORTED.get(kind, set()) or len(pages) > 90:
+            raise HTTPException(422, "Недопустимая операция или диапазон страниц")
+        await enforce_rate_limit(user_id)
+        if background_jobs is None or admission.closing:
+            raise HTTPException(503, "Обработчики не запущены")
+        background_jobs.max_input = MAX_INPUT_BYTES
+        background_jobs.max_result = MAX_RESULT_BYTES
+        try:
+            item = await background_jobs.retry(job_id, upload, action, suffix, pages, user_id,
+                                               idempotency_key=idempotency_key)
+        except JobNotFound:
+            raise HTTPException(404, "Задание не найдено") from None
+        except sqlite3.Error:
+            raise HTTPException(503, "Хранилище временно недоступно") from None
         return JSONResponse(item.public(), status_code=202, headers={
             "Cache-Control": "no-store", "Location": f"/api/v1/jobs/{item.job_id}",
         })

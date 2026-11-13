@@ -72,7 +72,7 @@ export default function App() {
   const [pages, setPages] = useState('');
   const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [pdfGridPage, setPdfGridPage] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const [requestBusy, setBusy] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
@@ -102,6 +102,7 @@ export default function App() {
   const pickBatch = () => { if (busy) return; tapFeedback(); batchInputRef.current?.click(); };
   const showBatch = () => {
     if (busy) return;
+    background.releaseInput();
     tapFeedback(); setBatchMode(true); setBatchFiles([]); setFile(null);
     setTab('home'); setNotice(''); setProgress(null);
   };
@@ -119,6 +120,7 @@ export default function App() {
       setNotice('Общий размер выбранных фотографий превышает 20 МБ.');
       return;
     }
+    background.releaseInput();
     setBatchFiles(files); setBatchMode(true); setFile(null); setNotice('');
   };
   const reorderBatch = (index: number, change: number) => {
@@ -155,6 +157,7 @@ export default function App() {
       setNotice('Результат передан браузеру для сохранения.');
     }
   });
+  const busy = requestBusy || background.creating || background.cancelling;
   const checkJob = async (item: Task) => {
     if (!item.jobId) return;
     try {
@@ -172,6 +175,7 @@ export default function App() {
       setNotice('Максимальный размер файла для этого интерфейса — 20 МБ.');
       return;
     }
+    background.releaseInput();
     setFile(next);
     setPdfPageCount(null);
     setPdfGridPage(0);
@@ -182,7 +186,7 @@ export default function App() {
     setNotice('');
     setTab('home');
   };
-  const clear = () => { if (busy) return; setFile(null); setPdfPageCount(null); setPdfGridPage(0); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
+  const clear = () => { if (busy) return; background.releaseInput(); setFile(null); setPdfPageCount(null); setPdfGridPage(0); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
   const convert = async () => {
     if (!file || !canConvertLocally(file) || busy) return;
     setBusy(true);
@@ -514,7 +518,7 @@ export default function App() {
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.3</span></div>
+          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.4</span></div>
         </div>
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">

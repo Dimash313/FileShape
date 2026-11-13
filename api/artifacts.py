@@ -283,6 +283,16 @@ class ArtifactStore:
             if item._leases == 0:
                 self._delete(job_id, item)
 
+    def discard_unfinished(self, job_id: str) -> bool:
+        """Remove uncompleted input on metadata failure; preserve finite-TTL results."""
+        self._job_id(job_id)
+        with self._lock:
+            item = self._entries.get(job_id)
+            if item is None or item.expires_at is not None:
+                return False
+            self.discard(job_id)
+            return True
+
     def prune(self) -> int:
         with self._lock:
             now = time.monotonic()
