@@ -49,6 +49,31 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.15 — authenticated Telegram campaign join bridge (CI validation required)
+
+Telegram polling now explicitly requests `chat_member` updates. When Telegram
+delivers a **new** human membership carrying a bot-created private invite link,
+the bot forwards the channel, exact link, keyed member digest and event time to
+the API over `FILESHAPE_CAMPAIGN_JOIN_URL`. The bot signs the entire assertion
+with a purpose-separated HMAC derived from `BOT_TOKEN`. The API checks a
+30-second signature window, nonce replay, event freshness (5 minutes), and
+matches the stored **channel plus invite link** before counting a join in
+the existing transactionally deduplicated SQLite campaign ledger.
+`compose.yaml` configures the internal URL. No client-facing endpoint
+can submit arbitrary membership evidence.
+
+**Operational limitations:** No owner UI currently creates and binds the
+campaign invite link; without an owner-approved draft campaign already
+configured, the bridge records nothing. Bot must be an administrator with
+invite-link rights in each partner channel, and Telegram must deliver
+`chat_member` updates. Network failures can lose join events because a
+durable delivery outbox is not yet implemented. End-of-campaign link revocation,
+reconciliation, and advertiser-facing statistics are not yet wired. The
+ledger counts unique *verified join events*, not clicks or guaranteed current
+subscribers. Keep the API on the internal network; only one API worker is
+supported for the nonce cache and SQLite ownership. Do not claim full
+advertising automation until these gaps are closed.
+
 ## FileShape 4.14 — Telegram campaign event adapter (CI validation required)
 
 Telegram adapter helpers in `services/campaign_telegram.py` can ask Telegram

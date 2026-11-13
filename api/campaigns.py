@@ -239,6 +239,26 @@ class CampaignMixin:
             raise
 
     @serialized
+    def record_attributed_join(self, *, chat_id, invite_link, user_digest, joined_at):
+        """Resolve only the stored chat/link pair, then atomically deduplicate.
+
+        Never trust a campaign ID from an incoming Telegram event. The outer
+        store RLock keeps lookup and write serialized in this API worker.
+        """
+        self._campaign_chat(chat_id)
+        self._invite_link(invite_link)
+        row = self._db.execute(
+            "SELECT campaign_id FROM ad_campaigns WHERE chat_id=? AND invite_link=?",
+            (chat_id, invite_link),
+        ).fetchone()
+        if row is None:
+            return False
+        return self.record_confirmed_join(
+            campaign_id=row[0], user_digest=user_digest,
+            observed_invite=invite_link, joined_at=joined_at,
+        )
+
+    @serialized
     def expire_campaigns(self, *, now=None):
         now = _timestamp(time.time() if now is None else now)
         self._db.execute("BEGIN IMMEDIATE")
