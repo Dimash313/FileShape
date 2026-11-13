@@ -100,6 +100,21 @@ class OwnerCampaignAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap.json()["invite_link"], link)
         bot.session.close.assert_awaited_once()
 
+    async def test_stopping_bound_campaign_attempts_immediate_revocation(self):
+        cid = (await self.draft()).json()["campaign_id"]
+        self.store.bind_campaign_invite(
+            actor_id=123, owner_id=123, campaign_id=cid,
+            invite_link="https://t.me/+Abcdefgh12345678")
+        with patch("api.campaign_owner.dispatch_campaign_revocations",
+                   new=AsyncMock(return_value=0)) as dispatcher:
+            response = await self.client.post(
+                f"/api/v1/owner/campaigns/{cid}/state",
+                json={"action": "stop"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["state"], "stopped")
+        self.assertEqual(response.json()["invite_revocation"], "pending")
+        dispatcher.assert_awaited_once()
+
     async def test_telegram_failure_leaves_draft_unbound(self):
         cid = (await self.draft()).json()["campaign_id"]
         bot = AsyncMock()
