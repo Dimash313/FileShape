@@ -3,6 +3,7 @@
 The owner identity is an explicit server-side configuration, never a client
 provided owner_id. No advertiser may manage another channel or campaign.
 """
+import logging
 import os
 import sqlite3
 import time
@@ -11,6 +12,7 @@ from aiogram import Bot
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.campaign_revocations import dispatch_campaign_revocations
 from config import get_settings
 from services.campaign_telegram import create_campaign_invite, revoke_campaign_invite
 
@@ -123,7 +125,19 @@ def make_campaign_router(authenticated_user, get_store):
             raise HTTPException(status_code=409, detail="Invalid campaign transition") from None
         except (sqlite3.Error, OSError):
             raise HTTPException(status_code=503, detail="Campaign storage unavailable") from None
-        return {"campaign_id": campaign_id, "state": state}
+        result = {"campaign_id": campaign_id, "state": state}
+        if data.action == "stop":
+            try:
+                await dispatch_campaign_revocations(store, limit=5)
+            except (sqlite3.Error, OSError, ValueError, RuntimeError):
+                logging.getLogger(__name__).warning(
+                    "Campaign invite revocation deferred; retry is persisted"
+                )
+            result["invite_revocation"] = store.campaign_snapshot(
+                actor_id=owner_id, owner_id=owner_id,
+                campaign_id=campaign_id,
+            )["invite_revocation"]
+        return result
 
     @router.get("/{campaign_id}")
     async def snapshot(campaign_id: str, owner=Depends(authorized_store)):
