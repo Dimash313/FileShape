@@ -16,6 +16,7 @@ from functools import wraps
 from pathlib import Path
 
 from api.campaigns import CampaignMixin, initialize_campaign_tables
+from api.campaign_revocation_store import CampaignRevocationsMixin
 from api.jobs import JobCapacityExceeded, JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
 
 
@@ -38,7 +39,7 @@ def serialized(method):
     return wrapped
 
 
-class DurableJobStore(CampaignMixin):
+class DurableJobStore(CampaignMixin, CampaignRevocationsMixin):
     def __init__(self, path: str | Path, *, max_entries: int = 1000, retention_seconds: float = 3600):
         if type(max_entries) is not int or max_entries < 1 or not math.isfinite(retention_seconds) or retention_seconds <= 0:
             raise ValueError("Invalid store settings")
