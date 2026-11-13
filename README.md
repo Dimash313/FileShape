@@ -2,6 +2,19 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
+## FileShape 4.22 — authenticated usage status (read-only)
+
+`GET /api/v1/usage` exposes the authenticated user's own durable
+Free/Pro allowance snapshot and prepaid operation balance using signed
+Telegram Mini App launch data. It returns `Cache-Control: no-store`,
+`enforced: false`, and `purchases_enabled: false` because the processing
+admission paths are **not yet metered** and Stars payments are **not enabled**.
+Unavailable storage returns HTTP 503 rather than fabricated counters.
+The endpoint accepts no owner ID, payment claims or credit grants from clients.
+
+Next: atomically integrate reservations/settlement across all bot and Mini
+App processing paths, and only then enable visible usage meters and checkout.
+
 ## FileShape 4.20 — Telegram bot navigation
 
 The bot now provides a navigable welcome message for `/start` and `/menu`, with
