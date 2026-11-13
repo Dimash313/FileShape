@@ -10,7 +10,8 @@ This is an implementation checkpoint, not a public-launch announcement.
 - 4.2: PR #42 merged; PR and main CI succeeded. HTTP 202, private expiring/quota-reserved results and owner-only download; 200 Python tests, TS/build and a real read-only Docker HTTP conversion/download/IDOR smoke passed. Results are not recovered across restart.
 - 4.3: PR #43 merged; PR and main CI succeeded. Confirmed Mini App statuses, bounded hidden/offline-aware polling, authenticated result retrieval and owner-scoped references. 200 Python + 35 frontend tests, build and mocked mobile Chromium smoke passed.
 - 4.4: [PR #44](https://github.com/Dimash313/FileShape/pull/44) merged; [main CI](https://github.com/Dimash313/FileShape/actions/runs/43382550867) succeeded at `7a7b83f`. Owner-only cancellation, explicit validated reupload retry and durable owner-scoped idempotency; 225 Python + 54 native Node tests, TypeScript/Mini App and Docker builds passed. Server input retention is unchanged; no automatic replay.
-- 4.5: `feature/recovery-cleanup-v45` contains recovery/cleanup hardening. Local 279 Python + 54 native Node tests, TypeScript/Mini App build, Docker build and real read-only HTTP smoke passed. PR CI and post-merge main CI are pending; check the final PR before proceeding. No result recovery or input replay.
+- 4.5: [PR #45](https://github.com/Dimash313/FileShape/pull/45) merged; [main CI](https://github.com/Dimash313/FileShape/actions/runs/43424381336) passed on `7371101`. Recovery/cleanup hardening; 279 local Python + 54 native Node tests, TS/Mini App, Docker and read-only HTTP smoke passed. No result recovery or input replay.
+- 4.6: `feature/monochrome-miniapp-v46` is the proposed black/white UI refinement. Static palette/contrast/mobile-accessibility regressions added. Full PR and merged-main CI are mandatory before marking it complete.
 
 Read the current PR's validation notes for local Docker results. The managed
 execution environment has an 8 GB filesystem and a VFS Docker daemon. Multiple
@@ -21,7 +22,7 @@ do not use broad cache pruning on a shared builder. HTTPS builds
 in this environment need a trusted proxy CA supplied as a BuildKit secret;
 never disable TLS verification or commit the environment's certificate.
 
-## Current gate: 4.5 recovery and cleanup
+## Verified gate: 4.5 recovery and cleanup
 
 The implementation retains exclusive JobRuntime ownership before startup
 reconciliation: accepted queued/processing records become failed, unaccepted
@@ -46,24 +47,29 @@ App build, Docker build and real read-only HTTP smoke passed. Regression tests
 include actual SIGKILL, repeated shutdown cancellation, GC descriptor release,
 cleanup-failure isolation and free-space/readiness failures. Docker exercised
 create/replay, cancel/retry/replay, foreign-result 404, WebP and legacy DOCX.
-**Pending gate:** separate version PR, successful final-head checks and successful
-push-triggered CI on the exact merged main SHA. No production deployment or real
-Telegram WebView test is implied.
+**Verified gate:** [PR #45](https://github.com/Dimash313/FileShape/pull/45)
+and [merged main Actions](https://github.com/Dimash313/FileShape/actions/runs/43424381336)
+succeeded on SHA `737110153b2a4bd189398f9b1ea78641e9022953`.
+No production deployment or real Telegram WebView test is implied.
 
-## Next: 4.6 interface refinement
+## Current gate: 4.6 monochrome interface refinement
 
-Start a new version branch from updated main only after the 4.5 gate succeeds.
+Branch `feature/monochrome-miniapp-v46` follows the completed 4.5 gate.
 Preserve every working local/server/batch tool, background status and authenticated
-result flow, cancel/retry/idempotency behavior and data-retention limits. Refine
-the dark/blue mobile UI across home/catalog/file/conversion/history/profile and
-all loading/error/empty states. Keep Android-size layouts, keyboard/screen-reader
-accessibility, WebView performance and motion preferences in scope. Browser
-emulation and mocked Telegram data remain separate from real Telegram WebView
-validation. Apply the normal Python/Node/build/Docker/PR/main CI gates.
+result flow, cancel/retry/idempotency behavior and data-retention limits. The
+selected visual identity is **near-black surfaces, neutral graphite borders,
+white high-contrast actions and entirely achromatic highlights**, with no blue.
+Apply it across home/catalog/file/conversion/history/profile and all
+loading/error/empty states. Provide keyboard focus, screen-reader selected states,
+Android-size layouts, safe-area padding, reduced-motion and forced-color support.
+Static regression checks enforce neutral CSS colors and token contrast.
+Browser emulation or CI does not replace real Android Telegram WebView validation.
+**Pending gate:** final-head Python, Node, TypeScript/Mini App, Docker and
+successful push-triggered CI on the exact merged main SHA.
 
 ## Remaining sequence (not implemented)
 
-- 4.6: premium dark/blue accessible mobile UI, preserving every working tool; history/profile/navigation and all empty/error/loading states.
+- 4.6: monochrome mobile interface — proposed on a separate branch, pending required CI, merge and Android Telegram WebView verification.
 - 4.7: reproducible CPU/RAM/process/queue/disk/SQLite load tests and measured report. Keep safe concurrency until deployment-class hardware is measured.
 - 4.8: auth/IDOR/archive/parser/subprocess/CORS/rate/size/replay/temp/SQLite/log/race/download audit, confirmed fixes and residual-risk report.
 - 4.9: release-candidate regression and end-to-end matrix, Docker/production/retention/backup/rollback review. Real Android and Telegram WebView validation remains a gate; do not substitute browser emulation for a real Telegram test.
