@@ -59,6 +59,41 @@ class OwnerCampaignAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap.json()["confirmed_joins"], 0)
         self.assertEqual(snap.json()["state"], "draft")
 
+    async def test_owner_can_list_and_page_campaigns_without_member_data(self):
+        ids = []
+        for _ in range(3):
+            response = await self.draft()
+            self.assertEqual(response.status_code, 200, response.text)
+            ids.append(response.json()["campaign_id"])
+        first = await self.client.get("/api/v1/owner/campaigns?offset=0&limit=2")
+        second = await self.client.get("/api/v1/owner/campaigns?offset=2&limit=2")
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual((first.json()["total"], second.json()["total"]), (3, 3))
+        rows = first.json()["items"] + second.json()["items"]
+        self.assertEqual({item["campaign_id"] for item in rows}, set(ids))
+        self.assertEqual(len(rows), 3)
+        for item in rows:
+            self.assertEqual(item["confirmed_joins"], 0)
+            self.assertEqual(item["invite_revocation"], "not_applicable")
+            self.assertNotIn("user_digest", item)
+            self.assertNotIn("member_id", item)
+            self.assertNotIn("owner_id", item)
+
+        for query in ("?limit=0", "?limit=31", "?offset=-1", "?offset=10001"):
+            with self.subTest(query=query):
+                self.assertEqual((await self.client.get(
+                    "/api/v1/owner/campaigns" + query)).status_code, 422)
+
+    async def test_list_is_owner_only_without_visibility_leaks(self):
+        await self.draft()
+        server.api.dependency_overrides[server.authenticated_user] = lambda: 456
+        response = await self.client.get("/api/v1/owner/campaigns")
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertNotIn("items", response.text)
+        with self.assertRaises(PermissionError):
+            self.store.list_campaigns(actor_id=456, owner_id=123)
+
     async def test_non_owner_cannot_create_or_read(self):
         cid = (await self.draft()).json()["campaign_id"]
         server.api.dependency_overrides[server.authenticated_user] = lambda: 456
