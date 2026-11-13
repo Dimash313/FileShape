@@ -14,6 +14,11 @@ import tempfile
 import time
 
 from fastapi import Depends, FastAPI, File as FileField, Form, Header, HTTPException, Request, UploadFile
+from aiogram import Bot
+from datetime import datetime, timezone
+
+from api.access_policy import AccessDecision, RequiredChannel
+from api.telegram_membership import verify_memberships
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -126,6 +131,43 @@ def authenticated_user(
         return verify_init_data(raw, get_settings().bot_token)
     except InvalidInitData:
         raise HTTPException(status_code=401, detail="Открой приложение внутри Telegram заново") from None
+
+
+async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -> int:
+    """Only new admissions are gated. Status, cancellation and results stay owner-scoped."""
+    if jobs is None:
+        raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
+    try:
+        now = datetime.now(timezone.utc)
+        expiry = jobs.premium_expiry(user_id)
+        channels = tuple(
+            RequiredChannel(
+                chat_id=chat_id,
+                starts_at=datetime.fromtimestamp(start, timezone.utc),
+                ends_at=None if end is None else datetime.fromtimestamp(end, timezone.utc),
+                enabled=enabled,
+            )
+            for chat_id, start, end, enabled in jobs.list_required_channels()
+        )
+        if expiry is not None and expiry > now.timestamp():
+            return user_id
+        if not any(channel.active_at(now) for channel in channels):
+            return user_id
+    except (sqlite3.Error, ValueError, OverflowError, OSError):
+        logger.error("Access configuration unavailable")
+        raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
+    bot = Bot(token=get_settings().bot_token)
+    try:
+        decision = await verify_memberships(
+            bot, user_id=user_id, channels=channels, now=now,
+        )
+    finally:
+        await bot.session.close()
+    if decision is AccessDecision.SUBSCRIPTION_REQUIRED:
+        raise HTTPException(status_code=403, detail="Подпишись на обязательные каналы")
+    if decision is not AccessDecision.ALLOWED:
+        raise HTTPException(status_code=503, detail="Не удалось проверить подписку. Повтори позже")
+    return user_id
 
 
 async def enforce_rate_limit(user_id: int) -> None:
@@ -321,7 +363,7 @@ async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
 @api.post("/api/v1/jobs", status_code=202)
 async def create_background_job(
     upload: UploadFile = FileField(...), action: str = Form(...),
-    pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+    pages: str = Form(default=""), user_id: int = Depends(authorize_new_processing),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     try:
@@ -359,7 +401,7 @@ async def cancel_background_job(job_id: str, user_id: int = Depends(authenticate
 @api.post("/api/v1/jobs/{job_id}/retry", status_code=202)
 async def retry_background_job(
     job_id: str, upload: UploadFile = FileField(...), action: str = Form(...),
-    pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+    pages: str = Form(default=""), user_id: int = Depends(authorize_new_processing),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     try:
@@ -579,7 +621,7 @@ async def convert(
     upload: UploadFile = FileField(...),
     action: str = Form(...),
     pages: str = Form(default=""),
-    user_id: int = Depends(authenticated_user),
+    user_id: int = Depends(authorize_new_processing),
 ):
     kind, suffix = file_kind(upload.filename or "")
     if action not in SUPPORTED.get(kind, set()):
@@ -656,7 +698,7 @@ async def convert(
 @api.post("/api/v1/images/pdf")
 async def multi_image_pdf(
     uploads: list[UploadFile] = FileField(...),
-    user_id: int = Depends(authenticated_user),
+    user_id: int = Depends(authorize_new_processing),
 ):
     """Convert 2–8 pictures to one PDF without storing user data."""
     if not MIN_IMAGES <= len(uploads) <= MAX_IMAGES:
