@@ -18,6 +18,7 @@ from pathlib import Path
 from api.campaigns import CampaignMixin, initialize_campaign_tables
 from api.campaign_revocation_store import CampaignRevocationsMixin
 from api.usage_ledger import UsageQuotaMixin, initialize_usage_tables
+from api.stars_orders import StarsOrderMixin, initialize_stars_order_tables
 from api.jobs import JobCapacityExceeded, JobNotFound, JobSnapshot, JobStateError, TRANSITIONS
 
 
@@ -40,7 +41,7 @@ def serialized(method):
     return wrapped
 
 
-class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
+class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin, StarsOrderMixin):
     def __init__(self, path: str | Path, *, max_entries: int = 1000, retention_seconds: float = 3600):
         if type(max_entries) is not int or max_entries < 1 or not math.isfinite(retention_seconds) or retention_seconds <= 0:
             raise ValueError("Invalid store settings")
@@ -157,6 +158,7 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_bot_operation_leases_expiry ON bot_operation_leases(expires_at)")
         initialize_campaign_tables(self._db)
         initialize_usage_tables(self._db)
+        initialize_stars_order_tables(self._db)
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_updated ON jobs(state, updated_at)")
 
