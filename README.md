@@ -19,6 +19,35 @@ rather than showing fabricated balances or allowing purchases. The existing
 20 MB bot download limit still applies. Next steps: server-side quota ledger,
 payment verification and entitlement checks.
 
+## FileShape 4.21 — durable Free/Pro operation ledger (foundation)
+
+This version adds **atomic SQLite primitives** for the agreed starting
+allowances: **Free 10 operations per UTC day; Pro 100 operations per UTC day**.
+A currently valid server-side Premium entitlement selects the Pro allowance.
+Optional operation packs contain **10 or 30 operations**; granted operations
+remain in the pack until used and do not expire at UTC midnight.
+
+- `usage_snapshot(owner_id)` returns the actual persisted day, tier, occupied
+  daily allowance, remaining daily allowance, pack balance and active Pro expiry.
+- `reserve_operation(owner_id, server_generated_key)` atomically reserves the
+  daily allowance first, then a pack operation when the daily allowance is used.
+- `settle_operation(..., success=True/False)` commits or releases the reservation.
+  A failed pack-backed operation returns its pack unit; a failed daily operation
+  frees its daily slot. The same settlement may be replayed safely.
+- `grant_operation_pack(..., operations=10|30, grant_key=...)` is an **internal,
+  trusted-only primitive** with a durable idempotency key. It must only be called
+  after future independent payment verification or an authorized grant.
+- Cross-connection transactions use `BEGIN IMMEDIATE` and existing private,
+  protected SQLite state. Tests cover contention, replay, user isolation,
+  UTC day boundaries, restart and conflicting settlement.
+
+**Not yet active for end users:** this is a storage foundation, not a billing
+release. Processing endpoints and the Telegram bot **do not yet reserve or
+settle operations**. No checkout, Stars invoices, client-side credit grants,
+quota enforcement, or live paid limits are enabled by this version. Wire all
+processing admissions and terminal outcomes before showing a live usage
+counter or enabling paid packs. Existing 20 MB Bot API upload limit remains.
+
 ## Implemented (v1.0 foundation — upload validation hardening)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.
