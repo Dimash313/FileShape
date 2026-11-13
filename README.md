@@ -49,6 +49,27 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.6 — mobile UI refinement (under review)
+
+The Mini App keeps its existing file conversion, background job tracking,
+owner-authenticated downloads, cancel/retry controls, memory-only previews and
+bounded retention. This interface-only iteration reorganizes the dark/blue
+surfaces with a two-column small-screen tool catalog, clearer file/history and
+profile cards, and status-specific styling based only on **confirmed** server
+responses. It does not add a scanning tool or claim true conversion progress.
+
+Navigation has an accessible landmark and current-page indication. The app
+supports keyboard-visible focus, a skip-to-content link, larger touch controls,
+safe-area padding, high-contrast preferences and reduced-motion preferences.
+Format selection exposes its pressed state. Error and notice content remains
+textual and available to assistive technology.
+
+The branch requires Python regression tests, native Node frontend tests,
+TypeScript/Vite build, Docker build and final-head GitHub Actions before merge.
+Real Android Telegram WebView inspection (including keyboard, orientation and
+screen reader) is still required before release; browser or CI checks are not
+equivalent to that device validation. No backend API or paid service was added.
+
 ## FileShape 4.5 — restart recovery and bounded cleanup
 
 Recovery keeps the existing single-instance contract: an API process acquires

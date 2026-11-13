@@ -10,7 +10,8 @@ This is an implementation checkpoint, not a public-launch announcement.
 - 4.2: PR #42 merged; PR and main CI succeeded. HTTP 202, private expiring/quota-reserved results and owner-only download; 200 Python tests, TS/build and a real read-only Docker HTTP conversion/download/IDOR smoke passed. Results are not recovered across restart.
 - 4.3: PR #43 merged; PR and main CI succeeded. Confirmed Mini App statuses, bounded hidden/offline-aware polling, authenticated result retrieval and owner-scoped references. 200 Python + 35 frontend tests, build and mocked mobile Chromium smoke passed.
 - 4.4: [PR #44](https://github.com/Dimash313/FileShape/pull/44) merged; [main CI](https://github.com/Dimash313/FileShape/actions/runs/43382550867) succeeded at `7a7b83f`. Owner-only cancellation, explicit validated reupload retry and durable owner-scoped idempotency; 225 Python + 54 native Node tests, TypeScript/Mini App and Docker builds passed. Server input retention is unchanged; no automatic replay.
-- 4.5: `feature/recovery-cleanup-v45` contains recovery/cleanup hardening. Local 279 Python + 54 native Node tests, TypeScript/Mini App build, Docker build and real read-only HTTP smoke passed. PR CI and post-merge main CI are pending; check the final PR before proceeding. No result recovery or input replay.
+- 4.5: [PR #45](https://github.com/Dimash313/FileShape/pull/45) merged; [main CI](https://github.com/Dimash313/FileShape/actions/runs/43424381336) succeeded at `7371101` on 2026-11-13. Local 279 Python + 54 native Node tests, TypeScript/Mini App build, Docker build and real HTTP smoke had passed. No result recovery or input replay.
+- 4.6: `feature/ui-refinement-v46` is under review; frontend accessibility, coherent mobile styling and truthful background-state presentation are the current scope. CI and real-device validation remain separate gates.
 
 Read the current PR's validation notes for local Docker results. The managed
 execution environment has an 8 GB filesystem and a VFS Docker daemon. Multiple
@@ -21,7 +22,7 @@ do not use broad cache pruning on a shared builder. HTTPS builds
 in this environment need a trusted proxy CA supplied as a BuildKit secret;
 never disable TLS verification or commit the environment's certificate.
 
-## Current gate: 4.5 recovery and cleanup
+## Verified gate: 4.5 recovery and cleanup
 
 The implementation retains exclusive JobRuntime ownership before startup
 reconciliation: accepted queued/processing records become failed, unaccepted
@@ -46,20 +47,29 @@ App build, Docker build and real read-only HTTP smoke passed. Regression tests
 include actual SIGKILL, repeated shutdown cancellation, GC descriptor release,
 cleanup-failure isolation and free-space/readiness failures. Docker exercised
 create/replay, cancel/retry/replay, foreign-result 404, WebP and legacy DOCX.
-**Pending gate:** separate version PR, successful final-head checks and successful
-push-triggered CI on the exact merged main SHA. No production deployment or real
-Telegram WebView test is implied.
+**Verified gate:** PR #45 final-head CI and the push-triggered main run at
+`7371101` succeeded. No production deployment or real Telegram WebView test is implied.
 
-## Next: 4.6 interface refinement
+## Current gate: 4.6 interface refinement
 
-Start a new version branch from updated main only after the 4.5 gate succeeds.
+The version branch started at the verified 4.5 main commit `7371101`.
 Preserve every working local/server/batch tool, background status and authenticated
 result flow, cancel/retry/idempotency behavior and data-retention limits. Refine
 the dark/blue mobile UI across home/catalog/file/conversion/history/profile and
 all loading/error/empty states. Keep Android-size layouts, keyboard/screen-reader
 accessibility, WebView performance and motion preferences in scope. Browser
 emulation and mocked Telegram data remain separate from real Telegram WebView
-validation. Apply the normal Python/Node/build/Docker/PR/main CI gates.
+validation. The branch improves visual hierarchy, large touch controls, reduced motion,
+high contrast, keyboard landmarks and current-page/format states. Check actual
+small-screen Android Telegram WebView behavior separately: CI and code inspection
+cannot verify that environment. The 4.6 PR must pass Python/Node/build/Docker CI
+at its final head; after merge verify push CI on the merged main SHA before 4.7.
+No scanner implementation or new backend features are part of 4.6.
+
+## Next: 4.7 reproducible load tests
+
+Instrument CPU, RAM, disk, queue and SQLite load using deployment-class hardware.
+Do not raise worker concurrency based on unmeasured expectations.
 
 ## Remaining sequence (not implemented)
 
