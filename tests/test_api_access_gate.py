@@ -28,7 +28,7 @@ class ApiAccessGateTests(unittest.IsolatedAsyncioTestCase):
         store = SimpleNamespace(premium_expiry=lambda _: None,
                                 list_required_channels=lambda: [(-1001, 1000, None, True)])
         bot = SimpleNamespace(session=SimpleNamespace(close=AsyncMock()))
-        with patch.object(server, "jobs", store), patch.object(server, "Bot", return_value=bot), \\
+        with patch.object(server, "jobs", store), patch.object(server, "Bot", return_value=bot), \
              patch.object(server, "verify_memberships", new_callable=AsyncMock, return_value=AccessDecision.SUBSCRIPTION_REQUIRED):
             with self.assertRaises(HTTPException) as ctx:
                 await server.authorize_new_processing(11)
@@ -39,7 +39,7 @@ class ApiAccessGateTests(unittest.IsolatedAsyncioTestCase):
         store = SimpleNamespace(premium_expiry=lambda _: None,
                                 list_required_channels=lambda: [(-1001, 1000, None, True)])
         bot = SimpleNamespace(session=SimpleNamespace(close=AsyncMock()))
-        with patch.object(server, "jobs", store), patch.object(server, "Bot", return_value=bot), \\
+        with patch.object(server, "jobs", store), patch.object(server, "Bot", return_value=bot), \
              patch.object(server, "verify_memberships", new_callable=AsyncMock, return_value=AccessDecision.VERIFICATION_UNAVAILABLE):
             with self.assertRaises(HTTPException) as ctx:
                 await server.authorize_new_processing(11)
