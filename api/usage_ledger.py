@@ -12,7 +12,7 @@ import time
 FREE_DAILY_OPERATIONS = 10
 PRO_DAILY_OPERATIONS = 100
 MAX_PACK_BALANCE = 10000
-_KEY = re.compile(r"[A-Za-z0-9:_-]{12,160}\\Z")
+_KEY = re.compile(r"[A-Za-z0-9:_-]{12,160}\Z")
 
 
 class OperationQuotaExceeded(Exception):
