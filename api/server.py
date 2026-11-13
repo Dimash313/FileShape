@@ -29,6 +29,7 @@ from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.internal_access import ReplayGuard
+from api.campaign_bridge import JoinReplayGuard
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
@@ -101,6 +102,7 @@ limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
 internal_access_replay = ReplayGuard()
+join_replay = JoinReplayGuard()
 
 
 def file_kind(filename: str) -> tuple[str, str]:
@@ -347,6 +349,37 @@ async def internal_access_check(
     else:
         decision = AccessDecision.ALLOWED
     return JSONResponse({"decision": decision.value}, headers={"Cache-Control": "no-store"})
+
+
+@api.post("/internal/v1/campaigns/join")
+async def internal_campaign_join(
+    request: Request,
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Bot-only join event ingestion; no public or user-supplied campaign IDs."""
+    if job_runtime is None or jobs is None:
+        raise HTTPException(status_code=503, detail="Campaign service unavailable")
+    # Bound JSON before parsing; never accept multipart or large payloads.
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        raise HTTPException(status_code=415, detail="JSON required")
+    body = await request.body()
+    if len(body) > 1024:
+        raise HTTPException(status_code=413, detail="Payload too large")
+    try:
+        import json
+        payload = json.loads(body)
+        token = get_settings().bot_token
+        join_replay.verify(token, payload, timestamp, nonce, signature)
+    except (ValueError, TypeError, RuntimeError, UnicodeError):
+        raise HTTPException(status_code=401, detail="Unauthorized") from None
+    try:
+        recorded = jobs.record_attributed_join(**payload)
+    except (sqlite3.Error, OSError):
+        logger.error("Campaign join storage unavailable")
+        raise HTTPException(status_code=503, detail="Campaign storage unavailable") from None
+    return JSONResponse({"recorded": recorded}, headers={"Cache-Control": "no-store"})
 
 
 @api.get("/health")
