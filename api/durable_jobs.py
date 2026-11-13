@@ -124,6 +124,24 @@ class DurableJobStore:
                 resulting_expiry REAL NOT NULL
             )
         """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS required_channels (
+                chat_id INTEGER PRIMARY KEY,
+                starts_at REAL NOT NULL,
+                ends_at REAL,
+                enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+                CHECK (ends_at IS NULL OR ends_at > starts_at)
+            )
+        """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS owner_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                target_chat_id INTEGER NOT NULL,
+                occurred_at REAL NOT NULL
+            )
+        """)
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_updated ON jobs(state, updated_at)")
 
@@ -364,6 +382,85 @@ class DurableJobStore:
                 created = True
             self._db.execute("COMMIT")
             return expiry, created
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _require_owner(actor_id: int, owner_id: int) -> None:
+        """Both IDs must be trusted server configuration/authentication, not client claims."""
+        DurableJobStore._validate_owner(actor_id)
+        DurableJobStore._validate_owner(owner_id)
+        if actor_id != owner_id:
+            raise PermissionError("Owner authorization required")
+
+    @serialized
+    def set_required_channel(self, *, actor_id: int, owner_id: int, chat_id: int,
+                             starts_at: float, ends_at: float | None = None,
+                             enabled: bool = True, now: float | None = None) -> None:
+        """Owner-only manual channel configuration. No automated partner approval."""
+        self._require_owner(actor_id, owner_id)
+        if type(chat_id) is not int or chat_id >= 0 or chat_id < -(2**63):
+            raise ValueError("Invalid channel ID")
+        if type(enabled) is not bool:
+            raise ValueError("Invalid enabled flag")
+        if not isinstance(starts_at, (int, float)) or not math.isfinite(starts_at) or starts_at <= 0:
+            raise ValueError("Invalid channel start")
+        if ends_at is not None and (
+            not isinstance(ends_at, (int, float)) or not math.isfinite(ends_at) or ends_at <= starts_at
+        ):
+            raise ValueError("Invalid channel end")
+        if now is None:
+            now = time.time()
+        if not isinstance(now, (int, float)) or not math.isfinite(now) or now <= 0:
+            raise ValueError("Invalid audit timestamp")
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute(
+                """INSERT INTO required_channels(chat_id,starts_at,ends_at,enabled)
+                   VALUES(?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET
+                   starts_at=excluded.starts_at,ends_at=excluded.ends_at,enabled=excluded.enabled""",
+                (chat_id, starts_at, ends_at, int(enabled)),
+            )
+            self._db.execute(
+                "INSERT INTO owner_audit(actor_id,action,target_chat_id,occurred_at) VALUES(?,?,?,?)",
+                (actor_id, "channel_upsert", chat_id, now),
+            )
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def list_required_channels(self) -> list[tuple[int, float, float | None, bool]]:
+        """Internal configuration; do not expose to unauthenticated clients."""
+        rows = self._db.execute(
+            "SELECT chat_id,starts_at,ends_at,enabled FROM required_channels ORDER BY chat_id"
+        ).fetchall()
+        return [(int(r[0]), float(r[1]), None if r[2] is None else float(r[2]), bool(r[3])) for r in rows]
+
+    @serialized
+    def remove_required_channel(self, *, actor_id: int, owner_id: int,
+                                chat_id: int, now: float | None = None) -> bool:
+        self._require_owner(actor_id, owner_id)
+        if type(chat_id) is not int or chat_id >= 0 or chat_id < -(2**63):
+            raise ValueError("Invalid channel ID")
+        if now is None:
+            now = time.time()
+        if not isinstance(now, (int, float)) or not math.isfinite(now) or now <= 0:
+            raise ValueError("Invalid audit timestamp")
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            removed = self._db.execute(
+                "DELETE FROM required_channels WHERE chat_id=?", (chat_id,)
+            ).rowcount == 1
+            if removed:
+                self._db.execute(
+                    "INSERT INTO owner_audit(actor_id,action,target_chat_id,occurred_at) VALUES(?,?,?,?)",
+                    (actor_id, "channel_remove", chat_id, now),
+                )
+            self._db.execute("COMMIT")
+            return removed
         except BaseException:
             self._db.execute("ROLLBACK")
             raise
