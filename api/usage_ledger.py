@@ -138,7 +138,14 @@ class UsageQuotaMixin:
                         (owner_id,),
                     ).fetchone()
                     balance = (int(row[0]) if row else 0) + operations
-                    if balance > MAX_PACK_BALANCE:
+                    # Outstanding pack-backed operations can still fail and be
+                    # refunded. Reserve room for their eventual return.
+                    pending = self._db.execute(
+                        """SELECT COUNT(*) FROM operation_usage
+                           WHERE owner_id=? AND source='pack' AND status='reserved'""",
+                        (owner_id,),
+                    ).fetchone()[0]
+                    if balance + pending > MAX_PACK_BALANCE:
                         raise ValueError("Pack balance limit")
                     self._db.execute(
                         """INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)
