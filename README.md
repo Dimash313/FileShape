@@ -49,6 +49,28 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.14 — Telegram campaign event adapter (CI validation required)
+
+Telegram adapter helpers in `services/campaign_telegram.py` can ask Telegram
+to create a distinct bot-owned private invite link for an owner-approved
+campaign, revoke that link, and recognize attributable **new** memberships
+from actual `chat_member` updates. The adapter rejects promotions, existing
+members, missing/unsupported links, bot accounts, and unrelated chats.
+Pseudonymous user digests use keyed HMAC, not raw Telegram IDs or unsalted
+hashes. Telegram API errors propagate; links and joins are never fabricated.
+
+**Not yet live:** These helpers are not registered with the bot polling
+dispatcher or linked to the API-owned SQLite campaign ledger. A future
+authenticated internal bridge must verify chat ID and exact invite link
+against the stored campaign before recording a join; do not write to SQLite
+from the bot process. Likewise, a future owner-only admin flow must invoke
+link creation and bind it to a draft campaign, with cleanup if binding fails.
+Automatic link revocation on completion and real-time advertiser reporting
+remain pending. Bot admin permission `can_invite_users` and subscription
+membership-check permissions are required for each partner channel; Telegram
+must deliver `chat_member` updates. No subscriber statistics are available
+until those integrations are deployed and verified.
+
 ## FileShape 4.13 — advertising campaign ledger (CI validation required)
 
 The private API-owned SQLite store now has an **owner-only advertising
