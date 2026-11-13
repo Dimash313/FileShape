@@ -51,7 +51,7 @@ class BotMenuTests(unittest.TestCase):
                     "data": "nav:plans", "answer": AsyncMock(),
                 })()
                 await navigate(callback, state)
-                self.assertIn("пока", edit.call_args.args[0])
+                self.assertIn("ещё не продаются", edit.call_args.args[0])
                 callback.answer.assert_awaited_once()
                 callback.data = "nav:home"
                 await navigate(callback, state)
