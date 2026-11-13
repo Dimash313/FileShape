@@ -20,6 +20,7 @@ from aiogram.types import (
 )
 
 from config import get_settings
+from services.bot_access import check_processing_access
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
@@ -192,6 +193,31 @@ async def remove_status(message: Message) -> None:
         await message.delete()
 
 
+async def allow_processing(message: Message, bot: Bot, actor_id: int) -> bool:
+    """Authorize before any file download/worker or multi-file state transition.
+
+    Channel/Premium state lives only in the API process; bot never opens SQLite.
+    """
+    if (type(actor_id) is not int or actor_id <= 0
+            or message.chat.type != "private" or message.chat.id != actor_id):
+        await message.answer("Обработка доступна только для твоих файлов в личном чате.")
+        return False
+    decision = await check_processing_access(actor_id, bot.token)
+    if decision == "allowed":
+        return True
+    if decision == "subscription_required":
+        await message.answer(
+            "🔒 Для новой обработки нужна подписка на обязательные каналы. "
+            "После подписки повтори действие."
+        )
+    else:
+        await message.answer(
+            "Проверка подписки временно недоступна. "
+            "Файл не обрабатывался — попробуй позже."
+        )
+    return False
+
+
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
@@ -223,7 +249,7 @@ async def cancel(message: Message, state: FSMContext):
     await message.answer("✖️ Операция отменена. Отправь новый файл.")
 
 
-async def run_merge(message: Message, bot: Bot, state: FSMContext):
+async def run_merge(message: Message, bot: Bot, state: FSMContext, actor_id: int):
     if await state.get_state() != MergeState.collecting.state:
         await message.answer("Сначала выбери «Объединить» для PDF.")
         return
@@ -231,6 +257,8 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext):
     items = data.get("pdfs", [])
     if len(items) < 2:
         await message.answer("Добавь ещё хотя бы один PDF, затем нажми «Готово».")
+        return
+    if not await allow_processing(message, bot, actor_id):
         return
     await state.clear()
     status = await message.answer("⏳ Объединяю PDF…")
@@ -258,14 +286,14 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext):
 
 @router.message(MergeState.collecting, Command("done"))
 async def done_command(message: Message, bot: Bot, state: FSMContext):
-    await run_merge(message, bot, state)
+    await run_merge(message, bot, state, message.from_user.id if message.from_user else -1)
 
 
 @router.callback_query(F.data == "merge:done")
 async def done_button(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await callback.answer()
     if isinstance(callback.message, Message):
-        await run_merge(callback.message, bot, state)
+        await run_merge(callback.message, bot, state, callback.from_user.id)
 
 
 @router.callback_query(F.data == "merge:cancel")
@@ -309,7 +337,7 @@ async def merge_hint(message: Message):
     await message.answer("Пришли следующий PDF документом, либо /done или /cancel.")
 
 
-async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext):
+async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext, actor_id: int):
     if await state.get_state() != ZipState.collecting.state:
         await message.answer("Сначала выбери «Собрать ZIP» у файла.")
         return
@@ -317,6 +345,8 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext):
     items = data.get("zip_files", [])
     if len(items) < 2:
         await message.answer("Добавь ещё один файл, затем нажми «Готово».")
+        return
+    if not await allow_processing(message, bot, actor_id):
         return
     await state.clear()
     status = await message.answer("⏳ Создаю ZIP…")
@@ -344,14 +374,14 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext):
 
 @router.message(ZipState.collecting, Command("done"))
 async def done_zip_command(message: Message, bot: Bot, state: FSMContext):
-    await run_zip_bundle(message, bot, state)
+    await run_zip_bundle(message, bot, state, message.from_user.id if message.from_user else -1)
 
 
 @router.callback_query(F.data == "bundle:done")
 async def done_zip_button(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await callback.answer()
     if isinstance(callback.message, Message):
-        await run_zip_bundle(callback.message, bot, state)
+        await run_zip_bundle(callback.message, bot, state, callback.from_user.id)
 
 
 @router.callback_query(F.data == "bundle:cancel")
@@ -407,6 +437,8 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
     if not file_id:
         await state.clear()
         await message.answer("Файл не найден. Пришли PDF заново.")
+        return
+    if not await allow_processing(message, bot, message.from_user.id if message.from_user else -1):
         return
     status = await message.answer("⏳ Обрабатываю страницы PDF…")
     try:
@@ -508,6 +540,8 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         await callback.answer("Закончи текущую операцию или отправь /cancel.", show_alert=True)
         return
     await callback.answer()
+    if not await allow_processing(callback.message, bot, callback.from_user.id):
+        return
     if action == "zip:create":
         await state.set_state(ZipState.collecting)
         suggested_name = received_filename(origin)

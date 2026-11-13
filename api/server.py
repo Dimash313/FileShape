@@ -28,6 +28,7 @@ from api.background_jobs import BackgroundJobs
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
+from api.internal_access import ReplayGuard
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
@@ -99,6 +100,7 @@ download_slots = asyncio.Semaphore(4)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
+internal_access_replay = ReplayGuard()
 
 
 def file_kind(filename: str) -> tuple[str, str]:
@@ -311,6 +313,40 @@ async def remove_abandoned_workspaces():
     orphan_cleaner = cleaner
     background_jobs = service
     metadata_maintenance = asyncio.create_task(maintain_metadata(jobs))
+
+
+@api.post("/internal/v1/access/check")
+async def internal_access_check(
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Authenticated bot service only. Never accept client-supplied membership."""
+    if job_runtime is None or jobs is None:
+        raise HTTPException(status_code=503, detail="Access service unavailable")
+    try:
+        secret = get_settings().bot_token
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Access service unavailable") from None
+    try:
+        user_id = internal_access_replay.verify(
+            token=secret, user=user, timestamp=timestamp,
+            nonce=nonce, signature=signature,
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Unauthorized") from None
+    try:
+        await authorize_new_processing(user_id)
+    except HTTPException as error:
+        decision = (
+            AccessDecision.SUBSCRIPTION_REQUIRED
+            if error.status_code == 403
+            else AccessDecision.VERIFICATION_UNAVAILABLE
+        )
+    else:
+        decision = AccessDecision.ALLOWED
+    return JSONResponse({"decision": decision.value}, headers={"Cache-Control": "no-store"})
 
 
 @api.get("/health")

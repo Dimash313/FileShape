@@ -49,6 +49,39 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.12 — bot/API access bridge (CI validation required)
+
+Docker Compose now configures the Telegram bot to call the **internal** API endpoint
+`http://api:8000/internal/v1/access/check` before any bot-side file operation.
+The bot never opens or writes the API's exclusive SQLite job/entitlement database.
+Bot and API authenticate each internal request using a short-lived HMAC
+assertion derived from the already-configured BOT_TOKEN, the trusted Telegram
+sender ID, a timestamp and a random nonce. The API rejects unsigned, expired,
+forged and replayed requests. The token itself is never transmitted in the
+internal HTTP request, and the response contains only the access decision.
+
+The access check is enforced before single-file actions, PDF page extraction,
+PDF merge and ZIP creation, including the completion of multi-step actions.
+Foreign-chat callbacks are not accepted; denied operations do not download
+files or create new temporary conversion work. Premium bypass and
+owner-configured required channels are evaluated by the same API-owned policy
+as Mini App processing. Failed API/Telegram checks deny new work rather than
+claiming membership. Bot help/start, file menus and existing Mini App result
+downloads are unchanged. No change to bot file retention or size limits.
+
+**Deployment:** Compose enables the bridge automatically; the API must be
+reachable from the bot service on the trusted Compose network. A standalone
+`python main.py` launch continues in its legacy, ungated mode until
+`FILESHAPE_ACCESS_GATE_URL` is set to a trusted internal API address; do
+not enable mandatory channels on such a deployment. If a configured bridge
+is unreachable, the bot **fails closed** and does not perform conversions.
+The internal path is deliberately not forwarded by the example public Caddy
+proxy, which forwards only `/api/*`. Protect the internal service/network;
+the HMAC is an authorization control, not a replacement for network isolation.
+Required-channel links and the campaign invite-link/statistics admin module
+are not delivered yet. Do not enable a restrictive channel configuration before
+users have a legitimate way to discover its invitation link.
+
 ## FileShape 4.11 — Mini App admission gate (CI validation required)
 
 The API now checks the signed Telegram user against owner-configured active
