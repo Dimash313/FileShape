@@ -303,7 +303,7 @@ export function BackgroundJobsPanel({ jobs, busy }: { jobs: ReturnType<typeof us
     {jobs.ownerError && <p className="queue-error" role="alert">{jobs.ownerError}</p>}
     {jobs.owner === null && !jobs.ownerLoading && <button type="button" className="secondary-button full" onClick={jobs.verify}>Подтвердить сессию</button>}
     {jobs.selected ? <>
-      <div className="background-job-state" role="status" aria-live="polite">
+      <div className={`background-job-state state-${jobs.status?.state ?? 'checking'}`} role="status" aria-live="polite">
         <strong>{jobs.status ? labels[jobs.status.state] : 'Проверяем сохранённое задание'}</strong>
         <span>{actionLabel(jobs.selected.action)}</span>
         {jobs.pollNotice && <p>{jobs.pollNotice}</p>}
