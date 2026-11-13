@@ -62,8 +62,7 @@ class MeteredDurableJobsTests(unittest.TestCase):
     def test_rejected_job_refunds_without_deleting_foreign_or_running(self):
         with DurableJobStore(self.path) as store:
             job = store.create(11, metered=True)
-            with self.assertRaises(JobNotFound):
-                store.discard_queued(job.job_id, 12)
+            self.assertFalse(store.discard_queued(job.job_id, 12))
             self.assertTrue(store.discard_queued(job.job_id, 11))
             self.assertEqual(store.usage_snapshot(11)["daily_used"], 0)
             with self.assertRaises(JobNotFound):
