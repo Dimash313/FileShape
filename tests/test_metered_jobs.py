@@ -10,8 +10,8 @@ import unittest
 from unittest.mock import patch
 
 from api.durable_jobs import DurableJobStore
-from api.jobs import JobNotFound
-from api.usage_ledger import OperationQuotaExceeded
+from api.jobs import JobNotFound, JobStateError
+from api.usage_ledger import OperationQuotaExceeded, OperationConcurrencyExceeded
 
 
 class MeteredDurableJobsTests(unittest.TestCase):
@@ -22,17 +22,21 @@ class MeteredDurableJobsTests(unittest.TestCase):
 
     def test_new_job_and_quota_are_created_atomically(self):
         with DurableJobStore(self.path) as store:
-            jobs = [store.create(11, metered=True) for _ in range(10)]
+            for _ in range(9):
+                job = store.create(11, metered=True)
+                store.transition(job.job_id, 11, "processing")
+                store.transition(job.job_id, 11, "completed")
+            rejected = store.create(11, metered=True)
             self.assertEqual(store.usage_snapshot(11)["daily_used"], 10)
-            self.assertEqual(len({job.job_id for job in jobs}), 10)
+            store.transition(rejected.job_id, 11, "failed")
+            self.assertEqual(store.usage_snapshot(11)["daily_used"], 9)
+            last = store.create(11, metered=True)
+            store.transition(last.job_id, 11, "completed")
             with self.assertRaises(OperationQuotaExceeded):
                 store.create(11, metered=True)
-            self.assertEqual(store._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 10)
-            self.assertEqual(store.usage_snapshot(12)["daily_used"], 0)
-            store.transition(jobs[0].job_id, 11, "failed")
-            self.assertEqual(store.usage_snapshot(11)["daily_used"], 9)
-            store.create(11, metered=True)
+            self.assertEqual(store._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 11)
             self.assertEqual(store.usage_snapshot(11)["daily_used"], 10)
+            self.assertEqual(store.usage_snapshot(12)["daily_used"], 0)
 
     def test_completed_commits_once_and_not_released_on_replay(self):
         with DurableJobStore(self.path) as store:
@@ -45,14 +49,16 @@ class MeteredDurableJobsTests(unittest.TestCase):
             ).fetchone()
             self.assertEqual(state, ("committed",))
             self.assertEqual(store.usage_snapshot(11)["daily_used"], 1)
-            with self.assertRaises(Exception):
+            with self.assertRaises(JobStateError):
                 store.transition(job.job_id, 11, "failed")
             self.assertEqual(store.usage_snapshot(11)["daily_used"], 1)
 
     def test_failed_pack_operation_is_restored(self):
         with DurableJobStore(self.path) as store:
             store.grant_operation_pack(11, 10, "grant:pack:metered:0001")
-            [store.create(11, metered=True) for _ in range(10)]
+            for _ in range(10):
+                prior = store.create(11, metered=True)
+                store.transition(prior.job_id, 11, "completed")
             job = store.create(11, metered=True)
             self.assertEqual(store.usage_snapshot(11)["pack_remaining"], 9)
             store.transition(job.job_id, 11, "cancelled")
@@ -118,13 +124,33 @@ class MeteredDurableJobsTests(unittest.TestCase):
                 try:
                     (first if i % 2 else second).create(11, metered=True)
                     return True
-                except OperationQuotaExceeded:
+                except (OperationQuotaExceeded, OperationConcurrencyExceeded):
                     return False
             with ThreadPoolExecutor(max_workers=8) as pool:
                 outcomes = list(pool.map(create, range(25)))
-            self.assertEqual(sum(outcomes), 10)
-            self.assertEqual(first.usage_snapshot(11)["daily_used"], 10)
-            self.assertEqual(first._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 10)
+            self.assertEqual(sum(outcomes), 1)
+            self.assertEqual(first.usage_snapshot(11)["daily_used"], 1)
+            self.assertEqual(first._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1)
+
+    def test_free_one_and_pro_three_active_operations(self):
+        with DurableJobStore(self.path) as store:
+            free = store.create(11, metered=True)
+            with self.assertRaises(OperationConcurrencyExceeded):
+                store.create(11, metered=True)
+            self.assertEqual(store.usage_snapshot(11)["daily_used"], 1)
+            store.transition(free.job_id, 11, "cancelled")
+            self.assertEqual(store.usage_snapshot(11)["daily_used"], 0)
+            expiry, created = store.grant_premium(22, 86400, "premium:pro:three:0001")
+            self.assertTrue(created)
+            self.assertGreater(expiry, 0)
+            pro = [store.create(22, metered=True) for _ in range(3)]
+            with self.assertRaises(OperationConcurrencyExceeded):
+                store.create(22, metered=True)
+            self.assertEqual(store.usage_snapshot(22)["daily_used"], 3)
+            store.transition(pro[0].job_id, 22, "failed")
+            extra = store.create(22, metered=True)
+            self.assertEqual(store.usage_snapshot(22)["daily_used"], 3)
+            self.assertNotEqual(pro[0].job_id, extra.job_id)
 
     def test_legacy_job_is_never_billed(self):
         with DurableJobStore(self.path) as store:
