@@ -393,7 +393,7 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext, actor_id: int
         return
     status = await message.answer("⏳ Объединяю PDF…")
     try:
-        async with metered_bot_work(actor_id, bot), processing_slots:
+        async with processing_slots, metered_bot_work(actor_id, bot):
             await state.clear()
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
@@ -485,7 +485,7 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext, actor_id
         return
     status = await message.answer("⏳ Создаю ZIP…")
     try:
-        async with metered_bot_work(actor_id, bot), processing_slots:
+        async with processing_slots, metered_bot_work(actor_id, bot):
             await state.clear()
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
@@ -582,7 +582,7 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
         return
     status = await message.answer("⏳ Обрабатываю страницы PDF…")
     try:
-        async with metered_bot_work(actor_id, bot), processing_slots:
+        async with processing_slots, metered_bot_work(actor_id, bot):
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
                 source = folder / "source.pdf"
@@ -723,7 +723,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         return
     status = await callback.message.answer("⏳ Обрабатываю файл…")
     try:
-        async with metered_bot_work(callback.from_user.id, bot), processing_slots:
+        async with processing_slots, metered_bot_work(callback.from_user.id, bot):
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
                 source = folder / ("source" + suffix)
