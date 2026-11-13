@@ -5,6 +5,8 @@ services:
     init: true
     env_file:
       - .env
+    environment:
+      FILESHAPE_ACCESS_GATE_URL: http://api:8000/internal/v1/access/check
     read_only: true
     tmpfs:
       - /tmp:size=536870912,mode=1777
