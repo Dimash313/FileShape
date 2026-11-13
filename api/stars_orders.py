@@ -178,7 +178,7 @@ class StarsOrderMixin:
                         raise ValueError("Stars payment transition conflict")
                     created = True
                 self._db.execute("COMMIT")
-                return {"order_id": order_id, "sku": row[0], "status": "verified"}, created
+                return {"order_id": order_id, "sku": row[0], "status": "verified" if created else row[3]}, created
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
