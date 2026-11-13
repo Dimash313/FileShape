@@ -1,0 +1,117 @@
+"""Owner campaign API access, lifecycle, and Telegram invite cleanup."""
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import httpx
+from fastapi import HTTPException
+
+from api import server
+from api.campaign_owner import owner_identity
+from api.durable_jobs import DurableJobStore
+
+
+class OwnerIdentityTests(unittest.TestCase):
+    def test_owner_must_be_configured_and_match(self):
+        for value in ("", "0", "-1", "abc", "999999999999999999999999"):
+            with self.subTest(value=value), patch.dict("os.environ", {"FILESHAPE_OWNER_ID": value}):
+                with self.assertRaises(HTTPException):
+                    owner_identity(123)
+        with patch.dict("os.environ", {"FILESHAPE_OWNER_ID": "123"}):
+            self.assertEqual(owner_identity(123), 123)
+            with self.assertRaises(HTTPException) as ctx:
+                owner_identity(456)
+            self.assertEqual(ctx.exception.status_code, 403)
+
+
+class OwnerCampaignAPITests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = DurableJobStore(Path(self.tmp.name) / "jobs.sqlite3")
+        self.old_jobs, self.old_runtime = server.jobs, server.job_runtime
+        server.jobs, server.job_runtime = self.store, object()
+        server.api.dependency_overrides[server.authenticated_user] = lambda: 123
+        self.env = patch.dict("os.environ", {"FILESHAPE_OWNER_ID": "123"})
+        self.env.start()
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=server.api), base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+        self.env.stop()
+        server.api.dependency_overrides.pop(server.authenticated_user, None)
+        server.jobs, server.job_runtime = self.old_jobs, self.old_runtime
+        self.store.close()
+        self.tmp.cleanup()
+
+    async def draft(self):
+        return await self.client.post("/api/v1/owner/campaigns/drafts", json={
+            "chat_id": -100123456789, "mode": "joins",
+            "starts_at": 100, "ends_at": 9999999999, "target_joins": 2})
+
+    async def test_owner_can_create_and_read_draft(self):
+        response = await self.draft()
+        self.assertEqual(response.status_code, 200, response.text)
+        cid = response.json()["campaign_id"]
+        snap = await self.client.get(f"/api/v1/owner/campaigns/{cid}")
+        self.assertEqual(snap.status_code, 200, snap.text)
+        self.assertEqual(snap.json()["confirmed_joins"], 0)
+        self.assertEqual(snap.json()["state"], "draft")
+
+    async def test_non_owner_cannot_create_or_read(self):
+        cid = (await self.draft()).json()["campaign_id"]
+        server.api.dependency_overrides[server.authenticated_user] = lambda: 456
+        for method, path, kw in (
+            ("post", "/api/v1/owner/campaigns/drafts", {"json": {}}),
+            ("get", f"/api/v1/owner/campaigns/{cid}", {}),
+            ("post", f"/api/v1/owner/campaigns/{cid}/invite", {}),
+            ("post", f"/api/v1/owner/campaigns/{cid}/state", {"json": {"action": "stop"}}),
+        ):
+            response = await getattr(self.client, method)(path, **kw)
+            self.assertEqual(response.status_code, 403, response.text)
+
+    async def test_invalid_draft_and_illegal_transition(self):
+        bad = await self.client.post("/api/v1/owner/campaigns/drafts", json={
+            "chat_id": 123, "mode": "joins", "starts_at": 100,
+            "ends_at": 200, "target_joins": 0})
+        self.assertEqual(bad.status_code, 422)
+        cid = (await self.draft()).json()["campaign_id"]
+        response = await self.client.post(
+            f"/api/v1/owner/campaigns/{cid}/state", json={"action": "start"})
+        self.assertEqual(response.status_code, 409)
+        response = await self.client.post(
+            f"/api/v1/owner/campaigns/{cid}/state", json={"action": "stop"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "stopped")
+
+    async def test_invite_creation_binds_actual_telegram_link(self):
+        cid = (await self.draft()).json()["campaign_id"]
+        bot = AsyncMock()
+        bot.session.close = AsyncMock()
+        link = "https://t.me/+Abcdefgh12345678"
+        with patch("api.campaign_owner.Bot", return_value=bot), \
+             patch("api.campaign_owner.create_campaign_invite", new=AsyncMock(return_value=link)):
+            response = await self.client.post(f"/api/v1/owner/campaigns/{cid}/invite")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["invite_link"], link)
+        snap = await self.client.get(f"/api/v1/owner/campaigns/{cid}")
+        self.assertEqual(snap.json()["invite_link"], link)
+        bot.session.close.assert_awaited_once()
+
+    async def test_telegram_failure_leaves_draft_unbound(self):
+        cid = (await self.draft()).json()["campaign_id"]
+        bot = AsyncMock()
+        bot.session.close = AsyncMock()
+        with patch("api.campaign_owner.Bot", return_value=bot), \
+             patch("api.campaign_owner.create_campaign_invite",
+                   new=AsyncMock(side_effect=RuntimeError("Telegram forbidden"))):
+            response = await self.client.post(f"/api/v1/owner/campaigns/{cid}/invite")
+        self.assertEqual(response.status_code, 502)
+        snap = await self.client.get(f"/api/v1/owner/campaigns/{cid}")
+        self.assertIsNone(snap.json()["invite_link"])
+        bot.session.close.assert_awaited_once()
+
+
+if __name__ == "__main__":
+    unittest.main()
