@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
+    ChatMemberUpdated,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -21,6 +22,7 @@ from aiogram.types import (
 
 from config import get_settings
 from services.bot_access import check_processing_access
+from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
@@ -653,13 +655,22 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         await remove_status(status)
 
 
+@router.chat_member()
+async def on_campaign_chat_member(event: ChatMemberUpdated, bot: Bot):
+    """Process only Telegram-delivered membership updates, not user messages."""
+    try:
+        await forward_campaign_join(event, bot.token)
+    except Exception:
+        logger.exception("Campaign join forwarding failed")
+
+
 async def main():
     settings = get_settings()
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher()
     dp.include_router(router)
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member"])
     finally:
         await bot.session.close()
 
