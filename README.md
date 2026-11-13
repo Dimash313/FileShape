@@ -2,6 +2,39 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
+## FileShape 4.21 — operation quota ledger (foundation, NOT enforced yet)
+
+The API-owned `DurableJobStore` now has a private, transactionally safe SQLite
+ledger for daily operation allowances and extra-operation packs:
+
+- Free: **10 operations per UTC day**; Pro: **100 per UTC day** when an
+  existing verified Premium entitlement has not expired.
+- Accepted pack sizes: **10 extra operations** (proposed 19 Stars) or
+  **30 extra operations** (proposed 49 Stars). Extra credits do not reset at
+  midnight and are used only after the current daily allowance.
+- `claim_operation(owner_id, claim_key)` atomically consumes a daily slot or
+  an extra credit; repeat requests with the same trusted claim key are not
+  double-charged, including after midnight. A refunded key cannot be reused.
+- `refund_operation(...)` restores an unsuccessful claim exactly once, to
+  its original UTC day's usage or pack balance, including after midnight.
+- `grant_operation_pack(...)` is **internal trusted code only**: it records
+  a unique grant key durably, rejects cross-owner or mismatched replays and
+  **does not** verify Telegram payment receipts. No buyer-accessible grant
+  endpoint exists.
+- `quota_status(...)` reads the real owner-specific balances. Old daily
+  receipts are pruned after 90 days; purchase grant keys are retained to
+  prevent payment replay. No user files, Telegram IDs beyond account owner
+  IDs, or payment credentials are stored in the new tables.
+
+**Not launched:** Existing bot / Mini App conversion paths do **not yet**
+consume this ledger. Neither Free/Pro daily enforcement nor Telegram Stars
+checkout is enabled or advertised as active. Wire all processing paths
+(including API synchronous, background, batch and bot internal bridge) with
+atomic admission and failure refunds **before** enabling quotas or showing
+a remaining-operation count. Ensure any retries never double-charge and
+information-only actions remain free. The 20 MB Telegram Bot API limit has
+not been raised to 100 MB.
+
 ## FileShape 4.20 — Telegram bot navigation
 
 The bot now provides a navigable welcome message for `/start` and `/menu`, with
