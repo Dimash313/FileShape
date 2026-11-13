@@ -6,9 +6,9 @@ import {
 } from 'lucide-react';
 import {
   changeCampaignState, createCampaign,
-  createCampaignInvite, listCampaigns,
+  createCampaignInvite, listCampaigns, getCampaignAnalytics,
 } from './campaignsApi';
-import type { Campaign, CampaignAction, CampaignMode, CampaignPage } from './campaignsApi';
+import type { Campaign, CampaignAction, CampaignMode, CampaignPage, CampaignAnalytics } from './campaignsApi';
 
 const PAGE_SIZE = 20;
 const stateLabels = {
@@ -30,6 +30,7 @@ const dateTime = (seconds: number) =>
 export function OwnerCampaigns() {
   const [authorized, setAuthorized] = useState(false);
   const [page, setPage] = useState<CampaignPage>({ items: [], total: 0 });
+  const [analytics, setAnalytics] = useState<CampaignAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -45,8 +46,12 @@ export function OwnerCampaigns() {
   useEffect(() => {
     const controller = new AbortController();
     listCampaigns(0, PAGE_SIZE, controller.signal)
-      .then(result => { setAuthorized(true); setPage(result); })
-      .catch(() => { /* Never expose an owner panel to an unverified user. */ });
+      .then(result => {
+        setAuthorized(true); setPage(result);
+        return getCampaignAnalytics(controller.signal);
+      })
+      .then(result => setAnalytics(result))
+      .catch(() => { /* No owner data is displayed without authenticated access. */ });
     return () => controller.abort();
   }, []);
 
@@ -57,6 +62,10 @@ export function OwnerCampaigns() {
     try {
       const offset = append ? page.items.length : 0;
       const result = await listCampaigns(offset, PAGE_SIZE);
+      if (!append) {
+        try { setAnalytics(await getCampaignAnalytics()); }
+        catch { setAnalytics(null); }
+      }
       setPage(previous => append
         ? { total: result.total, items: [
             ...previous.items, ...result.items.filter(
@@ -171,8 +180,14 @@ export function OwnerCampaigns() {
       Считаются события вступления, а не клики и не текущая аудитория.
     </p>
     <div className="campaign-metrics">
-      <div><strong>{page.total}</strong><span>Кампаний всего</span></div>
-      <div><strong>{confirmedOnPage}</strong><span>Вступлений на странице</span></div>
+      <div><strong>{analytics?.campaigns_total ?? page.total}</strong><span>Кампаний всего</span></div>
+      <div><strong>{analytics?.confirmed_joins_total ?? confirmedOnPage}</strong><span>{analytics ? 'Вступлений всего' : 'Вступлений на странице'}</span></div>
+      {analytics && <>
+        <div><strong>{analytics.confirmed_joins_last_24h}</strong><span>Вступлений за 24 ч</span></div>
+        <div><strong>{analytics.campaigns_by_state.active}</strong><span>Активных кампаний</span></div>
+        <div><strong>{analytics.pending_revocations}</strong><span>Ссылок ожидают отзыва</span></div>
+        <div><strong>{analytics.revoked_links}</strong><span>Ссылок отозвано</span></div>
+      </>}
     </div>
     <div className="campaign-toolbar">
       <button type="button" className="campaign-primary" onClick={() => setCreateOpen(open => !open)}
