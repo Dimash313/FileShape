@@ -49,6 +49,42 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.18 — owner-only advertising dashboard (Mini App)
+
+The Profile tab now loads an advertising desk **only after** the server
+confirms owner authorization using Telegram-signed Mini App launch data and
+the API's `FILESHAPE_OWNER_ID`. Other users see no advertising controls.
+There is no public advertiser UI or alternate client-side owner flag.
+
+The owner can view up to 20 campaigns at once (with bounded pagination);
+see exact persisted confirmed-join counts and invite revocation status;
+create drafts for an immediate-start campaign that ends after 1–72 hours
+or after the chosen verified join goal (whichever condition applies, with
+the duration as a safety deadline); ask the Telegram API to create a
+separate invitation for each draft; start, pause, resume and stop the
+campaign through the existing owner-protected endpoints. Stop requires
+a second explicit confirmation. The interface offers copying an issued
+invitation, manual refresh, clear failure states and responsive
+monochrome styling. The displayed join-goal progress is derived from
+`confirmed_joins / target_joins`, never an invented loading percentage.
+
+New `GET /api/v1/owner/campaigns?offset=0&limit=20` returns a stable,
+bounded, owner-only SQLite overview with `items` and `total`. Pagination
+limits are enforced by both API and store. No raw Telegram member IDs or
+pseudonymous member digests leave the ledger. Frontend API replies are
+validated and rejected on unexpected counters, campaign IDs or links.
+
+**Before using:** set `FILESHAPE_OWNER_ID` in the API environment, host
+the Mini App under HTTPS, and open it inside Telegram as that owner.
+Grant the bot `can_invite_users` in each partner channel, and supply its
+numeric channel ID (for example `-1001234567890`). A paused campaign does
+not revoke the invitation, and joins during the pause are *not* counted.
+A terminal campaign can still have a temporarily usable link until Telegram
+acknowledges revocation; the owner dashboard displays that status separately.
+A real subscription count is not claimed. Other pending work includes a
+durable inbound `chat_member` delivery outbox, partner onboarding/consent
+flow, and end-to-end Telegram channel testing. No new paid API is required.
+
 ## FileShape 4.17 — automatic campaign expiry and Telegram invite revocation
 
 A campaign reaches `completed` when its confirmed-join target is hit or its
