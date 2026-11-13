@@ -29,7 +29,8 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_old_unlocked_workspace_is_removed(self):
         path = Path(self.temp.name) / "fileshape_batch_orphan"
-        path.mkdir()
+        # Production Workspace directories are private regardless of umask.
+        path.mkdir(mode=0o700)
         (path / ".active.lock").write_bytes(b"")
         old = time.time() - STALE_SECONDS - 100
         os.utime(path, (old, old))
@@ -38,7 +39,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_recent_unlocked_workspace_is_preserved(self):
         path = Path(self.temp.name) / "fileshape_api_recent"
-        path.mkdir()
+        path.mkdir(mode=0o700)
         (path / ".active.lock").write_bytes(b"")
         self.assertEqual(cleanup_orphans(), 0)
         self.assertTrue(path.exists())
