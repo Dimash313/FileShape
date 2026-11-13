@@ -287,6 +287,50 @@ class CampaignMixin:
             raise
 
     @serialized
+    def campaign_analytics(self, *, actor_id, owner_id, now=None):
+        """Owner-only aggregate across ALL campaigns, never just a page.
+
+        Only stored, deduplicated join events are counted. No impression,
+        subscriber, revenue or click metrics are inferred.
+        """
+        self._campaign_owner(actor_id, owner_id)
+        now = _timestamp(time.time() if now is None else now)
+        rows = self._db.execute("""
+            SELECT state,COUNT(*),COALESCE(SUM(confirmed_joins),0)
+            FROM ad_campaigns GROUP BY state
+        """).fetchall()
+        by_state = {state: 0 for state in (
+            "draft", "active", "paused", "completed", "stopped"
+        )}
+        total_joins = 0
+        for state, count, joins in rows:
+            by_state[state] = count
+            total_joins += joins
+        pending_revocations = self._db.execute("""
+            SELECT COUNT(*) FROM ad_campaign_revocations
+            WHERE state='pending'
+        """).fetchone()[0]
+        revoked_links = self._db.execute("""
+            SELECT COUNT(*) FROM ad_campaign_revocations
+            WHERE state='revoked'
+        """).fetchone()[0]
+        # Time buckets are based on the Telegram event timestamp. These are
+        # recorded join events, not a live member census.
+        recent_joins = self._db.execute("""
+            SELECT COUNT(*) FROM ad_campaign_joins
+            WHERE joined_at>=? AND joined_at<=?
+        """, (now - 86400, now)).fetchone()[0]
+        return {
+            "campaigns_total": sum(by_state.values()),
+            "campaigns_by_state": by_state,
+            "confirmed_joins_total": total_joins,
+            "confirmed_joins_last_24h": recent_joins,
+            "pending_revocations": pending_revocations,
+            "revoked_links": revoked_links,
+            "as_of": now,
+        }
+
+    @serialized
     def list_campaigns(self, *, actor_id, owner_id, limit=20, offset=0):
         """Owner-only bounded overview; never expose member digests or user IDs.
 

@@ -746,3 +746,21 @@ Automated tests also run in GitHub Actions for commits to `main`.
 - Hosted HTTPS deployment, production monitoring and persistent job management
 
 These roadmap features are **not implemented yet**.
+
+
+## FileShape 4.19 — owner advertising analytics
+
+The owner-only Mini App dashboard now shows aggregate confirmed joins across
+**all** campaigns, not only the first paginated batch, plus verified join
+events over the last 24 hours, active campaign count, links pending Telegram
+revocation, and links acknowledged as revoked. `GET
+/api/v1/owner/campaigns/analytics` uses the same signed Telegram Mini App
+authentication and server-configured owner ID as the campaign management API.
+
+Metrics come directly from the durable SQLite campaign ledger and the
+pseudonymous deduplicated join-event table. They are not impressions,
+subscriber totals, retention, conversion rates or revenue. No fabricated
+progress is shown. If the analytics request fails, the UI falls back to
+explicitly page-scoped numbers. The new endpoint never exposes raw member
+IDs or join digests. Time windows are based on recorded Telegram event
+timestamps. Manual refresh is required.

@@ -53,6 +53,16 @@ def make_campaign_router(authenticated_user, get_store):
             raise HTTPException(status_code=503, detail="Campaign storage unavailable")
         return store, owner_id
 
+    @router.get("/analytics")
+    async def owner_analytics(owner=Depends(authorized_store)):
+        store, owner_id = owner
+        try:
+            return store.campaign_analytics(actor_id=owner_id, owner_id=owner_id)
+        except (sqlite3.Error, OSError):
+            raise HTTPException(
+                status_code=503, detail="Campaign analytics unavailable"
+            ) from None
+
     @router.get("")
     async def list_owner_campaigns(
         limit: int = Query(default=20, ge=1, le=30),

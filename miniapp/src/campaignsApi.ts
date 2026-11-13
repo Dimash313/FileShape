@@ -151,3 +151,35 @@ export async function changeCampaignState(id: string, action: CampaignAction): P
   }
   return result.state as CampaignState;
 }
+
+export type CampaignAnalytics = {
+  campaigns_total: number;
+  campaigns_by_state: Record<CampaignState, number>;
+  confirmed_joins_total: number;
+  confirmed_joins_last_24h: number;
+  pending_revocations: number;
+  revoked_links: number;
+  as_of: number;
+};
+
+export function validateCampaignAnalytics(input: unknown): CampaignAnalytics {
+  const data = record(input);
+  const counts = record(data.campaigns_by_state);
+  const nonNegative = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
+  const fields = [
+    data.campaigns_total, data.confirmed_joins_total,
+    data.confirmed_joins_last_24h, data.pending_revocations, data.revoked_links,
+  ];
+  if (fields.some(value => !nonNegative(value)) ||
+      states.some(state => !nonNegative(counts[state])) ||
+      states.reduce((sum, state) => sum + (counts[state] as number), 0) !== data.campaigns_total ||
+      typeof data.as_of !== 'number' || !Number.isFinite(data.as_of) || data.as_of <= 0 ||
+      (data.confirmed_joins_last_24h as number) > (data.confirmed_joins_total as number)) {
+    throw new Error('Некорректная рекламная аналитика.');
+  }
+  return data as unknown as CampaignAnalytics;
+}
+
+export async function getCampaignAnalytics(signal?: AbortSignal): Promise<CampaignAnalytics> {
+  return validateCampaignAnalytics(await campaignRequest('/analytics', 'GET', undefined, signal));
+}
