@@ -38,14 +38,14 @@ test('owner-only listing sends signed Telegram session, no-store and bounded pag
 test('invalid results never display fictional subscriber metrics', async () => {
   environment();
   const api = await load();
-  for (const bad of (
+  for (const bad of [
     sample({ confirmed_joins: '1000' }),
     sample({ confirmed_joins: -1 }),
     sample({ campaign_id: '../bad' }),
     sample({ invite_revocation: 'fake-revoked' }),
     sample({ invite_link: 'https://fake.example/a' }),
     sample({ target_joins: null }),
-  )) {
+  ]) {
     assert.throws(() => api.validateCampaign(bad));
   }
   assert.throws(() => api.validateCampaignPage({ items: [sample()], total: 0 }, 20));
