@@ -7,10 +7,60 @@ from unittest.mock import AsyncMock
 
 from aiogram.types import Audio, Chat, Document, Message, Voice
 
-from main import attachment, classify_extension, file_menu, miniapp_keyboard, send_result, size_allowed
+from main import attachment, classify_extension, file_menu, miniapp_keyboard, send_result, size_allowed, home_keyboard, home_text, navigation_keyboard, back_keyboard, navigate, start
 
 
 class BotMenuTests(unittest.TestCase):
+    def test_navigation_and_honest_plan_status(self):
+        with patch.dict("os.environ", {"MINIAPP_URL": ""}):
+            home = home_keyboard()
+            codes = [b.callback_data for row in home.inline_keyboard for b in row]
+            self.assertEqual(codes, ["nav:tools", "nav:profile", "nav:plans", "nav:help"])
+            self.assertIn("/menu", home_text())
+        with patch.dict("os.environ", {"MINIAPP_URL": "https://example.com/studio"}):
+            self.assertEqual(home_keyboard().inline_keyboard[0][0].web_app.url, "https://example.com/studio")
+        codes = [b.callback_data for row in navigation_keyboard().inline_keyboard for b in row]
+        self.assertEqual(len(set(codes)), 6)
+        self.assertIn("nav:archive", codes)
+        self.assertIn("nav:home", codes)
+        self.assertIn("nav:tools", [b.callback_data for row in back_keyboard().inline_keyboard for b in row])
+
+    def test_start_and_navigation(self):
+        import asyncio
+        async def check():
+            message = type("FakeMessage", (), {
+                "chat": type("Chat", (), {"type": "private"})(),
+                "answer": AsyncMock(),
+            })()
+            state = type("State", (), {"clear": AsyncMock()})()
+            await start(message, state)
+            state.clear.assert_awaited_once()
+            self.assertIn("nav:tools", [b.callback_data for row in message.answer.call_args.kwargs["reply_markup"].inline_keyboard for b in row])
+            bot_message = type("BotMessage", (), {
+                "chat": type("Chat", (), {"type": "private", "id": 123})(),
+                "edit_text": AsyncMock(),
+            })()
+            from aiogram.types import Message as AiogramMessage
+            # Handler checks Telegram's actual Message type; construct one with model validation.
+            from datetime import datetime, timezone
+            actual = AiogramMessage(message_id=1, date=datetime.now(timezone.utc),
+                                     chat=Chat(id=123, type="private"), text="menu")
+            with patch.object(AiogramMessage, "edit_text", new_callable=AsyncMock) as edit:
+                callback = type("Callback", (), {
+                    "message": actual, "from_user": type("User", (), {"id": 123})(),
+                    "data": "nav:plans", "answer": AsyncMock(),
+                })()
+                await navigate(callback, state)
+                self.assertIn("пока", edit.call_args.args[0])
+                callback.answer.assert_awaited_once()
+                callback.data = "nav:home"
+                await navigate(callback, state)
+                self.assertEqual(state.clear.await_count, 2)
+                callback.data = "nav:unknown"
+                await navigate(callback, state)
+                self.assertEqual(edit.await_count, 2)
+        asyncio.run(check())
+
     def test_miniapp_launch_only_with_https(self):
         with patch.dict("os.environ", {"MINIAPP_URL": ""}):
             self.assertIsNone(miniapp_keyboard())
