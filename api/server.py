@@ -34,6 +34,7 @@ from api.campaign_owner import make_campaign_router
 from api.campaign_revocations import dispatch_campaign_revocations
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
+from api.usage_ledger import OperationQuotaExceeded, OperationConcurrencyExceeded
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
 from api.observability import RequestTrace
 from api.readiness import readiness_status
@@ -482,7 +483,11 @@ async def create_background_job(
         # Constants remain patchable in boundary tests; one event-loop instance.
         background_jobs.max_input = MAX_INPUT_BYTES
         background_jobs.max_result = MAX_RESULT_BYTES
-        item = await background_jobs.create(upload, action, suffix, pages, user_id, idempotency_key=idempotency_key)
+        try:
+            item = await background_jobs.create(upload, action, suffix, pages, user_id,
+                                                idempotency_key=idempotency_key, metered=True)
+        except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+            raise quota_error(exc) from None
         return JSONResponse(item.public(), status_code=202, headers={
             "Cache-Control": "no-store", "Location": f"/api/v1/jobs/{item.job_id}",
         })
@@ -521,9 +526,11 @@ async def retry_background_job(
         background_jobs.max_result = MAX_RESULT_BYTES
         try:
             item = await background_jobs.retry(job_id, upload, action, suffix, pages, user_id,
-                                               idempotency_key=idempotency_key)
+                                               idempotency_key=idempotency_key, metered=True)
         except JobNotFound:
             raise HTTPException(404, "Задание не найдено") from None
+        except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+            raise quota_error(exc) from None
         except sqlite3.Error:
             raise HTTPException(503, "Хранилище временно недоступно") from None
         return JSONResponse(item.public(), status_code=202, headers={
@@ -603,13 +610,24 @@ async def background_result(job_id: str, user_id: int = Depends(authenticated_us
         raise
 
 
+def quota_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, OperationConcurrencyExceeded):
+        return HTTPException(status_code=429,
+                             detail="Дождись завершения текущей операции",
+                             headers={"Retry-After": "5"})
+    return HTTPException(status_code=429,
+                         detail="Лимит операций исчерпан. Следующий сброс — в 00:00 UTC.")
+
+
 def new_job(user_id: int) -> str:
     if jobs is None:
         raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
-        return jobs.create(user_id).job_id
+        return jobs.create(user_id, metered=True).job_id
     except JobCapacityExceeded:
         raise HTTPException(status_code=503, detail="Слишком много активных заданий. Повтори позже.", headers={"Retry-After": "15"}) from None
+    except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+        raise quota_error(exc) from None
 
 
 @asynccontextmanager
