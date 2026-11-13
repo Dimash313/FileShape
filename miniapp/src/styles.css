@@ -320,3 +320,23 @@ h1 { font-size: clamp(27px, 7.5vw, 35px); margin-bottom: 10px; }
   .tool-list-item, .server-option, .format-chip, .bottom-nav { border-color: #8fb6e8; }
   .lead, .tool-card small, .history-item span, .tool-list-item span { color: #d6e6ff; }
 }
+
+/* State highlights reflect confirmed server states, never fake progress. */
+.background-job-state {
+  border: 1px solid #365171;
+  border-radius: 14px;
+  padding: 15px;
+  margin: 10px 0 14px;
+  background: #182840;
+}
+.background-job-state strong { color: #dceaff; }
+.background-job-state.state-queued strong,
+.background-job-state.state-processing strong { color: #9bcaff; }
+.background-job-state.state-completed { border-color: #397668; background: #142b2e; }
+.background-job-state.state-completed strong { color: #a4ebcd; }
+.background-job-state.state-failed,
+.background-job-state.state-cancelled { border-color: #755362; background: #2b1d2c; }
+.background-job-state.state-failed strong,
+.background-job-state.state-cancelled strong { color: #ffc2cf; }
+.saved-job-links button { min-height: 44px; }
+.retry-file-label input { min-height: 44px; }
