@@ -58,6 +58,19 @@ class ReadinessTests(unittest.TestCase):
             with patch("api.server.readiness_status", return_value={"status": "ready", "checks": {"ffmpeg": True}}):
                 self.assertEqual(client.get("/ready").status_code, 200)
 
+    def test_disk_pressure_fails_readiness_without_exposing_storage_details(self):
+        with TestClient(api) as client:
+            for margin in (False, OSError("private filesystem path")):
+                with self.subTest(margin=type(margin).__name__):
+                    effect = {"side_effect": margin} if isinstance(margin, OSError) else {"return_value": margin}
+                    with patch("api.server.readiness_status", return_value={"status": "ready", "checks": {"ffmpeg": True}}), \
+                         patch.object(server.background_jobs.artifacts, "has_disk_margin", **effect):
+                        response = client.get("/ready")
+                    self.assertEqual(response.status_code, 503)
+                    self.assertFalse(response.json()["checks"]["artifact_storage"])
+                    self.assertNotIn("private filesystem", response.text)
+                    self.assertEqual(client.get("/health").status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

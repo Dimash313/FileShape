@@ -10,12 +10,83 @@ import unittest
 from unittest.mock import Mock, patch
 
 from api import server
+from api.admission import AdmissionQueue
 from api.artifacts import ArtifactStore
+from api.background_jobs import BackgroundJobs
+from api.job_manager import JobManager
 from api.job_runtime import JobRuntime
-from api.workspaces import STALE_SECONDS, cleanup_orphans
+from api.workspaces import STALE_SECONDS, OrphanCleaner, cleanup_orphans
+from fastapi import UploadFile
 
 
 class BackgroundLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_cleaner_close_still_releases_sqlite_after_workers_stop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = JobRuntime(directory)
+            cleaner = SimpleNamespace(close=Mock(side_effect=OSError("cleanup descriptor failed")))
+            with patch.multiple(server, job_runtime=runtime, jobs=runtime.store, job_manager=None,
+                                background_jobs=None, metadata_maintenance=None, orphan_cleaner=cleaner,
+                                shutdown_task=None, admission=AdmissionQueue(20, 90)):
+                with self.assertRaisesRegex(OSError, "descriptor failed"):
+                    await server.stop_accepting_conversions()
+                self.assertIsNone(server.job_runtime)
+                self.assertIsNone(server.orphan_cleaner)
+                self.assertIsNone(server.jobs)
+            reopened = JobRuntime(directory)
+            reopened.close()
+
+    async def test_cancelled_shutdown_joins_worker_before_releasing_instance_and_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = JobRuntime(root / "state")
+            artifacts = ArtifactStore(root / "workspaces")
+            manager = JobManager(1)
+            started = asyncio.Event()
+            cleaning = asyncio.Event()
+            release = asyncio.Event()
+            async def worker(payload):
+                if payload["operation"] == "validate_only":
+                    return {"ok": True}
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleaning.set()
+                    await release.wait()
+            service = BackgroundJobs(runtime.store, manager, artifacts, worker, 1024, 1024)
+            item = await service.create(UploadFile(file=BytesIO(b"input"), filename="input.txt"),
+                                        "txt:info", ".txt", "", 11)
+            await asyncio.wait_for(started.wait(), 3)
+            artifact = artifacts._entries[item.job_id]
+            with patch.multiple(server, job_runtime=runtime, jobs=runtime.store, job_manager=manager,
+                                background_jobs=service, metadata_maintenance=None, orphan_cleaner=None,
+                                shutdown_task=None, admission=AdmissionQueue(20, 90)):
+                stopping = asyncio.create_task(server.stop_accepting_conversions())
+                try:
+                    await asyncio.wait_for(cleaning.wait(), 3)
+                    stopping.cancel()
+                    await asyncio.sleep(0)
+                    stopping.cancel()
+                    await asyncio.sleep(0)
+                    self.assertFalse(stopping.done())
+                    self.assertTrue(artifact.path.exists())
+                    self.assertEqual(runtime.store.get(item.job_id, 11).state, "processing")
+                    with self.assertRaisesRegex(RuntimeError, "Another API process"):
+                        JobRuntime(root / "state")
+                finally:
+                    release.set()
+                    await asyncio.gather(stopping, return_exceptions=True)
+                self.assertTrue(stopping.cancelled())
+                self.assertFalse(artifacts.path.exists())
+                self.assertIsNone(server.job_runtime)
+                self.assertIsNone(server.background_jobs)
+                await server.stop_accepting_conversions()
+            reopened = JobRuntime(root / "state")
+            try:
+                self.assertEqual(reopened.store.get(item.job_id, 11).state, "cancelled")
+            finally:
+                reopened.close()
+
     async def test_periodic_cleanup_removes_stale_background_generation_but_preserves_locked_one(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -42,7 +113,7 @@ class BackgroundLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 # exercises actual age/lock deletion through the periodic path.
                 with patch("api.workspaces.workspace_root", return_value=root), \
                      patch.object(server, "cleanup_orphans", wraps=cleanup_orphans) as sweep, \
-                     patch.object(server, "background_jobs", SimpleNamespace(artifacts=active)), \
+                     patch.object(server, "background_jobs", SimpleNamespace(artifacts=active, reconcile=Mock())), \
                      patch.object(server.asyncio, "sleep", side_effect=two_ticks):
                     with self.assertRaises(asyncio.CancelledError):
                         await server.maintain_metadata(store)

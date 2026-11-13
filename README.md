@@ -49,6 +49,73 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.5 — restart recovery and bounded cleanup
+
+Recovery keeps the existing single-instance contract: an API process acquires
+its private state-directory lock before changing interrupted records. Startup
+removes unaccepted admission claims, marks accepted queued/processing jobs failed
+and keeps completed metadata until its normal expiry. It does not execute inputs
+again or recover result files from an earlier process generation. The regression
+fixtures exercise actual SIGKILL of a process holding SQLite/artifact locks and
+an unexpectedly killed parser subprocess, followed by a working conversion.
+
+Periodic maintenance now retries known rejected-admission and terminal metadata
+updates with a bounded reconciliation queue and at most 50 updates per pass. A temporary SQLite failure is
+handled independently from artifact expiry and orphan cleanup. Missing or unsafe
+completed artifacts are invalidated; private input directories belonging to
+active jobs and open download leases stay protected. Failed deletion remains
+charged to its reservation until a later cleanup succeeds, so an error cannot
+silently free quota while the file is still present.
+
+The workspace janitor keeps one directory cursor and one validated parent fd
+between batches. Each sweep examines at most **500 root entries**, continuing on
+the next 60-second maintenance tick instead of repeatedly scanning the same
+prefix. One complete pass can therefore need several ticks on a large root.
+Only old FileShape workspace generations are eligible. Directory locks protect
+active generations even if their `.active.lock` marker disappears; verified
+legacy marker-only locks are also respected. A missing marker on an old,
+unlocked, private directory can be cleaned after a partial deletion. Symlink,
+hardlinked, special or foreign markers remain for operator inspection. Cleanup
+checks directory/marker identity relative to pinned fds and does not follow
+replacement directory symlinks. This cleanup protocol requires the documented
+POSIX/Linux deployment and local advisory-lock semantics.
+
+Admission keeps the **256 MiB logical artifact-byte budget** and additionally
+checks that reported free filesystem space covers the new reservation plus a
+**64 MiB free-space floor**. The floor is an admission check, not allocated disk
+blocks or a guarantee against another process filling the filesystem. Logical
+reservations, the 1,000-artifact entry limit and physical limits are separate:
+Compose still caps each service's `/tmp` with a 512 MiB tmpfs. Metadata remains
+in its private persistent volume. Operators must monitor physical space and
+retain deployment memory/CPU/process limits; these changes do not measure a
+higher safe conversion concurrency.
+
+Shutdown first closes admission and drains tracked upload/hash/validation
+requests, then cancels/joins managed work before releasing artifact ownership and
+SQLite. A shared shutdown task waits through repeated caller cancellation; an
+individual cleanup failure does not skip closing the metadata store.
+Legacy single-file/batch download responses now have a **120-second deadline**
+and run their workspace cleanup in `finally`, including disconnect, timeout and
+cancellation. Background downloads keep their existing four-stream/120-second
+limits and retain their lease charge until the file descriptor closes.
+
+**Operations:** use one API worker/replica on a trusted, private local filesystem.
+A restart may leave old per-boot workspaces until they pass the one-hour stale
+threshold and a janitor sweep reaches them; they are never advertised as
+recovered results. If an unsafe-marker directory remains, stop all workers and
+verify its location, ownership and file/link types before operator cleanup.
+Deleting a live lock marker is not permission to delete its workspace. Preserve
+the metadata volume when replacing containers; the backup/restore rules in 4.0
+still apply. Source/result bytes need no backup.
+
+**Local validation (4.5):** 279 Python tests, 54 native Node tests, TypeScript and
+the Mini App production build passed. The Docker build and real read-only HTTP
+smoke passed: idempotent create/retry, owned cancellation, foreign-result 404,
+WebP result and compatible DOCX download. Tests cover actual process SIGKILL,
+repeated shutdown cancellation, GC descriptor release and cleanup failure
+isolation. PR CI and exact merged-main CI must still pass before 4.6. This is
+source and container configuration, not a production deployment.
+
 ## FileShape 4.4 — owner-only cancellation and explicit retry
 
 `POST /api/v1/jobs/{job_id}/cancel` authenticates the owner, cancels queued or
@@ -97,6 +164,11 @@ dev server, run `node tools/smoke-miniapp-controls.cjs`. It mocks Telegram/API,
 checks cancel -> retry -> result and crosses parent-reference expiry during an
 in-flight retry. This is not real Telegram WebView validation or deployment.
 
+Validation at the merged 4.4 milestone: **225 Python tests, 54 native Node
+checks**, TypeScript/Mini App and Docker builds passed. [PR #44](https://github.com/Dimash313/FileShape/pull/44)
+is merged; [main Actions](https://github.com/Dimash313/FileShape/actions/runs/43382550867)
+passed for commit `7a7b83f`.
+
 ## FileShape 4.3 — confirmed job states in the Mini App
 
 Single-file server tools now create HTTP 202 jobs, display confirmed queued /
@@ -142,7 +214,7 @@ It uses mocks and writes only test screenshots under `/tmp`.
 
 Mobile Chromium checks use test Telegram/API responses; they do **not** establish
 real Android Telegram WebView compatibility or production deployment. Owner
-cancel/retry controls remain the next 4.4 milestone.
+cancel/retry controls are documented in the 4.4 section above.
 
 ## FileShape 4.2 — asynchronous conversion API and private result downloads
 

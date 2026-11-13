@@ -9,7 +9,8 @@ This is an implementation checkpoint, not a public-launch announcement.
 - 4.1: PR #41 merged; PR and main Actions succeeded. Internal bounded dispatcher integrated into HTTP conversion workers; 147 local Python tests and TypeScript/Vite build passed. No throughput claim.
 - 4.2: PR #42 merged; PR and main CI succeeded. HTTP 202, private expiring/quota-reserved results and owner-only download; 200 Python tests, TS/build and a real read-only Docker HTTP conversion/download/IDOR smoke passed. Results are not recovered across restart.
 - 4.3: PR #43 merged; PR and main CI succeeded. Confirmed Mini App statuses, bounded hidden/offline-aware polling, authenticated result retrieval and owner-scoped references. 200 Python + 35 frontend tests, build and mocked mobile Chromium smoke passed.
-- 4.4: branch `feature/job-controls-v44` implements owner-only cancel, explicit validated reupload retry and durable owner-scoped idempotency. Check its PR/post-merge main CI before proceeding; exact validation results are recorded in the PR. No server input retention increase or automatic replay.
+- 4.4: [PR #44](https://github.com/Dimash313/FileShape/pull/44) merged; [main CI](https://github.com/Dimash313/FileShape/actions/runs/43382550867) succeeded at `7a7b83f`. Owner-only cancellation, explicit validated reupload retry and durable owner-scoped idempotency; 225 Python + 54 native Node tests, TypeScript/Mini App and Docker builds passed. Server input retention is unchanged; no automatic replay.
+- 4.5: `feature/recovery-cleanup-v45` contains recovery/cleanup hardening. Local 279 Python + 54 native Node tests, TypeScript/Mini App build, Docker build and real read-only HTTP smoke passed. PR CI and post-merge main CI are pending; check the final PR before proceeding. No result recovery or input replay.
 
 Read the current PR's validation notes for local Docker results. The managed
 execution environment has an 8 GB filesystem and a VFS Docker daemon. Multiple
@@ -20,27 +21,48 @@ do not use broad cache pruning on a shared builder. HTTPS builds
 in this environment need a trusted proxy CA supplied as a BuildKit secret;
 never disable TLS verification or commit the environment's certificate.
 
-## Next: 4.5 crash recovery and cleanup
+## Current gate: 4.5 recovery and cleanup
 
-Start only after 4.4 PR and post-merge main CI succeed, on a new branch from
-updated main. Preserve the exclusive JobRuntime lock before any recovery:
-accepted queued/processing records become failed, unaccepted admission claims
-are deleted, and no input is replayed. Reconcile per-boot artifacts and metadata
-without promising result recovery after restart. The existing janitor scans at
-most 500 entries; improve fairness/cursor behavior so a full first batch cannot
-starve old later entries. Preserve active locks and leased downloads.
+The implementation retains exclusive JobRuntime ownership before startup
+reconciliation: accepted queued/processing records become failed, unaccepted
+claims are deleted and completed metadata follows normal expiry. It never
+replays input or recovers per-boot result files. Actual process-crash fixtures
+cover held locks, SIGKILL, mixed SQLite states, orphan cleanup and a killed
+worker followed by a successful real conversion.
 
-Exercise hard worker/API crashes, startup with mixed states and leftover files,
-active/expired download races, transient deletion failures, directory attacks,
-disk exhaustion and idempotent repeated cleanup. Keep byte/entry reservations
-and finite TTLs accurate, including slow downloads and failed metadata updates.
-Make shutdown bounded/correct without deleting a live worker's files. Record
-actual recovery/retention limits in operations documentation. Use the normal
-Python/frontend/build/Docker/PR/main CI gates before 4.6.
+Maintenance owns a fair, retained-cursor janitor examining at most 500 root
+entries per sweep, with directory and marker locks protecting active workspaces
+(including a missing marker on an active generation). Unsafe markers are left
+for deliberate operator cleanup. Known metadata cleanup failures are retried in
+bounded batches; artifact reconciliation remains independent of a SQLite outage.
+New reservations require their bytes plus a 64 MiB reported-free floor; the
+256 MiB logical budget, entry limit and deployment tmpfs/disk cap remain separate.
+Failed deletion and open download leases keep their byte charge. Legacy download
+responses run final cleanup on success/error/disconnect with a 120-second limit.
+Shutdown preparation draining and its fault cases are part of this gate.
+
+**Local verification:** 279 Python tests, 54 native Node tests, TypeScript/Mini
+App build, Docker build and real read-only HTTP smoke passed. Regression tests
+include actual SIGKILL, repeated shutdown cancellation, GC descriptor release,
+cleanup-failure isolation and free-space/readiness failures. Docker exercised
+create/replay, cancel/retry/replay, foreign-result 404, WebP and legacy DOCX.
+**Pending gate:** separate version PR, successful final-head checks and successful
+push-triggered CI on the exact merged main SHA. No production deployment or real
+Telegram WebView test is implied.
+
+## Next: 4.6 interface refinement
+
+Start a new version branch from updated main only after the 4.5 gate succeeds.
+Preserve every working local/server/batch tool, background status and authenticated
+result flow, cancel/retry/idempotency behavior and data-retention limits. Refine
+the dark/blue mobile UI across home/catalog/file/conversion/history/profile and
+all loading/error/empty states. Keep Android-size layouts, keyboard/screen-reader
+accessibility, WebView performance and motion preferences in scope. Browser
+emulation and mocked Telegram data remain separate from real Telegram WebView
+validation. Apply the normal Python/Node/build/Docker/PR/main CI gates.
 
 ## Remaining sequence (not implemented)
 
-- 4.5: crash reconciliation, periodic orphan/result cleanup, bounded disk, active artifact protection and worker shutdown fault tests. No unsafe replay.
 - 4.6: premium dark/blue accessible mobile UI, preserving every working tool; history/profile/navigation and all empty/error/loading states.
 - 4.7: reproducible CPU/RAM/process/queue/disk/SQLite load tests and measured report. Keep safe concurrency until deployment-class hardware is measured.
 - 4.8: auth/IDOR/archive/parser/subprocess/CORS/rate/size/replay/temp/SQLite/log/race/download audit, confirmed fixes and residual-risk report.
@@ -54,7 +76,8 @@ build. In this managed environment, ASGI TestClient tests need execution outside
 the restricted sandbox; they hung on the first request inside it. Run native
 Node tests outside that sandbox too: the restricted child-process IPC reporter
 can show only passing files rather than all subtests. A real 4.3 run reports
-at least 35 individual frontend checks (4.4 adds more).
+54 individual frontend checks at the merged 4.4 milestone; record the actual
+count after later additions.
 
 ```sh
 python -m compileall -q main.py config.py api services tests

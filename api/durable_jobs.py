@@ -162,7 +162,7 @@ class DurableJobStore:
         return job
 
     @serialized
-    def create_idempotent(self, owner_id: int, key_hash: str, fingerprint: str) -> tuple[JobSnapshot, bool]:
+    def create_idempotent(self, owner_id: int, key_hash: str, fingerprint: str, *, allow_create: bool = True) -> tuple[JobSnapshot, bool]:
         """Claim an owner-scoped operation without returning unvalidated IDs.
 
         An accepted duplicate returns its current metadata even at capacity.
@@ -173,6 +173,8 @@ class DurableJobStore:
         self._validate_owner(owner_id)
         self._validate_admission_hash(key_hash)
         self._validate_admission_hash(fingerprint)
+        if type(allow_create) is not bool:
+            raise ValueError("Invalid admission creation setting")
         now = time.time()
         self._db.execute("BEGIN IMMEDIATE")
         try:
@@ -191,6 +193,8 @@ class DurableJobStore:
                 job = self._snapshot(existing[2:])
                 is_new = False
             else:
+                if not allow_create:
+                    raise JobCapacityExceeded()
                 job = self._insert_queued(owner_id, now)
                 self._db.execute(
                     """INSERT INTO admissions(owner_id,key_hash,fingerprint,job_id,accepted,created_at)

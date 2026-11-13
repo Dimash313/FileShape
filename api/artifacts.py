@@ -9,6 +9,7 @@ never resumes work or promises downloads after a process restart.
 from dataclasses import dataclass
 import fcntl
 import math
+import logging
 import os
 from pathlib import Path
 import re
@@ -17,9 +18,12 @@ import stat
 import tempfile
 import threading
 import time
+import weakref
 
 from api.workspaces import workspace_root
 
+logger = logging.getLogger(__name__)
+MIN_FREE_BYTES = 64 * 1024 * 1024
 MAX_RESULT_BYTES = 45 * 1024 * 1024
 _JOB_ID = re.compile(r"[A-Za-z0-9_-]{32}\Z")
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
@@ -53,6 +57,20 @@ class ArtifactLease:
         self._job_id = job_id
         self._item = item
         self._released = False
+        self._finalizer = weakref.finalize(
+            self, ArtifactLease._gc_release, stream, store, job_id, item,
+        )
+
+    @staticmethod
+    def _gc_release(stream, store, job_id, item):
+        try:
+            try:
+                stream.close()
+            finally:
+                store._release(job_id, item)
+        except Exception:
+            # Explicit close reports failures; GC must not leak private paths.
+            logger.error("Artifact lease finalization failed")
 
     def read(self, size=-1):
         return self._stream.read(size)
@@ -66,6 +84,7 @@ class ArtifactLease:
             if self._released:
                 return
             self._released = True
+            self._finalizer.detach()
             try:
                 self._stream.close()
             finally:
@@ -95,15 +114,17 @@ class ArtifactLease:
 
 class ArtifactStore:
     def __init__(self, root: Path | None = None, *, max_bytes: int = 256 * 1024 * 1024,
-                 max_entries: int = 1000, ttl: float = 3600):
+                 max_entries: int = 1000, ttl: float = 3600, min_free_bytes: int = MIN_FREE_BYTES):
         if (type(max_bytes) is not int or max_bytes < 1 or
                 type(max_entries) is not int or max_entries < 1 or
+                type(min_free_bytes) is not int or min_free_bytes < 0 or
                 not math.isfinite(ttl) or ttl <= 0):
             raise ValueError("Invalid artifact settings")
         parent = Path(root) if root is not None else workspace_root()
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._private_directory(parent)
         self.max_bytes = max_bytes
+        self.min_free_bytes = min_free_bytes
         self.max_entries = max_entries
         self.ttl = ttl
         self._entries: dict[str, Artifact] = {}
@@ -116,6 +137,7 @@ class ArtifactStore:
         self._lock_fd = None
         try:
             self._root_fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            fcntl.flock(self._root_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._lock_fd = os.open(".active.lock", os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
                                     0o600, dir_fd=self._root_fd)
             fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -126,6 +148,26 @@ class ArtifactStore:
                 os.close(self._root_fd)
             self._temp.cleanup()
             raise
+
+        # A failed cleanup may outlive the application reference. Release its
+        # descriptors at GC so a later orphan sweep can acquire the old lock.
+        # Open download leases retain this store and therefore keep the lock.
+        self._descriptor_finalizer = weakref.finalize(
+            self, ArtifactStore._release_descriptors, self._root_fd, self._lock_fd,
+        )
+
+    @staticmethod
+    def _release_descriptors(*descriptors):
+        for fd in descriptors:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def has_disk_margin(self) -> bool:
+        with self._lock:
+            return not self._closed and shutil.disk_usage(self.path).free >= self.min_free_bytes
 
     @staticmethod
     def _private_directory(path):
@@ -171,6 +213,8 @@ class ArtifactStore:
             if job_id in self._entries:
                 raise ValueError("Duplicate artifact reservation")
             if len(self._entries) >= self.max_entries or self._reserved + reservation_bytes > self.max_bytes:
+                raise ArtifactCapacity()
+            if shutil.disk_usage(self.path).free < reservation_bytes + self.min_free_bytes:
                 raise ArtifactCapacity()
             os.mkdir(job_id, mode=0o700, dir_fd=self._root_fd)
             item = Artifact(self.path / job_id, reservation_bytes)
@@ -299,18 +343,65 @@ class ArtifactStore:
             expired = [job_id for job_id, item in self._entries.items()
                        if ((item._discarded and item._leases == 0) or
                            (not item._discarded and item.expires_at is not None and now >= item.expires_at))]
+            first_error = None
             for job_id in expired:
-                self.discard(job_id)
+                try:
+                    self.discard(job_id)
+                except OSError as exc:
+                    # Keep this entry charged and retry later without letting
+                    # one damaged directory retain every other expired result.
+                    if first_error is None:
+                        first_error = exc
+            if first_error is not None:
+                raise first_error
             return len(expired)
+
+    def reconcile(self) -> int:
+        """Reject missing/unsafe completed files; never touch a live input.
+
+        Entries and byte budgets are bounded. Leases retain their charge until
+        close even if a result disappears or becomes unavailable during a sweep.
+        """
+        with self._lock:
+            if self._closed:
+                return 0
+            invalid = 0
+            first_error = None
+            for job_id, item in tuple(self._entries.items()):
+                if item.expires_at is None or item._discarded:
+                    continue
+                try:
+                    lease, *_ = self.open_result(job_id)
+                except ArtifactUnavailable:
+                    invalid += 1
+                    try:
+                        self.discard(job_id)
+                    except OSError as exc:
+                        if first_error is None:
+                            first_error = exc
+                except OSError as exc:
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    try:
+                        lease.close()
+                    except OSError as exc:
+                        if first_error is None:
+                            first_error = exc
+            try:
+                self.prune()
+            except OSError as exc:
+                if first_error is None:
+                    first_error = exc
+            if first_error is not None:
+                raise first_error
+            return invalid
 
     def _finish_close(self):
         self._temp.cleanup()
-        if self._root_fd is not None:
-            os.close(self._root_fd)
-            self._root_fd = None
-        if self._lock_fd is not None:
-            os.close(self._lock_fd)
-            self._lock_fd = None
+        self._descriptor_finalizer()
+        self._root_fd = None
+        self._lock_fd = None
 
     def close(self) -> None:
         with self._lock:

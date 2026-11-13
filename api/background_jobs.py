@@ -27,7 +27,11 @@ RESULT_NAMES = frozenset({
 
 
 class BackgroundJobs:
-    def __init__(self, store, manager, artifacts, worker, max_input, max_result):
+    def __init__(self, store, manager, artifacts, worker, max_input, max_result, *, max_requests=None):
+        if max_requests is None:
+            max_requests = manager.capacity + 20
+        if type(max_requests) is not int or not 1 <= max_requests <= 1000:
+            raise ValueError('Invalid background upload limit')
         self.store = store
         self.manager = manager
         self.artifacts = artifacts
@@ -36,6 +40,143 @@ class BackgroundJobs:
         self.max_result = max_result
         self.handles = {}
         self.owners = {}
+        # One reservation follows a newly claimed job through preparation,
+        # execution and any deferred metadata update. No accepted job loses
+        # reconciliation merely because the bounded retry queue is full.
+        self._tracked = set()
+        self._preparing = set()
+        self._pending_terminal = {}
+        self._pending_discard = {}
+        self.max_requests = max_requests
+        self._requests = set()
+        self._closing = False
+        self._prepare_stop = None
+
+    @property
+    def request_count(self):
+        return len(self._requests)
+
+    def _check_open(self):
+        if self._closing:
+            raise HTTPException(503, 'Сервер останавливается', headers={'Retry-After': '10'})
+
+    async def stop_preparing(self):
+        """Cancel uploads/hash/validation requests before artifact ownership ends."""
+        self._closing = True
+        if asyncio.current_task() in self._requests:
+            raise RuntimeError('Cannot stop uploads from an active upload request')
+        if self._prepare_stop is None:
+            self._prepare_stop = asyncio.create_task(self._drain_requests())
+        interrupted = False
+        while not self._prepare_stop.done():
+            try:
+                await asyncio.shield(self._prepare_stop)
+            except asyncio.CancelledError:
+                interrupted = True
+        self._prepare_stop.result()
+        if interrupted:
+            raise asyncio.CancelledError()
+
+    async def _drain_requests(self):
+        requests = tuple(self._requests)
+        for task in requests:
+            task.cancel()
+        if requests:
+            await asyncio.gather(*requests, return_exceptions=True)
+
+    @property
+    def tracked_count(self):
+        return len(self._tracked)
+
+    @property
+    def pending_count(self):
+        return len(self._pending_terminal) + len(self._pending_discard)
+
+    @property
+    def active_ids(self):
+        return frozenset(self._preparing) | frozenset(self.handles)
+
+    def _forget(self, job_id):
+        self._tracked.discard(job_id)
+        self._preparing.discard(job_id)
+        self._pending_terminal.pop(job_id, None)
+        self._pending_discard.pop(job_id, None)
+
+    def _discard_rejected(self, job_id, owner):
+        """Delete only the owned queued claim that never reached a caller."""
+        if self.store.discard_queued(job_id, owner):
+            self._forget(job_id)
+            return True
+        try:
+            self.store.get(job_id, owner)
+        except JobNotFound:
+            self._forget(job_id)
+            return True
+        # A changed state is not permission to finish someone else's work.
+        # Keep the known-rejected key blocked until safe deletion/expiry.
+        self._pending_discard.pop(job_id, None)
+        self._pending_discard[job_id] = owner
+        return False
+
+    def _remember_terminal(self, job_id, owner, state):
+        if job_id not in self._tracked:
+            # Production handles already reserved a slot before upload. This
+            # branch also keeps explicit settlement of injected handles safe.
+            if len(self._tracked) >= self.store.max_entries:
+                logger.error('Background reconciliation capacity exceeded')
+                return
+            self._tracked.add(job_id)
+        self._pending_terminal.setdefault(job_id, (owner, state))
+
+    def reconcile(self, max_updates=50):
+        """Retry only known completed handles/rejected admissions, never replay."""
+        if type(max_updates) is not int or not 1 <= max_updates <= 1000:
+            raise ValueError('Invalid reconciliation limit')
+        attempted = 0
+        resolved = 0
+        for job_id, owner in tuple(self._pending_discard.items()):
+            if attempted >= max_updates:
+                break
+            attempted += 1
+            try:
+                resolved += self._discard_rejected(job_id, owner)
+            except sqlite3.Error:
+                # One unavailable connection must not multiply its SQLite busy
+                # timeout by the size of the deferred queue.
+                logger.error('Background admission reconciliation unavailable')
+                return resolved
+        for job_id, (owner, state) in tuple(self._pending_terminal.items()):
+            if attempted >= max_updates:
+                break
+            attempted += 1
+            try:
+                item = self.store.get(job_id, owner)
+                if item.state in {'queued', 'processing'}:
+                    item = self.store.transition(job_id, owner, state)
+            except JobNotFound:
+                self._forget(job_id)
+                resolved += 1
+                try:
+                    self.artifacts.discard_unfinished(job_id)
+                except (OSError, ArtifactUnavailable):
+                    logger.error('Background artifact cleanup failed')
+                continue
+            except sqlite3.Error:
+                logger.error('Background terminal reconciliation unavailable')
+                return resolved
+            except JobStateError:
+                # A concurrent terminal winner is observed on the next pass.
+                pending = self._pending_terminal.pop(job_id)
+                self._pending_terminal[job_id] = pending
+                continue
+            self._forget(job_id)
+            resolved += 1
+            if item.state in {'failed', 'cancelled'}:
+                try:
+                    self.artifacts.discard(job_id)
+                except (OSError, ArtifactUnavailable):
+                    logger.error('Background artifact cleanup failed')
+        return resolved
 
     async def _fingerprint(self, upload, action, suffix, pages, retry_of):
         canonical = json.dumps({
@@ -59,20 +200,40 @@ class BackgroundJobs:
         job = None
         created_new = False
         accepted = False
-        cancelled = False
+        request = asyncio.current_task()
+        registered = False
         try:
+            self._check_open()
+            if len(self._requests) >= self.max_requests:
+                raise HTTPException(429, 'Слишком много одновременных загрузок', headers={'Retry-After': '5'})
+            if request is None or request in self._requests:
+                raise RuntimeError('Background uploads require distinct request tasks')
+            self._requests.add(request)
+            registered = True
             key_hash = None
             if idempotency_key is not None:
                 if not isinstance(idempotency_key, str) or IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None:
                     raise HTTPException(422, 'Некорректный ключ повторного запроса')
                 key_hash = hashlib.sha256(idempotency_key.encode('ascii')).hexdigest()
                 fingerprint = await self._fingerprint(upload, action, suffix, pages, retry_of)
-                job, created_new = self.store.create_idempotent(owner, key_hash, fingerprint)
+                self._check_open()
+                job, created_new = self.store.create_idempotent(
+                    owner, key_hash, fingerprint,
+                    allow_create=len(self._tracked) < self.store.max_entries,
+                )
                 if not created_new:
+                    if job.job_id in self._pending_discard:
+                        raise HTTPException(503, 'Неудавшийся запрос ещё очищается. Повтори позже.', headers={'Retry-After': '1'})
                     return job
             else:
+                if len(self._tracked) >= self.store.max_entries:
+                    raise JobCapacityExceeded()
                 job = self.store.create(owner)
                 created_new = True
+            # Claim and tracking reservation are synchronous on the API loop.
+            # Existing accepted replays need no additional tracking slot.
+            self._tracked.add(job.job_id)
+            self._preparing.add(job.job_id)
             # Include the runner's 50 MiB file cap, not just accepted result size.
             artifact = self.artifacts.reserve(job.job_id, self.max_input + 50 * 1024**2 + 65536)
             source = artifact.path / ('source' + suffix)
@@ -86,10 +247,12 @@ class BackgroundJobs:
                         output.write(chunk)
             if not size:
                 raise HTTPException(422, 'Пустой файл')
+            self._check_open()
             # Content identification/parsers stay in the resource-limited process.
             await asyncio.wait_for(self.manager.run(lambda: self.worker({
                 'operation': 'validate_only', 'work': str(artifact.path), 'suffix': suffix,
             })), timeout=90)
+            self._check_open()
             if key_hash is not None:
                 # No await between durable acceptance and bounded submission.
                 # Submission failure still discards the queued claim below.
@@ -97,12 +260,10 @@ class BackgroundJobs:
             handle = self.manager.submit(lambda: self._execute(job.job_id, owner, artifact.path, action, suffix, pages))
             self.handles[job.job_id] = handle
             self.owners[job.job_id] = owner
+            self._preparing.discard(job.job_id)
             handle.finished.add_done_callback(lambda _: self._settled(job.job_id, owner, handle))
             accepted = True
             return job
-        except asyncio.CancelledError:
-            cancelled = True
-            raise
         except IdempotencyPending:
             raise HTTPException(409, 'Такой запрос ещё проверяется. Повтори позже.', headers={'Retry-After': '1'}) from None
         except IdempotencyConflict:
@@ -122,17 +283,23 @@ class BackgroundJobs:
         finally:
             try:
                 if job is not None and created_new and not accepted:
+                    self._preparing.discard(job.job_id)
+                    self._pending_discard[job.job_id] = owner
                     try:
-                        self.store.discard_queued(job.job_id, owner)
+                        self._discard_rejected(job.job_id, owner)
                     except sqlite3.Error:
-                        self._terminal(job.job_id, owner, 'cancelled' if cancelled else 'failed')
+                        logger.error('Background rejected admission cleanup deferred')
                     try:
                         self.artifacts.discard(job.job_id)
                     except OSError:
                         # Reservation stays charged; maintenance retries removal.
                         logger.error('Background artifact cleanup failed')
             finally:
-                await upload.close()
+                try:
+                    await upload.close()
+                finally:
+                    if registered:
+                        self._requests.discard(request)
 
     async def cancel(self, job_id, owner):
         # Owner lookup precedes handle access, including for terminal no-ops.
@@ -224,6 +391,10 @@ class BackgroundJobs:
                 logger.error('Background conversion failed')
             if state is not None:
                 item = self._terminal(job_id, owner, state)
+                if item is None:
+                    self._remember_terminal(job_id, owner, state)
+                else:
+                    self._forget(job_id)
                 # A completion can win before the manager's result notification.
                 # Do not remove a valid completed result in that cancellation race.
                 if item is not None and item.state in {'failed', 'cancelled'}:
@@ -233,14 +404,25 @@ class BackgroundJobs:
                     # SQLite outage must not retain that input indefinitely.
                     # Preserve only results with a known finite artifact TTL.
                     self.artifacts.discard_unfinished(job_id)
+            else:
+                self._forget(job_id)
         except (OSError, ArtifactUnavailable):
             logger.error('Background artifact cleanup failed')
 
     def close(self):
+        self._closing = True
+        if self._requests:
+            raise RuntimeError('Background upload requests still active')
         # Caller first stops/joins manager; callbacks may be queued this tick.
         for job_id, handle in tuple(self.handles.items()):
             if not handle.done:
                 raise RuntimeError('Background workers still active')
             self._settled(job_id, self.owners[job_id], handle)
+        self.reconcile()
         self.artifacts.close()
         self.handles.clear()
+        self.owners.clear()
+        self._tracked.clear()
+        self._preparing.clear()
+        self._pending_terminal.clear()
+        self._pending_discard.clear()
