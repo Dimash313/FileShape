@@ -42,7 +42,7 @@ async def check_processing_access(user_id: int, token: str, *, url: str | None =
             "X-FileShape-Nonce": nonce,
             "X-FileShape-Signature": signature,
         }
-        timeout = aiohttp.ClientTimeout(total=15, connect=3)
+        timeout = aiohttp.ClientTimeout(total=21, connect=3)
         async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as session:
             async with session.post(url, headers=headers, allow_redirects=False) as response:
                 if response.status != 200:
