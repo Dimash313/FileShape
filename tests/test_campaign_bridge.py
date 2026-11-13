@@ -2,6 +2,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import httpx
+from api import server
 
 from api.campaign_bridge import JoinReplayGuard, sign_join_assertion
 from api.durable_jobs import DurableJobStore
@@ -61,6 +65,48 @@ class CampaignBridgeTests(unittest.TestCase):
                     actor_id=11, owner_id=11, campaign_id=cid)
                 self.assertEqual((snap["confirmed_joins"], snap["state"]),
                                  (1, "completed"))
+
+
+class CampaignBridgeEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_endpoint_authenticated_replay_and_tamper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with DurableJobStore(Path(directory)/"jobs.sqlite3") as store:
+                cid = store.create_campaign(
+                    actor_id=11, owner_id=11, chat_id=CHAT, mode="joins",
+                    starts_at=NOW-100, ends_at=NOW+100, target_joins=2, now=NOW-100)
+                store.bind_campaign_invite(
+                    actor_id=11, owner_id=11, campaign_id=cid,
+                    invite_link=LINK, now=NOW-99)
+                store.change_campaign_state(
+                    actor_id=11, owner_id=11, campaign_id=cid,
+                    action="start", now=NOW-90)
+                with patch.object(server, "jobs", store), \
+                     patch.object(server, "job_runtime", object()), \
+                     patch.object(server, "join_replay", JoinReplayGuard()), \
+                     patch.object(server, "get_settings", return_value=type("S", (), {"bot_token": TOKEN})()), \
+                     patch("api.campaign_bridge.time.time", return_value=NOW):
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=server.api),
+                        base_url="http://test",
+                    ) as client:
+                        p = payload()
+                        nonce = "a"*32
+                        headers = {
+                            "X-FileShape-Time": str(NOW),
+                            "X-FileShape-Nonce": nonce,
+                            "X-FileShape-Signature": sign_join_assertion(TOKEN, p, NOW, nonce),
+                        }
+                        response = await client.post("/internal/v1/campaigns/join", json=p, headers=headers)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(response.json(), {"recorded": True})
+                        replay = await client.post("/internal/v1/campaigns/join", json=p, headers=headers)
+                        self.assertEqual(replay.status_code, 401)
+                        forged = await client.post(
+                            "/internal/v1/campaigns/join", json=payload(chat_id=CHAT-1),
+                            headers=headers)
+                        self.assertEqual(forged.status_code, 401)
+                        self.assertEqual(store.campaign_snapshot(
+                            actor_id=11, owner_id=11, campaign_id=cid)["confirmed_joins"], 1)
 
 
 if __name__ == "__main__":
