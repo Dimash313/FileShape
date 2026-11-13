@@ -145,6 +145,16 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
                 occurred_at REAL NOT NULL
             )
         """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_operation_leases (
+                owner_id INTEGER NOT NULL CHECK (owner_id > 0),
+                request_digest TEXT NOT NULL,
+                job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE CASCADE,
+                expires_at REAL NOT NULL,
+                PRIMARY KEY (owner_id, request_digest)
+            )
+        """)
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_bot_operation_leases_expiry ON bot_operation_leases(expires_at)")
         initialize_campaign_tables(self._db)
         initialize_usage_tables(self._db)
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
@@ -363,6 +373,118 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
                 raise JobStateError()
             self._db.execute("COMMIT")
             return True
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def reserve_bot_operation(self, owner_id: int, request_digest: str) -> tuple[JobSnapshot, bool]:
+        """Admit a signed Telegram bot request exactly once; quota and lease are atomic.
+
+        Store only an opaque digest, never a Telegram update, filename or token.
+        The bot's short-lived processing lease has its own cleanup path.
+        """
+        self._validate_owner(owner_id)
+        self._validate_admission_hash(request_digest)
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self.prune_terminal(self.retention_seconds)
+            row = self._db.execute(
+                """SELECT j.job_id,j.state,j.created_at,j.updated_at
+                   FROM bot_operation_leases AS b JOIN jobs AS j ON j.job_id=b.job_id
+                   WHERE b.owner_id=? AND b.request_digest=? AND j.owner_id=?""",
+                (owner_id, request_digest, owner_id),
+            ).fetchone()
+            if row is not None:
+                job, created = self._snapshot(row), False
+            else:
+                initial = self._insert_queued(owner_id, now, metered=True)
+                changed = self._db.execute(
+                    "UPDATE jobs SET state='processing',updated_at=? WHERE job_id=? AND owner_id=? AND state='queued'",
+                    (now, initial.job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+                self._db.execute(
+                    """INSERT INTO bot_operation_leases(owner_id,request_digest,job_id,expires_at)
+                       VALUES(?,?,?,?)""",
+                    (owner_id, request_digest, initial.job_id, now + 1800),
+                )
+                job, created = JobSnapshot(initial.job_id, "processing", now, now), True
+            self._db.execute("COMMIT")
+            return job, created
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def settle_bot_operation(self, owner_id: int, job_id: str, *, success: bool) -> JobSnapshot:
+        """Settle a bot-owned lease, strictly once and transactionally with quota.
+
+        A late result after lease expiry cannot consume an operation.
+        """
+        self._validate_owner(owner_id)
+        if type(success) is not bool or not isinstance(job_id, str) or len(job_id) > 100:
+            raise ValueError("Invalid bot settlement")
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._db.execute(
+                """SELECT j.job_id,j.state,j.created_at,j.updated_at,b.expires_at
+                   FROM bot_operation_leases AS b JOIN jobs AS j ON j.job_id=b.job_id
+                   WHERE b.owner_id=? AND b.job_id=? AND j.owner_id=?""",
+                (owner_id, job_id, owner_id),
+            ).fetchone()
+            if row is None:
+                raise JobNotFound()
+            expected = "completed" if success else "failed"
+            if row[1] in {"completed", "failed"}:
+                if row[1] != expected:
+                    raise JobStateError()
+                item = self._snapshot(row[:4])
+            elif row[1] != "processing":
+                raise JobStateError()
+            else:
+                # Timeouts are failures and release quota even if a bot
+                # delivers its output after the processing lease expired.
+                target = expected if now <= row[4] else "failed"
+                changed = self._db.execute(
+                    "UPDATE jobs SET state=?,updated_at=? WHERE job_id=? AND owner_id=? AND state='processing'",
+                    (target, now, job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+                self._settle_job_operation_in_transaction(job_id, owner_id, success=(target == "completed"), now=now)
+                item = JobSnapshot(job_id, target, row[2], now)
+            self._db.execute("COMMIT")
+            return item
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def expire_bot_operations(self) -> int:
+        """Recover abandoned bot operations after crashes or connection loss."""
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            abandoned = self._db.execute(
+                """SELECT b.job_id,b.owner_id FROM bot_operation_leases AS b
+                   JOIN jobs AS j ON j.job_id=b.job_id
+                   WHERE b.expires_at<? AND j.state='processing'""",
+                (now,),
+            ).fetchall()
+            for job_id, owner_id in abandoned:
+                self._settle_job_operation_in_transaction(job_id, owner_id, success=False, now=now)
+                changed = self._db.execute(
+                    "UPDATE jobs SET state='failed',updated_at=? WHERE job_id=? AND owner_id=? AND state='processing'",
+                    (now, job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+            self._db.execute("COMMIT")
+            return len(abandoned)
         except BaseException:
             self._db.execute("ROLLBACK")
             raise
