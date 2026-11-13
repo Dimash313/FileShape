@@ -2,6 +2,26 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
+## FileShape 4.23 — atomic quota-backed job lifecycle (under development)
+
+**Stage 1 only, not enabled for processing:** `DurableJobStore.create(..., metered=True)`
+and `create_idempotent(..., metered=True)` can now reserve allowance and
+create a queued job in **one** `BEGIN IMMEDIATE` transaction. When an opted-in
+job transitions to completed, failed or cancelled, its accounting decision
+commits atomically with the state change. Rejected queued claims, unaccepted
+uploads and interrupted jobs after restart release their reservations.
+Older, unmetered job records are not retroactively billed. The existing
+quota methods retain their public semantics.
+
+**Do not enable purchases or show enforced usage:** bot actions, API legacy
+conversions, background submissions, retries and all result delivery/cancel
+paths still need an audited end-to-end integration. The existing
+`/api/v1/usage` reply must continue to declare `enforced: false` and
+`purchases_enabled: false`. This stage has no payment or new paid API.
+Regression tests verify atomic admission/settlement, quota races, replay,
+tenant isolation and restart refunds. Follow-up 4.23 commits will wire every
+entry point and verify entire CI before merge.
+
 ## FileShape 4.22 — authenticated usage status (read-only)
 
 `GET /api/v1/usage` exposes the authenticated user's own durable
