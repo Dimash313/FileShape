@@ -19,6 +19,10 @@ class OperationQuotaExceeded(Exception):
     """No daily operations and no prepaid operations remain."""
 
 
+class OperationConcurrencyExceeded(Exception):
+    """Maximum active reserved operations for the owner and plan reached."""
+
+
 def _timestamp(now):
     if now is None:
         now = time.time()
@@ -165,7 +169,7 @@ class UsageQuotaMixin:
                 self._db.execute("ROLLBACK")
                 raise
 
-    def _reserve_operation_in_transaction(self, owner_id, operation_key, now):
+    def _reserve_operation_in_transaction(self, owner_id, operation_key, now, *, limit_active=False):
         """Use inside a caller-owned BEGIN IMMEDIATE transaction."""
         prior = self._db.execute(
             "SELECT owner_id,day_utc,source,status FROM operation_usage WHERE operation_key=?",
@@ -176,6 +180,14 @@ class UsageQuotaMixin:
                 raise PermissionError("Operation belongs to another owner")
             return {"day_utc": prior[1], "source": prior[2], "status": prior[3], "created": False}
         state = self._usage_state(owner_id, now)
+        if limit_active:
+            active = self._db.execute(
+                "SELECT COUNT(*) FROM operation_usage WHERE owner_id=? AND status='reserved'",
+                (owner_id,),
+            ).fetchone()[0]
+            max_active = 3 if state["plan"] == "pro" else 1
+            if active >= max_active:
+                raise OperationConcurrencyExceeded()
         if state["daily_remaining"] > 0:
             source = "daily"
         elif state["pack_remaining"] > 0:
