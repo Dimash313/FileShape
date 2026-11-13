@@ -91,6 +91,7 @@ class OwnerCampaignAPITests(unittest.IsolatedAsyncioTestCase):
         bot.session.close = AsyncMock()
         link = "https://t.me/+Abcdefgh12345678"
         with patch("api.campaign_owner.Bot", return_value=bot), \
+             patch("api.campaign_owner.get_settings", return_value=type("S", (), {"bot_token": "123456:TEST"})()), \
              patch("api.campaign_owner.create_campaign_invite", new=AsyncMock(return_value=link)):
             response = await self.client.post(f"/api/v1/owner/campaigns/{cid}/invite")
         self.assertEqual(response.status_code, 200, response.text)
@@ -104,6 +105,7 @@ class OwnerCampaignAPITests(unittest.IsolatedAsyncioTestCase):
         bot = AsyncMock()
         bot.session.close = AsyncMock()
         with patch("api.campaign_owner.Bot", return_value=bot), \
+             patch("api.campaign_owner.get_settings", return_value=type("S", (), {"bot_token": "123456:TEST"})()), \
              patch("api.campaign_owner.create_campaign_invite",
                    new=AsyncMock(side_effect=RuntimeError("Telegram forbidden"))):
             response = await self.client.post(f"/api/v1/owner/campaigns/{cid}/invite")
