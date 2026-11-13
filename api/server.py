@@ -216,6 +216,8 @@ async def maintain_metadata(store):
         if background_jobs is not None:
             operations.extend((background_jobs.reconcile, background_jobs.artifacts.reconcile))
         operations.append(store.prune_terminal)
+        if hasattr(store, "prune_operation_quotas"):
+            operations.append(store.prune_operation_quotas)
         if hasattr(store, "expire_campaigns"):
             operations.append(store.expire_campaigns)
         for operation in operations:
