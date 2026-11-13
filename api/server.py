@@ -3,6 +3,9 @@
 Run one API worker behind an HTTPS reverse proxy. Background results are temporary and are not recovered after restart.
 """
 import asyncio
+import hashlib
+import json
+import re
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 import sqlite3
@@ -105,6 +108,7 @@ limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
 internal_access_replay = ReplayGuard()
+internal_bot_operation_replay = ReplayGuard()
 join_replay = JoinReplayGuard()
 
 
@@ -216,6 +220,8 @@ async def maintain_metadata(store):
         operations = []
         if background_jobs is not None:
             operations.extend((background_jobs.reconcile, background_jobs.artifacts.reconcile))
+        if hasattr(store, "expire_bot_operations"):
+            operations.append(store.expire_bot_operations)
         operations.append(store.prune_terminal)
         if hasattr(store, "expire_campaigns"):
             operations.append(store.expire_campaigns)
@@ -359,6 +365,101 @@ async def internal_access_check(
     else:
         decision = AccessDecision.ALLOWED
     return JSONResponse({"decision": decision.value}, headers={"Cache-Control": "no-store"})
+
+
+_BOT_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+_BOT_JOB_RE = re.compile(r"[A-Za-z0-9_-]{16,100}\Z")
+
+
+async def _read_bot_operation_body(request: Request, *, allowed_keys: set[str]) -> dict:
+    """Bound internal JSON without trusting Content-Length or unbounded request.body."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 512:
+            raise HTTPException(status_code=413, detail="Request too large")
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=422, detail="Invalid request") from None
+    if not isinstance(value, dict) or set(value) != allowed_keys:
+        raise HTTPException(status_code=422, detail="Invalid operation fields")
+    return value
+
+
+def _verify_bot_operation(user: str, timestamp: str, nonce: str,
+                          signature: str, *, scope: str) -> int:
+    if job_runtime is None or jobs is None:
+        raise HTTPException(status_code=503, detail="Operation service unavailable")
+    try:
+        return internal_bot_operation_replay.verify(
+            token=get_settings().bot_token, user=user, timestamp=timestamp,
+            nonce=nonce, signature=signature, scope=scope,
+        )
+    except (ValueError, RuntimeError):
+        raise HTTPException(status_code=401, detail="Unauthorized") from None
+
+
+@api.post("/internal/v1/operations/reserve")
+async def internal_bot_reserve_operation(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    data = await _read_bot_operation_body(request, allowed_keys={"request_id"})
+    request_id = data["request_id"]
+    if not isinstance(request_id, str) or _BOT_ID_RE.fullmatch(request_id) is None:
+        raise HTTPException(status_code=422, detail="Invalid operation identifier")
+    user_id = _verify_bot_operation(
+        user, timestamp, nonce, signature, scope="reserve:" + request_id
+    )
+    await authorize_new_processing(user_id)
+    digest = hashlib.sha256(b"fileshape-bot-operation-v1\0" + request_id.encode("ascii")).hexdigest()
+    try:
+        item, created = jobs.reserve_bot_operation(user_id, digest)
+    except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+        raise quota_error(exc) from None
+    except JobCapacityExceeded:
+        raise HTTPException(status_code=503, detail="Processing capacity unavailable") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Operation store unavailable") from None
+    return JSONResponse(
+        {"job_id": item.job_id, "created": created, "state": item.state},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@api.post("/internal/v1/operations/settle")
+async def internal_bot_settle_operation(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    data = await _read_bot_operation_body(request, allowed_keys={"job_id", "success"})
+    job_id, success = data["job_id"], data["success"]
+    if (not isinstance(job_id, str) or _BOT_JOB_RE.fullmatch(job_id) is None
+            or type(success) is not bool):
+        raise HTTPException(status_code=422, detail="Invalid settlement")
+    user_id = _verify_bot_operation(
+        user, timestamp, nonce, signature,
+        scope="settle:" + job_id + (":1" if success else ":0"),
+    )
+    try:
+        item = jobs.settle_bot_operation(user_id, job_id, success=success)
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Operation not found") from None
+    except JobStateError:
+        raise HTTPException(status_code=409, detail="Operation state conflict") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Operation store unavailable") from None
+    return JSONResponse(
+        {"job_id": item.job_id, "state": item.state},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @api.post("/internal/v1/campaigns/join")
