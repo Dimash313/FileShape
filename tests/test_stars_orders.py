@@ -104,8 +104,7 @@ class StarsOrdersTests(unittest.TestCase):
             self.assertFalse(reopened.record_stars_payment(
                 OWNER, order["order_id"], "chargeC", 19, "XTR", now=NOW + 1,
             )[1])
-        # Cleanup already registered for self.store, avoid a double-close exception.
-        self.store = DurableJobStore(self.path)
+        # The original connection was closed before reopening; no live copy remains.
 
     def test_cross_connection_charge_replay_cannot_be_credited_twice(self):
         first = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
