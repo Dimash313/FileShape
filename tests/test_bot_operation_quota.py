@@ -157,6 +157,25 @@ class BotOperationApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.settle(job_id, False)).status_code, 409)
         self.assertEqual(self.store.usage_snapshot(OWNER)["daily_used"], 1)
 
+    async def test_http_and_bot_share_one_real_quota_and_concurrency_cap(self):
+        request_id = secrets.token_hex(16)
+        lease = await self.reserve(request_id)
+        self.assertEqual(lease.status_code, 200, lease.text)
+        with self.assertRaises(HTTPException) as limited:
+            server.new_job(OWNER)
+        self.assertEqual(limited.exception.status_code, 429)
+        self.assertEqual((await self.settle(lease.json()["job_id"])).status_code, 200)
+        for _ in range(9):
+            job_id = server.new_job(OWNER)
+            self.store.transition(job_id, OWNER, "processing")
+            self.store.transition(job_id, OWNER, "completed")
+        self.assertEqual(self.store.usage_snapshot(OWNER)["daily_used"], 10)
+        self.assertEqual((await self.reserve(secrets.token_hex(16))).status_code, 429)
+        with self.assertRaises(HTTPException) as limited:
+            server.new_job(OWNER)
+        self.assertEqual(limited.exception.status_code, 429)
+        self.assertEqual(self.store.usage_snapshot(OWNER)["daily_remaining"], 0)
+
     async def test_scope_tamper_unsigned_and_bounded_body(self):
         request_id = secrets.token_hex(16)
         route = "/internal/v1/operations/reserve"
