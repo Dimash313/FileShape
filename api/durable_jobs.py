@@ -145,6 +145,16 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
                 occurred_at REAL NOT NULL
             )
         """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_operation_leases (
+                owner_id INTEGER NOT NULL CHECK (owner_id > 0),
+                request_digest TEXT NOT NULL,
+                job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE CASCADE,
+                expires_at REAL NOT NULL,
+                PRIMARY KEY (owner_id, request_digest)
+            )
+        """)
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_bot_operation_leases_expiry ON bot_operation_leases(expires_at)")
         initialize_campaign_tables(self._db)
         initialize_usage_tables(self._db)
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
@@ -174,7 +184,7 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
         if not isinstance(value, str) or _ADMISSION_HASH.fullmatch(value) is None:
             raise ValueError("Invalid admission hash")
 
-    def _insert_queued(self, owner_id: int, now: float) -> JobSnapshot:
+    def _insert_queued(self, owner_id: int, now: float, *, metered: bool = False) -> JobSnapshot:
         """Caller holds the connection lock and a write transaction."""
         if self._db.execute("SELECT count(*) FROM jobs").fetchone()[0] >= self.max_entries:
             raise JobCapacityExceeded()
@@ -183,16 +193,36 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
             "INSERT INTO jobs(job_id,owner_id,state,created_at,updated_at) VALUES(?,?,?,?,?)",
             (job_id, owner_id, "queued", now, now),
         )
+        if metered:
+            # Admission and quota are a single durable write transaction:
+            # a rejected charge cannot leave an orphaned queued job.
+            self._reserve_operation_in_transaction(owner_id, self._job_operation_key(job_id), now, limit_active=True)
         return JobSnapshot(job_id, "queued", now, now)
 
+    @staticmethod
+    def _job_operation_key(job_id: str) -> str:
+        return "fileshape:job:" + job_id
+
+    def _settle_job_operation_in_transaction(self, job_id: str, owner_id: int, *, success: bool, now: float):
+        key = self._job_operation_key(job_id)
+        # Legacy unmetered jobs have no usage record and remain untouched.
+        row = self._db.execute("SELECT owner_id FROM operation_usage WHERE operation_key=?", (key,)).fetchone()
+        if row is None:
+            return False
+        if row[0] != owner_id:
+            raise PermissionError("Operation belongs to another owner")
+        return self._settle_operation_in_transaction(owner_id, key, success, now)
+
     @serialized
-    def create(self, owner_id: int) -> JobSnapshot:
+    def create(self, owner_id: int, *, metered: bool = False) -> JobSnapshot:
         self._validate_owner(owner_id)
+        if type(metered) is not bool:
+            raise ValueError("Invalid metered setting")
         now = time.time()
         self._db.execute("BEGIN IMMEDIATE")
         try:
             self.prune_terminal(self.retention_seconds)
-            job = self._insert_queued(owner_id, now)
+            job = self._insert_queued(owner_id, now, metered=metered)
             self._db.execute("COMMIT")
         except BaseException:
             self._db.execute("ROLLBACK")
@@ -200,7 +230,7 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
         return job
 
     @serialized
-    def create_idempotent(self, owner_id: int, key_hash: str, fingerprint: str, *, allow_create: bool = True) -> tuple[JobSnapshot, bool]:
+    def create_idempotent(self, owner_id: int, key_hash: str, fingerprint: str, *, allow_create: bool = True, metered: bool = False) -> tuple[JobSnapshot, bool]:
         """Claim an owner-scoped operation without returning unvalidated IDs.
 
         An accepted duplicate returns its current metadata even at capacity.
@@ -211,7 +241,7 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
         self._validate_owner(owner_id)
         self._validate_admission_hash(key_hash)
         self._validate_admission_hash(fingerprint)
-        if type(allow_create) is not bool:
+        if type(allow_create) is not bool or type(metered) is not bool:
             raise ValueError("Invalid admission creation setting")
         now = time.time()
         self._db.execute("BEGIN IMMEDIATE")
@@ -233,7 +263,7 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
             else:
                 if not allow_create:
                     raise JobCapacityExceeded()
-                job = self._insert_queued(owner_id, now)
+                job = self._insert_queued(owner_id, now, metered=metered)
                 self._db.execute(
                     """INSERT INTO admissions(owner_id,key_hash,fingerprint,job_id,accepted,created_at)
                        VALUES(?,?,?,?,0,?)""",
@@ -263,14 +293,24 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
 
     @serialized
     def discard_pending_admissions(self) -> int:
-        """After exclusive startup ownership, remove never-accepted uploads.
-
-        No caller received these operation IDs; they must not become replayable
-        accepted jobs merely because an API process restarted during validation.
-        """
-        return self._db.execute(
-            "DELETE FROM jobs WHERE job_id IN (SELECT job_id FROM admissions WHERE accepted=0)"
-        ).rowcount
+        """Remove never-accepted uploads and atomically refund any reservation."""
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            pending = self._db.execute(
+                """SELECT j.job_id,j.owner_id FROM jobs AS j
+                   JOIN admissions AS a ON j.job_id=a.job_id WHERE a.accepted=0"""
+            ).fetchall()
+            now = time.time()
+            for job_id, owner_id in pending:
+                self._settle_job_operation_in_transaction(job_id, owner_id, success=False, now=now)
+            removed = self._db.execute(
+                "DELETE FROM jobs WHERE job_id IN (SELECT job_id FROM admissions WHERE accepted=0)"
+            ).rowcount
+            self._db.execute("COMMIT")
+            return removed
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
 
     @serialized
     def get(self, job_id: str, owner_id: int) -> JobSnapshot:
@@ -287,39 +327,188 @@ class DurableJobStore(CampaignMixin, CampaignRevocationsMixin, UsageQuotaMixin):
 
     @serialized
     def transition(self, job_id: str, owner_id: int, state: str) -> JobSnapshot:
-        item = self.get(job_id, owner_id)
-        if state not in TRANSITIONS[item.state]:
-            raise JobStateError()
-        now = time.time()
-        changed = self._db.execute(
-            "UPDATE jobs SET state=?,updated_at=? WHERE job_id=? AND owner_id=? AND state=?",
-            (state, now, job_id, owner_id, item.state),
-        ).rowcount
-        if changed != 1:
-            raise JobStateError()
-        return JobSnapshot(job_id, state, item.created_at, now)
+        """Commit job state and quota settlement together, without a crash gap."""
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            item = self.get(job_id, owner_id)
+            if state not in TRANSITIONS[item.state]:
+                raise JobStateError()
+            now = time.time()
+            changed = self._db.execute(
+                "UPDATE jobs SET state=?,updated_at=? WHERE job_id=? AND owner_id=? AND state=?",
+                (state, now, job_id, owner_id, item.state),
+            ).rowcount
+            if changed != 1:
+                raise JobStateError()
+            if state in {"completed", "failed", "cancelled"}:
+                self._settle_job_operation_in_transaction(
+                    job_id, owner_id, success=(state == "completed"), now=now
+                )
+            self._db.execute("COMMIT")
+            return JobSnapshot(job_id, state, item.created_at, now)
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
 
     @serialized
     def discard_queued(self, job_id: str, owner_id: int) -> bool:
-        """Remove an admission that was never accepted/returned to a caller.
-
-        Callers must not use this for admitted jobs. The owner/state predicates
-        also prevent deleting another owner's or an already running record.
-        """
+        """Remove only a queued owner claim, refunding it in the same transaction."""
         if type(owner_id) is not int or not 0 < owner_id <= 2**63 - 1:
             raise JobNotFound()
-        return self._db.execute(
-            "DELETE FROM jobs WHERE job_id=? AND owner_id=? AND state='queued'",
-            (job_id, owner_id),
-        ).rowcount == 1
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            item = self._db.execute(
+                "SELECT job_id FROM jobs WHERE job_id=? AND owner_id=? AND state='queued'",
+                (job_id, owner_id),
+            ).fetchone()
+            if item is None:
+                self._db.execute("COMMIT")
+                return False
+            self._settle_job_operation_in_transaction(job_id, owner_id, success=False, now=time.time())
+            changed = self._db.execute(
+                "DELETE FROM jobs WHERE job_id=? AND owner_id=? AND state='queued'",
+                (job_id, owner_id),
+            ).rowcount
+            if changed != 1:
+                raise JobStateError()
+            self._db.execute("COMMIT")
+            return True
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def reserve_bot_operation(self, owner_id: int, request_digest: str) -> tuple[JobSnapshot, bool]:
+        """Admit a signed Telegram bot request exactly once; quota and lease are atomic.
+
+        Store only an opaque digest, never a Telegram update, filename or token.
+        The bot's short-lived processing lease has its own cleanup path.
+        """
+        self._validate_owner(owner_id)
+        self._validate_admission_hash(request_digest)
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self.prune_terminal(self.retention_seconds)
+            row = self._db.execute(
+                """SELECT j.job_id,j.state,j.created_at,j.updated_at
+                   FROM bot_operation_leases AS b JOIN jobs AS j ON j.job_id=b.job_id
+                   WHERE b.owner_id=? AND b.request_digest=? AND j.owner_id=?""",
+                (owner_id, request_digest, owner_id),
+            ).fetchone()
+            if row is not None:
+                job, created = self._snapshot(row), False
+            else:
+                initial = self._insert_queued(owner_id, now, metered=True)
+                changed = self._db.execute(
+                    "UPDATE jobs SET state='processing',updated_at=? WHERE job_id=? AND owner_id=? AND state='queued'",
+                    (now, initial.job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+                self._db.execute(
+                    """INSERT INTO bot_operation_leases(owner_id,request_digest,job_id,expires_at)
+                       VALUES(?,?,?,?)""",
+                    (owner_id, request_digest, initial.job_id, now + 1800),
+                )
+                job, created = JobSnapshot(initial.job_id, "processing", now, now), True
+            self._db.execute("COMMIT")
+            return job, created
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def settle_bot_operation(self, owner_id: int, job_id: str, *, success: bool) -> JobSnapshot:
+        """Settle a bot-owned lease, strictly once and transactionally with quota.
+
+        A late result after lease expiry cannot consume an operation.
+        """
+        self._validate_owner(owner_id)
+        if type(success) is not bool or not isinstance(job_id, str) or len(job_id) > 100:
+            raise ValueError("Invalid bot settlement")
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._db.execute(
+                """SELECT j.job_id,j.state,j.created_at,j.updated_at,b.expires_at
+                   FROM bot_operation_leases AS b JOIN jobs AS j ON j.job_id=b.job_id
+                   WHERE b.owner_id=? AND b.job_id=? AND j.owner_id=?""",
+                (owner_id, job_id, owner_id),
+            ).fetchone()
+            if row is None:
+                raise JobNotFound()
+            expected = "completed" if success else "failed"
+            if row[1] in {"completed", "failed"}:
+                if row[1] != expected:
+                    raise JobStateError()
+                item = self._snapshot(row[:4])
+            elif row[1] != "processing":
+                raise JobStateError()
+            else:
+                # Timeouts are failures and release quota even if a bot
+                # delivers its output after the processing lease expired.
+                target = expected if now <= row[4] else "failed"
+                changed = self._db.execute(
+                    "UPDATE jobs SET state=?,updated_at=? WHERE job_id=? AND owner_id=? AND state='processing'",
+                    (target, now, job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+                self._settle_job_operation_in_transaction(job_id, owner_id, success=(target == "completed"), now=now)
+                item = JobSnapshot(job_id, target, row[2], now)
+            self._db.execute("COMMIT")
+            return item
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+
+    @serialized
+    def expire_bot_operations(self) -> int:
+        """Recover abandoned bot operations after crashes or connection loss."""
+        now = time.time()
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            abandoned = self._db.execute(
+                """SELECT b.job_id,b.owner_id FROM bot_operation_leases AS b
+                   JOIN jobs AS j ON j.job_id=b.job_id
+                   WHERE b.expires_at<? AND j.state='processing'""",
+                (now,),
+            ).fetchall()
+            for job_id, owner_id in abandoned:
+                self._settle_job_operation_in_transaction(job_id, owner_id, success=False, now=now)
+                changed = self._db.execute(
+                    "UPDATE jobs SET state='failed',updated_at=? WHERE job_id=? AND owner_id=? AND state='processing'",
+                    (now, job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+            self._db.execute("COMMIT")
+            return len(abandoned)
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
 
     @serialized
     def mark_interrupted_failed(self) -> int:
-        """Run only when all workers are stopped; does not replay any work."""
-        return self._db.execute(
-            "UPDATE jobs SET state='failed',updated_at=? WHERE state IN ('queued','processing')",
-            (time.time(),),
-        ).rowcount
+        """After all workers stop, fail interrupted jobs and release their quotas."""
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            interrupted = self._db.execute(
+                "SELECT job_id,owner_id FROM jobs WHERE state IN ('queued','processing')"
+            ).fetchall()
+            now = time.time()
+            for job_id, owner_id in interrupted:
+                self._settle_job_operation_in_transaction(job_id, owner_id, success=False, now=now)
+            updated = self._db.execute(
+                "UPDATE jobs SET state='failed',updated_at=? WHERE state IN ('queued','processing')",
+                (now,),
+            ).rowcount
+            self._db.execute("COMMIT")
+            return updated
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
 
     @serialized
     def prune_terminal(self, retention_seconds: float = 3600) -> int:

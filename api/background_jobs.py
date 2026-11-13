@@ -196,7 +196,9 @@ class BackgroundJobs:
             raise HTTPException(422, 'Пустой файл')
         return digest.hexdigest()
 
-    async def create(self, upload, action, suffix, pages, owner, *, idempotency_key=None, retry_of=None):
+    async def create(self, upload, action, suffix, pages, owner, *, idempotency_key=None, retry_of=None, metered=False):
+        if type(metered) is not bool:
+            raise ValueError('Invalid metered setting')
         job = None
         created_new = False
         accepted = False
@@ -220,6 +222,7 @@ class BackgroundJobs:
                 job, created_new = self.store.create_idempotent(
                     owner, key_hash, fingerprint,
                     allow_create=len(self._tracked) < self.store.max_entries,
+                    **({'metered': True} if metered else {}),
                 )
                 if not created_new:
                     if job.job_id in self._pending_discard:
@@ -228,7 +231,7 @@ class BackgroundJobs:
             else:
                 if len(self._tracked) >= self.store.max_entries:
                     raise JobCapacityExceeded()
-                job = self.store.create(owner)
+                job = self.store.create(owner, metered=metered) if metered else self.store.create(owner)
                 created_new = True
             # Claim and tracking reservation are synchronous on the API loop.
             # Existing accepted replays need no additional tracking slot.
@@ -318,7 +321,7 @@ class BackgroundJobs:
                 self._settled(job_id, owner, handle)
         return self.store.get(job_id, owner)
 
-    async def retry(self, job_id, upload, action, suffix, pages, owner, *, idempotency_key):
+    async def retry(self, job_id, upload, action, suffix, pages, owner, *, idempotency_key, metered=False):
         try:
             item = self.store.get(job_id, owner)
             if item.state not in {'failed', 'cancelled'}:
@@ -326,7 +329,8 @@ class BackgroundJobs:
             if idempotency_key is None:
                 raise HTTPException(422, 'Для повтора необходим ключ запроса')
             return await self.create(upload, action, suffix, pages, owner,
-                                     idempotency_key=idempotency_key, retry_of=job_id)
+                                     idempotency_key=idempotency_key, retry_of=job_id,
+                                     metered=metered)
         finally:
             await upload.close()
 

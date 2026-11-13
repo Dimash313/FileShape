@@ -3,6 +3,9 @@
 Run one API worker behind an HTTPS reverse proxy. Background results are temporary and are not recovered after restart.
 """
 import asyncio
+import hashlib
+import json
+import re
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 import sqlite3
@@ -32,8 +35,10 @@ from api.internal_access import ReplayGuard
 from api.campaign_bridge import JoinReplayGuard
 from api.campaign_owner import make_campaign_router
 from api.campaign_revocations import dispatch_campaign_revocations
-from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
+from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError, JobRegistry
 from api.job_runtime import JobRuntime
+from api.durable_jobs import DurableJobStore
+from api.usage_ledger import OperationQuotaExceeded, OperationConcurrencyExceeded
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
 from api.observability import RequestTrace
 from api.readiness import readiness_status
@@ -104,6 +109,7 @@ limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
 internal_access_replay = ReplayGuard()
+internal_bot_operation_replay = ReplayGuard()
 join_replay = JoinReplayGuard()
 
 
@@ -215,6 +221,8 @@ async def maintain_metadata(store):
         operations = []
         if background_jobs is not None:
             operations.extend((background_jobs.reconcile, background_jobs.artifacts.reconcile))
+        if hasattr(store, "expire_bot_operations"):
+            operations.append(store.expire_bot_operations)
         operations.append(store.prune_terminal)
         if hasattr(store, "expire_campaigns"):
             operations.append(store.expire_campaigns)
@@ -360,6 +368,103 @@ async def internal_access_check(
     return JSONResponse({"decision": decision.value}, headers={"Cache-Control": "no-store"})
 
 
+_BOT_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+_BOT_JOB_RE = re.compile(r"[A-Za-z0-9_-]{16,100}\Z")
+
+
+async def _read_bot_operation_body(request: Request, *, allowed_keys: set[str]) -> dict:
+    """Bound internal JSON without trusting Content-Length or unbounded request.body."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 512:
+            raise HTTPException(status_code=413, detail="Request too large")
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=422, detail="Invalid request") from None
+    if not isinstance(value, dict) or set(value) != allowed_keys:
+        raise HTTPException(status_code=422, detail="Invalid operation fields")
+    return value
+
+
+def _verify_bot_operation(user: str, timestamp: str, nonce: str,
+                          signature: str, *, scope: str) -> int:
+    if job_runtime is None or jobs is None:
+        raise HTTPException(status_code=503, detail="Operation service unavailable")
+    try:
+        return internal_bot_operation_replay.verify(
+            token=get_settings().bot_token, user=user, timestamp=timestamp,
+            nonce=nonce, signature=signature, scope=scope,
+        )
+    except (ValueError, RuntimeError):
+        raise HTTPException(status_code=401, detail="Unauthorized") from None
+
+
+@api.post("/internal/v1/operations/reserve")
+async def internal_bot_reserve_operation(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    data = await _read_bot_operation_body(request, allowed_keys={"request_id"})
+    request_id = data["request_id"]
+    if not isinstance(request_id, str) or _BOT_ID_RE.fullmatch(request_id) is None:
+        raise HTTPException(status_code=422, detail="Invalid operation identifier")
+    user_id = _verify_bot_operation(
+        user, timestamp, nonce, signature, scope="reserve:" + request_id
+    )
+    await authorize_new_processing(user_id)
+    # Prevent repeated invalid bot uploads from bypassing HTTP rate controls.
+    await enforce_rate_limit(user_id)
+    digest = hashlib.sha256(b"fileshape-bot-operation-v1\0" + request_id.encode("ascii")).hexdigest()
+    try:
+        item, created = jobs.reserve_bot_operation(user_id, digest)
+    except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+        raise quota_error(exc) from None
+    except JobCapacityExceeded:
+        raise HTTPException(status_code=503, detail="Processing capacity unavailable") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Operation store unavailable") from None
+    return JSONResponse(
+        {"job_id": item.job_id, "created": created, "state": item.state},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@api.post("/internal/v1/operations/settle")
+async def internal_bot_settle_operation(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    data = await _read_bot_operation_body(request, allowed_keys={"job_id", "success"})
+    job_id, success = data["job_id"], data["success"]
+    if (not isinstance(job_id, str) or _BOT_JOB_RE.fullmatch(job_id) is None
+            or type(success) is not bool):
+        raise HTTPException(status_code=422, detail="Invalid settlement")
+    user_id = _verify_bot_operation(
+        user, timestamp, nonce, signature,
+        scope="settle:" + job_id + (":1" if success else ":0"),
+    )
+    try:
+        item = jobs.settle_bot_operation(user_id, job_id, success=success)
+    except JobNotFound:
+        raise HTTPException(status_code=404, detail="Operation not found") from None
+    except JobStateError:
+        raise HTTPException(status_code=409, detail="Operation state conflict") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Operation store unavailable") from None
+    return JSONResponse(
+        {"job_id": item.job_id, "state": item.state},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @api.post("/internal/v1/campaigns/join")
 async def internal_campaign_join(
     request: Request,
@@ -482,7 +587,11 @@ async def create_background_job(
         # Constants remain patchable in boundary tests; one event-loop instance.
         background_jobs.max_input = MAX_INPUT_BYTES
         background_jobs.max_result = MAX_RESULT_BYTES
-        item = await background_jobs.create(upload, action, suffix, pages, user_id, idempotency_key=idempotency_key)
+        try:
+            item = await background_jobs.create(upload, action, suffix, pages, user_id,
+                                                idempotency_key=idempotency_key, metered=True)
+        except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+            raise quota_error(exc) from None
         return JSONResponse(item.public(), status_code=202, headers={
             "Cache-Control": "no-store", "Location": f"/api/v1/jobs/{item.job_id}",
         })
@@ -521,9 +630,11 @@ async def retry_background_job(
         background_jobs.max_result = MAX_RESULT_BYTES
         try:
             item = await background_jobs.retry(job_id, upload, action, suffix, pages, user_id,
-                                               idempotency_key=idempotency_key)
+                                               idempotency_key=idempotency_key, metered=True)
         except JobNotFound:
             raise HTTPException(404, "Задание не найдено") from None
+        except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+            raise quota_error(exc) from None
         except sqlite3.Error:
             raise HTTPException(503, "Хранилище временно недоступно") from None
         return JSONResponse(item.public(), status_code=202, headers={
@@ -603,13 +714,28 @@ async def background_result(job_id: str, user_id: int = Depends(authenticated_us
         raise
 
 
+def quota_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, OperationConcurrencyExceeded):
+        return HTTPException(status_code=429,
+                             detail="Дождись завершения текущей операции",
+                             headers={"Retry-After": "5"})
+    return HTTPException(status_code=429,
+                         detail="Лимит операций исчерпан. Следующий сброс — в 00:00 UTC.")
+
+
 def new_job(user_id: int) -> str:
     if jobs is None:
         raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
     try:
-        return jobs.create(user_id).job_id
+        # Legacy in-memory test harness cannot persist quota reservations.
+        # Production startup always installs a durable store with JobRuntime.
+        if job_runtime is None and isinstance(jobs, JobRegistry):
+            return jobs.create(user_id).job_id
+        return jobs.create(user_id, metered=True).job_id
     except JobCapacityExceeded:
         raise HTTPException(status_code=503, detail="Слишком много активных заданий. Повтори позже.", headers={"Retry-After": "15"}) from None
+    except (OperationQuotaExceeded, OperationConcurrencyExceeded) as exc:
+        raise quota_error(exc) from None
 
 
 @asynccontextmanager
@@ -656,11 +782,7 @@ async def conversion_job(user_id, uploads):
 
 @api.get("/api/v1/usage")
 async def usage_status(user_id: int = Depends(authenticated_user)):
-    """Owner-scoped persisted allowances, explicitly not active metering.
-
-    Do not expose these counts as an enforced balance until every conversion
-    admission path has been wired to reserve and settle operations.
-    """
+    """Owner-scoped persisted allowances from the processing quota ledger."""
     await enforce_rate_limit(user_id)
     if jobs is None or not hasattr(jobs, "usage_snapshot"):
         raise HTTPException(status_code=503, detail="Учёт операций временно недоступен")
@@ -671,7 +793,7 @@ async def usage_status(user_id: int = Depends(authenticated_user)):
         raise HTTPException(status_code=503, detail="Учёт операций временно недоступен") from None
     return JSONResponse({
         **snapshot,
-        "enforced": False,
+        "enforced": job_runtime is not None and isinstance(jobs, DurableJobStore),
         "purchases_enabled": False,
     }, headers={"Cache-Control": "no-store"})
 

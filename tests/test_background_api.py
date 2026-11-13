@@ -63,6 +63,10 @@ class BackgroundAPITests(unittest.TestCase):
             self.assertEqual(accepted.headers["cache-control"], "no-store")
             job_id = body["job_id"]
             self.assertEqual(self.wait_terminal(client, job_id)["state"], "completed")
+            usage = client.get("/api/v1/usage", headers=self.auth)
+            self.assertEqual(usage.status_code, 200)
+            self.assertTrue(usage.json()["enforced"])
+            self.assertEqual(usage.json()["daily_used"], 1)
             result = client.get(f"/api/v1/jobs/{job_id}/result", headers=self.auth)
             self.assertEqual(result.status_code, 200, result.text)
             self.assertTrue(result.content.startswith(b"PK"))

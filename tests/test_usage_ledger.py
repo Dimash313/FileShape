@@ -121,6 +121,28 @@ class UsageQuotaTests(unittest.TestCase):
             self.assertTrue(b.settle_operation(11, self.key(0), success=True, now=self.day_start + 1))
             self.assertEqual(b.usage_snapshot(11, now=self.day_start)["daily_used"], 1)
 
+    def test_pack_grant_preserves_refund_headroom_at_balance_cap(self):
+        with DurableJobStore(self.path) as store:
+            for i in range(10):
+                store.reserve_operation(11, self.key(i), now=self.day_start)
+            store.grant_operation_pack(11, 10, "stars:headroom:first", now=self.day_start)
+            reserved = store.reserve_operation(11, self.key(10), now=self.day_start)
+            self.assertEqual(reserved["source"], "pack")
+            store._db.execute(
+                "UPDATE operation_pack_balances SET balance=9990 WHERE owner_id=11"
+            )
+            with self.assertRaises(ValueError):
+                store.grant_operation_pack(11, 10, "stars:headroom:blocked", now=self.day_start)
+            store._db.execute(
+                "UPDATE operation_pack_balances SET balance=9989 WHERE owner_id=11"
+            )
+            self.assertEqual(
+                store.grant_operation_pack(11, 10, "stars:headroom:allowed", now=self.day_start),
+                (9999, True),
+            )
+            store.settle_operation(11, self.key(10), success=False, now=self.day_start + 1)
+            self.assertEqual(store.usage_snapshot(11, now=self.day_start + 1)["pack_remaining"], 10000)
+
     def test_invalid_inputs_never_write(self):
         with DurableJobStore(self.path) as store:
             for owner in (False, 0, -1, "11"):

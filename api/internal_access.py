@@ -14,9 +14,10 @@ WINDOW_SECONDS = 30
 MAX_NONCES = 10_000
 _NONCE_RE = re.compile(r"[0-9a-f]{32}")
 _SIG_RE = re.compile(r"[0-9a-f]{64}")
+_SCOPE_RE = re.compile(r"[A-Za-z0-9:_-]{1,128}\Z")
 
 
-def sign_access_request(token: str, user_id: int, timestamp: int, nonce: str) -> str:
+def sign_access_request(token: str, user_id: int, timestamp: int, nonce: str, *, scope: str | None = None) -> str:
     if not isinstance(token, str) or not token:
         raise ValueError("Missing signing token")
     if type(user_id) is not int or not 0 < user_id <= 2**63 - 1:
@@ -25,8 +26,14 @@ def sign_access_request(token: str, user_id: int, timestamp: int, nonce: str) ->
         raise ValueError("Invalid timestamp")
     if not isinstance(nonce, str) or not _NONCE_RE.fullmatch(nonce):
         raise ValueError("Invalid nonce")
-    key = hmac.new(token.encode("utf-8"), b"fileshape-internal-access-v1", hashlib.sha256).digest()
-    payload = f"v1:{user_id}:{timestamp}:{nonce}".encode("ascii")
+    if scope is not None and (not isinstance(scope, str) or _SCOPE_RE.fullmatch(scope) is None):
+        raise ValueError("Invalid signed operation scope")
+    context = b"fileshape-internal-access-v1" if scope is None else b"fileshape-internal-operation-v1"
+    key = hmac.new(token.encode("utf-8"), context, hashlib.sha256).digest()
+    payload = (
+        f"v1:{user_id}:{timestamp}:{nonce}" if scope is None
+        else f"v2:{user_id}:{timestamp}:{nonce}:{scope}"
+    ).encode("ascii")
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
@@ -36,7 +43,7 @@ class ReplayGuard:
         self._seen: dict[str, int] = {}
 
     def verify(self, *, token: str, user: str, timestamp: str, nonce: str,
-               signature: str, now: int | None = None) -> int:
+               signature: str, now: int | None = None, scope: str | None = None) -> int:
         if not isinstance(user, str) or not user.isascii() or not user.isdecimal():
             raise ValueError("Invalid user")
         if not isinstance(timestamp, str) or not timestamp.isascii() or not timestamp.isdecimal():
@@ -50,7 +57,7 @@ class ReplayGuard:
             now = int(time.time())
         if abs(now - issued_at) > WINDOW_SECONDS:
             raise ValueError("Expired access assertion")
-        expected = sign_access_request(token, user_id, issued_at, nonce)
+        expected = sign_access_request(token, user_id, issued_at, nonce, scope=scope)
         if not hmac.compare_digest(signature, expected):
             raise ValueError("Invalid signature")
         # There is no await between replay lookup and registration in the API

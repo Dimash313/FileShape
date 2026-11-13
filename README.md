@@ -2,6 +2,43 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
+## FileShape 4.23 — enforced quota across API, Mini App and bot (PR in review)
+
+Every operation must first obtain a durable reservation from the **one**
+API-owned SQLite ledger; the request is rejected if the daily allowance/pack
+is exhausted or the user's concurrent-operation cap is reached. A single
+completed user-requested task (including a PDF merge, ZIP build/extract or
+information inspection) consumes one operation, **not one per input file**.
+Free allows **10 operations per 00:00–23:59 UTC day / one active request**;
+existing Pro entitlements allow **100 / three**, but the file transport limit
+is still **20 MiB**, not a promised 100 MiB paid upload. No billing is enabled.
+
+- Direct API and Mini App conversions, image batches, background jobs and
+  retries reserve quota with the job record. Completed jobs commit once;
+  rejected, failed, cancelled and interrupted jobs release quota. Replayed
+  accepted idempotency keys do not reserve twice.
+- Bot single-file conversions/info and multi-stage PDF page selection/merge
+  and ZIP packaging/extraction use **signed, scoped** internal
+  `/internal/v1/operations/{reserve,settle}` calls. The bot cannot open the
+  API SQLite or forge balances. A successful Telegram result dispatch commits;
+  a download, conversion or delivery failure releases its claim.
+- Opaque bot request hashes and expiry timestamps are stored without
+  user filenames, bytes or bot tokens. A lost response retries the same key;
+  unfinished processing leases expire after 30 minutes and are refunded,
+  including after an API restart. A deployment without the internal API
+  metering gate **fails closed** for all new bot conversions.
+- `GET /api/v1/usage` marks `enforced: true` only when the durable API
+  runtime is active, with `purchases_enabled: false`. Pro activation and
+  operation packs remain trusted internal grants only; Telegram Stars
+  payment verification belongs to 4.24. Bot profile and plan purchasing
+  screens remain incomplete until 4.25.
+
+**Release gate:** This section documents an *unmerged PR*, not a production
+deployment. Tests, Docker build, cross-ingress auditing and final-head
+GitHub Actions must pass before merge. The production bot must use the
+Compose internal access URL (or equivalent trusted
+`FILESHAPE_OPERATION_GATE_URL`) and a running API on the same BOT_TOKEN.
+
 ## FileShape 4.22 — authenticated usage status (read-only)
 
 `GET /api/v1/usage` exposes the authenticated user's own durable

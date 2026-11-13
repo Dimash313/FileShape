@@ -1,6 +1,6 @@
 """FileShape: Telegram-based PDF and image toolbox."""
 import asyncio
-from contextlib import suppress
+from contextlib import suppress, asynccontextmanager
 import logging
 import os
 from pathlib import Path
@@ -22,6 +22,10 @@ from aiogram.types import (
 
 from config import get_settings
 from services.bot_access import check_processing_access
+from services.bot_operations import (
+    BotOperationQuotaExceeded, BotOperationUnavailable,
+    reserve_bot_operation, settle_bot_operation,
+)
 from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
@@ -265,6 +269,27 @@ async def allow_processing(message: Message, bot: Bot, actor_id: int) -> bool:
     return False
 
 
+@asynccontextmanager
+async def metered_bot_work(actor_id: int, bot: Bot):
+    """An operation counts only after the complete Telegram response is sent.
+
+    A failed download, conversion or Telegram delivery releases the reservation.
+    The API reconciles abandoned leases if a worker crashes or disconnects.
+    """
+    job_id = await reserve_bot_operation(actor_id, bot.token)
+    succeeded = False
+    try:
+        yield
+        succeeded = True
+    finally:
+        try:
+            await settle_bot_operation(actor_id, bot.token, job_id, succeeded)
+        except BotOperationUnavailable:
+            # Never claim success on uncertain accounting. API lease expiry
+            # eventually releases any unresolved reservation.
+            logger.error("Bot operation settlement unavailable")
+
+
 @router.message(CommandStart())
 @router.message(Command("menu"))
 async def start(message: Message, state: FSMContext):
@@ -289,8 +314,8 @@ async def help_message(message: Message):
 async def profile_message(message: Message):
     await message.answer(
         "👤 Профиль FileShape\\n\\n"
-        "Учёт операций и тариф пока не подключены. "
-        "Здесь появятся реальный остаток лимита и срок Pro после запуска оплаты.",
+        "Операции учитываются сервером: Free — 10 успешных действий за сутки UTC. "
+        "Персональный остаток и дата окончания Pro появятся здесь в обновлении профиля.",
         reply_markup=back_keyboard(),
     )
 
@@ -299,9 +324,10 @@ async def profile_message(message: Message):
 async def plans_message(message: Message):
     await message.answer(
         "💎 Тарифы FileShape\\n\\n"
-        "Free и Pro, а также пакеты дополнительных операций — в разработке.\\n"
-        "Оплата Telegram Stars пока недоступна. "
-        "Действующие лимиты обработки файлов: до 20 МБ.",
+        "Free: 10 успешных операций в сутки UTC, один активный запрос.\\n"
+        "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\\n"
+        "Покупка Pro и пакетов через Telegram Stars пока недоступна. "
+        "Лимит размера файла сейчас — 20 МБ.",
         reply_markup=back_keyboard(),
     )
 
@@ -326,13 +352,13 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
         markup = back_keyboard()
     elif section == "profile":
         text = ("👤 Профиль FileShape\\n\\n"
-                "Тарифы и счётчик операций ещё не внедрены. "
-                "Здесь появится проверенный сервером остаток лимита.")
+                "Сервер учитывает операции: Free — 10 успешных действий в сутки UTC. "
+                "Персональный остаток появится здесь в обновлении профиля.")
         markup = back_keyboard()
     elif section == "plans":
         text = ("💎 Тарифы FileShape\\n\\n"
-                "Free / Pro и пакеты операций запланированы, но ещё не продаются. "
-                "Оплата Stars появится после серверного учёта операций.")
+                "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке. "
+                "Оплата Telegram Stars и покупка пакетов пока недоступны.")
         markup = back_keyboard()
     elif section == "help":
         text = ("❔ Как пользоваться\\n\\n"
@@ -365,10 +391,10 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext, actor_id: int
         return
     if not await allow_processing(message, bot, actor_id):
         return
-    await state.clear()
     status = await message.answer("⏳ Объединяю PDF…")
     try:
-        async with processing_slots:
+        async with processing_slots, metered_bot_work(actor_id, bot):
+            await state.clear()
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
                 paths = []
@@ -380,6 +406,10 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext, actor_id: int
                 target = folder / "merged.pdf"
                 pages = await asyncio.to_thread(merge_pdfs, paths, target)
                 await send_result(message, target, f"✅ {len(paths)} PDF · {pages} стр. | FileShape")
+    except BotOperationQuotaExceeded:
+        await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
+    except BotOperationUnavailable:
+        await message.answer("Учёт операций временно недоступен. Файлы не обрабатывались.")
     except ValueError as error:
         await message.answer(f"Не удалось объединить: {error}. Начни заново.")
     except Exception:
@@ -453,10 +483,10 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext, actor_id
         return
     if not await allow_processing(message, bot, actor_id):
         return
-    await state.clear()
     status = await message.answer("⏳ Создаю ZIP…")
     try:
-        async with processing_slots:
+        async with processing_slots, metered_bot_work(actor_id, bot):
+            await state.clear()
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
                 inputs = []
@@ -468,6 +498,10 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext, actor_id
                 target = folder / "fileshape.zip"
                 await asyncio.to_thread(make_zip, inputs, target)
                 await send_result(message, target, f"✅ ZIP из {len(items)} файлов · FileShape")
+    except BotOperationQuotaExceeded:
+        await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
+    except BotOperationUnavailable:
+        await message.answer("Учёт операций временно недоступен. Файлы не обрабатывались.")
     except ValueError as error:
         await message.answer(f"Не удалось собрать ZIP: {error}.")
     except Exception:
@@ -543,11 +577,12 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
         await state.clear()
         await message.answer("Файл не найден. Пришли PDF заново.")
         return
-    if not await allow_processing(message, bot, message.from_user.id if message.from_user else -1):
+    actor_id = message.from_user.id if message.from_user else -1
+    if not await allow_processing(message, bot, actor_id):
         return
     status = await message.answer("⏳ Обрабатываю страницы PDF…")
     try:
-        async with processing_slots:
+        async with processing_slots, metered_bot_work(actor_id, bot):
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
                 source = folder / "source.pdf"
@@ -562,6 +597,10 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
                     count = await asyncio.to_thread(extract_pdf_pages, source, target, spec)
                     await send_result(message, target, f"✅ Извлечено страниц: {count} | FileShape")
         await state.clear()
+    except BotOperationQuotaExceeded:
+        await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
+    except BotOperationUnavailable:
+        await message.answer("Учёт операций временно недоступен. Файлы не обрабатывались.")
     except ValueError as error:
         await message.answer(f"Не удалось выбрать страницы: {error}. Попробуй ещё раз или /cancel.")
     except Exception:
@@ -684,7 +723,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         return
     status = await callback.message.answer("⏳ Обрабатываю файл…")
     try:
-        async with processing_slots:
+        async with processing_slots, metered_bot_work(callback.from_user.id, bot):
             with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
                 folder = Path(directory)
                 source = folder / ("source" + suffix)
@@ -749,6 +788,10 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         target = folder / ("converted" + ext)
                         await asyncio.to_thread(convert_image, source, target, fmt)
                     await send_result(callback.message, target)
+    except BotOperationQuotaExceeded:
+        await callback.message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
+    except BotOperationUnavailable:
+        await callback.message.answer("Учёт операций временно недоступен. Файл не обрабатывался.")
     except ValueError as error:
         await callback.message.answer(f"Не удалось обработать файл: {error}.")
     except Exception:

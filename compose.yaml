@@ -7,6 +7,7 @@ services:
       - .env
     environment:
       FILESHAPE_ACCESS_GATE_URL: http://api:8000/internal/v1/access/check
+      FILESHAPE_OPERATION_GATE_URL: http://api:8000/internal/v1/operations
       FILESHAPE_CAMPAIGN_JOIN_URL: http://api:8000/internal/v1/campaigns/join
     read_only: true
     tmpfs:

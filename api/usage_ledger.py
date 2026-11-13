@@ -19,6 +19,10 @@ class OperationQuotaExceeded(Exception):
     """No daily operations and no prepaid operations remain."""
 
 
+class OperationConcurrencyExceeded(Exception):
+    """Maximum active reserved operations for the owner and plan reached."""
+
+
 def _timestamp(now):
     if now is None:
         now = time.time()
@@ -138,7 +142,14 @@ class UsageQuotaMixin:
                         (owner_id,),
                     ).fetchone()
                     balance = (int(row[0]) if row else 0) + operations
-                    if balance > MAX_PACK_BALANCE:
+                    # Outstanding pack-backed operations can still fail and be
+                    # refunded. Reserve room for their eventual return.
+                    pending = self._db.execute(
+                        """SELECT COUNT(*) FROM operation_usage
+                           WHERE owner_id=? AND source='pack' AND status='reserved'""",
+                        (owner_id,),
+                    ).fetchone()[0]
+                    if balance + pending > MAX_PACK_BALANCE:
                         raise ValueError("Pack balance limit")
                     self._db.execute(
                         """INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)
@@ -158,6 +169,46 @@ class UsageQuotaMixin:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def _reserve_operation_in_transaction(self, owner_id, operation_key, now, *, limit_active=False):
+        """Use inside a caller-owned BEGIN IMMEDIATE transaction."""
+        prior = self._db.execute(
+            "SELECT owner_id,day_utc,source,status FROM operation_usage WHERE operation_key=?",
+            (operation_key,),
+        ).fetchone()
+        if prior:
+            if prior[0] != owner_id:
+                raise PermissionError("Operation belongs to another owner")
+            return {"day_utc": prior[1], "source": prior[2], "status": prior[3], "created": False}
+        state = self._usage_state(owner_id, now)
+        if limit_active:
+            active = self._db.execute(
+                "SELECT COUNT(*) FROM operation_usage WHERE owner_id=? AND status='reserved'",
+                (owner_id,),
+            ).fetchone()[0]
+            max_active = 3 if state["plan"] == "pro" else 1
+            if active >= max_active:
+                raise OperationConcurrencyExceeded()
+        if state["daily_remaining"] > 0:
+            source = "daily"
+        elif state["pack_remaining"] > 0:
+            source = "pack"
+            changed = self._db.execute(
+                """UPDATE operation_pack_balances SET balance=balance-1
+                   WHERE owner_id=? AND balance>0""",
+                (owner_id,),
+            ).rowcount
+            if changed != 1:
+                raise OperationQuotaExceeded()
+        else:
+            raise OperationQuotaExceeded()
+        self._db.execute(
+            """INSERT INTO operation_usage
+               (operation_key,owner_id,day_utc,source,status,created_at)
+               VALUES(?,?,?,?,'reserved',?)""",
+            (operation_key, owner_id, state["day_utc"], source, now),
+        )
+        return {"day_utc": state["day_utc"], "source": source, "status": "reserved", "created": True}
+
     def reserve_operation(self, owner_id, operation_key, *, now=None):
         """Atomically reserve one operation across concurrent SQLite connections.
 
@@ -170,79 +221,53 @@ class UsageQuotaMixin:
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:
-                prior = self._db.execute(
-                    "SELECT owner_id,day_utc,source,status FROM operation_usage WHERE operation_key=?",
-                    (operation_key,),
-                ).fetchone()
-                if prior:
-                    if prior[0] != owner_id:
-                        raise PermissionError("Operation belongs to another owner")
-                    result = {"day_utc": prior[1], "source": prior[2], "status": prior[3], "created": False}
-                else:
-                    state = self._usage_state(owner_id, now)
-                    if state["daily_remaining"] > 0:
-                        source = "daily"
-                    elif state["pack_remaining"] > 0:
-                        source = "pack"
-                        changed = self._db.execute(
-                            """UPDATE operation_pack_balances SET balance=balance-1
-                               WHERE owner_id=? AND balance>0""",
-                            (owner_id,),
-                        ).rowcount
-                        if changed != 1:
-                            raise OperationQuotaExceeded()
-                    else:
-                        raise OperationQuotaExceeded()
-                    self._db.execute(
-                        """INSERT INTO operation_usage
-                           (operation_key,owner_id,day_utc,source,status,created_at)
-                           VALUES(?,?,?,?,'reserved',?)""",
-                        (operation_key, owner_id, state["day_utc"], source, now),
-                    )
-                    result = {"day_utc": state["day_utc"], "source": source, "status": "reserved", "created": True}
+                result = self._reserve_operation_in_transaction(owner_id, operation_key, now)
                 self._db.execute("COMMIT")
                 return result
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
 
-    def settle_operation(self, owner_id, operation_key, *, success, now=None):
-        """Commit successful operation or return reservation after failure.
+    def _settle_operation_in_transaction(self, owner_id, operation_key, success, now):
+        """Settle in the same SQLite transaction as the owning job transition."""
+        row = self._db.execute(
+            "SELECT owner_id,source,status FROM operation_usage WHERE operation_key=?",
+            (operation_key,),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Operation not found")
+        if row[0] != owner_id:
+            raise PermissionError("Operation belongs to another owner")
+        status = "committed" if success else "released"
+        if row[2] != "reserved":
+            if row[2] != status:
+                raise ValueError("Conflicting settlement")
+            return False
+        self._db.execute(
+            "UPDATE operation_usage SET status=?,settled_at=? WHERE operation_key=?",
+            (status, now, operation_key),
+        )
+        if row[1] == "pack" and not success:
+            self._db.execute(
+                "UPDATE operation_pack_balances SET balance=balance+1 WHERE owner_id=?",
+                (owner_id,),
+            )
+        return True
 
-        Replays of the same decision are harmless. Opposing decisions fail closed.
+    def settle_operation(self, owner_id, operation_key, *, success, now=None):
+        """Commit a successful operation or release a failed reservation.
+
+        Replaying the same decision is safe; opposing decisions fail closed.
         """
         self._validate_owner(owner_id)
         _key(operation_key)
         if type(success) is not bool:
             raise ValueError("Invalid settlement")
         now = _timestamp(now)
-        status = "committed" if success else "released"
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:
-                row = self._db.execute(
-                    "SELECT owner_id,source,status FROM operation_usage WHERE operation_key=?",
-                    (operation_key,),
-                ).fetchone()
-                if row is None:
-                    raise LookupError("Operation not found")
-                if row[0] != owner_id:
-                    raise PermissionError("Operation belongs to another owner")
-                if row[2] != "reserved":
-                    if row[2] != status:
-                        raise ValueError("Conflicting settlement")
-                    changed = False
-                else:
-                    self._db.execute(
-                        "UPDATE operation_usage SET status=?,settled_at=? WHERE operation_key=?",
-                        (status, now, operation_key),
-                    )
-                    if row[1] == "pack" and not success:
-                        self._db.execute(
-                            "UPDATE operation_pack_balances SET balance=balance+1 WHERE owner_id=?",
-                            (owner_id,),
-                        )
-                    changed = True
+                changed = self._settle_operation_in_transaction(owner_id, operation_key, success, now)
                 self._db.execute("COMMIT")
                 return changed
             except BaseException:

@@ -43,6 +43,9 @@ class DurableIntegrationTests(unittest.TestCase):
             self.assertTrue(response.content.startswith(b"PK"))
             job_id = response.headers["X-FileShape-Job-Id"]
             self.assertEqual(client.get(f"/api/v1/jobs/{job_id}", headers=self.auth).json()["state"], "completed")
+            usage = client.get("/api/v1/usage", headers=self.auth).json()
+            self.assertTrue(usage["enforced"])
+            self.assertEqual(usage["daily_used"], 1)
         with TestClient(server.api) as client:
             response = client.get(f"/api/v1/jobs/{job_id}", headers=self.auth)
             self.assertEqual(response.status_code, 200)
@@ -116,6 +119,7 @@ class DurableIntegrationTests(unittest.TestCase):
             self.assertEqual(response.status_code, 422)
             self.assertEqual(server.slots._value, server.MAX_CONCURRENT_JOBS)
             self.assertEqual(server.jobs._db.execute("SELECT state FROM jobs").fetchone()[0], "failed")
+            self.assertEqual(server.jobs.usage_snapshot(12345)["daily_used"], 0)
 
     def test_unsafe_directory_rejected(self):
         self.root.mkdir(mode=0o755)
