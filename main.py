@@ -82,6 +82,51 @@ def buttons(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     )
 
 
+NAV_CATEGORIES = {
+    "pdf": ("📄 PDF", "Объединение, страницы, поворот и удаление страниц."),
+    "image": ("🖼 Фото", "Конвертация JPG, PNG, WebP и PDF; оптимизация WebP."),
+    "audio": ("🎧 Аудио", "MP3, OGG, WAV и информация о записи."),
+    "documents": ("📝 Документы", "Конвертация DOCX ↔ TXT."),
+    "archive": ("📦 Архивы", "Создание, просмотр и распаковка ZIP."),
+}
+
+
+def home_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [("🧰 Инструменты", "nav:tools"), ("👤 Профиль", "nav:profile")],
+        [("💎 Тарифы", "nav:plans"), ("❔ Помощь", "nav:help")],
+    ]
+    keyboard = buttons(rows)
+    studio = miniapp_keyboard()
+    if studio:
+        keyboard.inline_keyboard.insert(0, studio.inline_keyboard[0])
+    return keyboard
+
+
+def home_text() -> str:
+    return (
+        "📁 FileShape\\n"
+        "Всё для работы с файлами в Telegram.\\n\\n"
+        "Конвертируй, сжимай и редактируй файлы.\\n"
+        "Отправь файл в этот чат или открой инструменты ниже.\\n\\n"
+        "📎 Файл до 20 МБ · /cancel — отменить операцию.\\n"
+        "Для возврата в меню: /menu."
+    )
+
+
+def navigation_keyboard() -> InlineKeyboardMarkup:
+    return buttons([
+        [("📄 PDF", "nav:pdf"), ("🖼 Фото", "nav:image")],
+        [("🎧 Аудио", "nav:audio"), ("📝 Документы", "nav:documents")],
+        [("📦 Архивы", "nav:archive")],
+        [("🏠 Главное меню", "nav:home")],
+    ])
+
+
+def back_keyboard() -> InlineKeyboardMarkup:
+    return buttons([[("🧰 Все инструменты", "nav:tools"), ("🏠 Главное меню", "nav:home")]])
+
+
 def file_menu(kind: str) -> InlineKeyboardMarkup:
     if kind == "pdf":
         rows = [
@@ -221,28 +266,86 @@ async def allow_processing(message: Message, bot: Bot, actor_id: int) -> bool:
 
 
 @router.message(CommandStart())
+@router.message(Command("menu"))
 async def start(message: Message, state: FSMContext):
+    if message.chat.type != "private":
+        await message.answer("Открой личный чат с FileShape для работы с файлами.")
+        return
     await state.clear()
-    await message.answer(
-        "📁 FileShape | Инструменты для файлов\n\n"
-        "Пришли PDF, DOCX, TXT, ZIP, фото или аудио.\n"
-        "Другие файлы можно собрать в ZIP.\n"
-        "Файлы до 20 МБ. Для выхода из операции: /cancel.",
-        reply_markup=miniapp_keyboard() if message.chat.type == "private" else None,
-    )
+    await message.answer(home_text(), reply_markup=home_keyboard())
 
 
 @router.message(Command("help", "tools"))
 async def help_message(message: Message):
     await message.answer(
-        "📁 FileShape · Инструменты\n\n"
-        "📄 PDF — объединить, извлечь, удалить страницы, повернуть\n"
-        "🖼 Фото — JPG / PNG / WebP / PDF\n"
-        "🎧 Аудио — MP3 / OGG / WAV (до 10 минут)\n"
-        "📝 Документы — DOCX ↔ TXT\n"
-        "📦 ZIP — собрать, просмотреть, распаковать\n\n"
-        "Просто отправь файл в этот чат. Отмена: /cancel."
+        "🧰 FileShape · Инструменты\\n\\n"
+        "Выбери раздел или просто отправь файл.\\n"
+        "Для отмены текущей операции: /cancel.",
+        reply_markup=navigation_keyboard(),
     )
+
+
+@router.message(Command("profile"))
+async def profile_message(message: Message):
+    await message.answer(
+        "👤 Профиль FileShape\\n\\n"
+        "Учёт операций и тариф пока не подключены. "
+        "Здесь появятся реальный остаток лимита и срок Pro после запуска оплаты.",
+        reply_markup=back_keyboard(),
+    )
+
+
+@router.message(Command("plans"))
+async def plans_message(message: Message):
+    await message.answer(
+        "💎 Тарифы FileShape\\n\\n"
+        "Free и Pro, а также пакеты дополнительных операций — в разработке.\\n"
+        "Оплата Telegram Stars пока недоступна. "
+        "Действующие лимиты обработки файлов: до 20 МБ.",
+        reply_markup=back_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("nav:"))
+async def navigate(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        await callback.answer("Открой личный чат с ботом.", show_alert=True)
+        return
+    if callback.message.chat.type != "private" or callback.message.chat.id != callback.from_user.id:
+        await callback.answer("Это меню доступно только в твоём личном чате.", show_alert=True)
+        return
+    section = (callback.data or "")[4:]
+    if section == "home":
+        await state.clear()
+        text, markup = home_text(), home_keyboard()
+    elif section == "tools":
+        text, markup = "🧰 Инструменты FileShape\\n\\nВыбери категорию или отправь файл.", navigation_keyboard()
+    elif section in NAV_CATEGORIES:
+        title, description = NAV_CATEGORIES[section]
+        text = f"{title}\\n\\n{description}\\n\\nОтправь файл в этот чат — бот покажет доступные действия."
+        markup = back_keyboard()
+    elif section == "profile":
+        text = ("👤 Профиль FileShape\\n\\n"
+                "Тарифы и счётчик операций ещё не внедрены. "
+                "Здесь появится проверенный сервером остаток лимита.")
+        markup = back_keyboard()
+    elif section == "plans":
+        text = ("💎 Тарифы FileShape\\n\\n"
+                "Free / Pro и пакеты операций запланированы, но ещё не продаются. "
+                "Оплата Stars появится после серверного учёта операций.")
+        markup = back_keyboard()
+    elif section == "help":
+        text = ("❔ Как пользоваться\\n\\n"
+                "1. Отправь PDF, изображение, аудио, DOCX, TXT или ZIP.\\n"
+                "2. Выбери действие под файлом.\\n"
+                "3. Получи результат в этом чате.\\n\\n"
+                "Отмена: /cancel · Главное меню: /menu.")
+        markup = back_keyboard()
+    else:
+        await callback.answer("Раздел не найден.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.edit_text(text, reply_markup=markup)
 
 
 @router.message(Command("cancel"))
