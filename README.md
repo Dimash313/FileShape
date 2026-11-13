@@ -2,6 +2,23 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
+## FileShape 4.20 — Telegram bot navigation
+
+The bot now provides a navigable welcome message for `/start` and `/menu`, with
+buttons for **Studio** (when a valid HTTPS `MINIAPP_URL` is configured),
+**Tools**, **Profile**, **Plans**, and **Help**. Tools offer PDF, images,
+audio, documents and ZIP categories. Each category explains the available
+operations and directs the user to upload a file; the existing file-specific
+action buttons remain unchanged. `/help`, `/tools`, `/profile` and
+`/plans` also work as commands. Navigation is restricted to the user's
+own private chat, and Home clears any unfinished multi-file operation.
+
+**Important:** Free/Pro daily quotas, paid operation packs and Telegram Stars
+payments are **not yet implemented**. Profile and Plans explicitly say so,
+rather than showing fabricated balances or allowing purchases. The existing
+20 MB bot download limit still applies. Next steps: server-side quota ledger,
+payment verification and entitlement checks.
+
 ## Implemented (v1.0 foundation — upload validation hardening)
 
 Send a file in a **private chat** with the bot; the bot shows actions appropriate to the file.
