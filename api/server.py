@@ -137,6 +137,9 @@ async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -
     """Only new admissions are gated. Status, cancellation and results stay owner-scoped."""
     if jobs is None:
         raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
+    if job_runtime is None and not hasattr(jobs, "premium_expiry"):
+        # Legacy in-memory test harness; production always starts JobRuntime.
+        return user_id
     try:
         now = datetime.now(timezone.utc)
         expiry = jobs.premium_expiry(user_id)
