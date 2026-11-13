@@ -177,7 +177,7 @@ export function validateCampaignAnalytics(input: unknown): CampaignAnalytics {
       (data.confirmed_joins_last_24h as number) > (data.confirmed_joins_total as number)) {
     throw new Error('Некорректная рекламная аналитика.');
   }
-  return data as CampaignAnalytics;
+  return data as unknown as CampaignAnalytics;
 }
 
 export async function getCampaignAnalytics(signal?: AbortSignal): Promise<CampaignAnalytics> {
