@@ -14,6 +14,11 @@ import tempfile
 import time
 
 from fastapi import Depends, FastAPI, File as FileField, Form, Header, HTTPException, Request, UploadFile
+from aiogram import Bot
+from datetime import datetime, timezone
+
+from api.access_policy import AccessDecision, RequiredChannel
+from api.telegram_membership import verify_memberships
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -93,6 +98,7 @@ shutdown_task = None
 download_slots = asyncio.Semaphore(4)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
+recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
 
 
 def file_kind(filename: str) -> tuple[str, str]:
@@ -128,20 +134,72 @@ def authenticated_user(
         raise HTTPException(status_code=401, detail="Открой приложение внутри Telegram заново") from None
 
 
-async def enforce_rate_limit(user_id: int) -> None:
+async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -> int:
+    """Only new admissions are gated. Status, cancellation and results stay owner-scoped."""
+    if jobs is None:
+        raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
+    if job_runtime is None and not hasattr(jobs, "premium_expiry"):
+        # Legacy in-memory test harness; production always starts JobRuntime.
+        return user_id
+    try:
+        now = datetime.now(timezone.utc)
+        expiry = jobs.premium_expiry(user_id)
+        channels = tuple(
+            RequiredChannel(
+                chat_id=chat_id,
+                starts_at=datetime.fromtimestamp(start, timezone.utc),
+                ends_at=None if end is None else datetime.fromtimestamp(end, timezone.utc),
+                enabled=enabled,
+            )
+            for chat_id, start, end, enabled in jobs.list_required_channels()
+        )
+        if expiry is not None and expiry > now.timestamp():
+            return user_id
+        if not any(channel.active_at(now) for channel in channels):
+            return user_id
+    except (sqlite3.Error, ValueError, OverflowError, OSError):
+        logger.error("Access configuration unavailable")
+        raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
+    # Separate verification budget protects Telegram API without changing the
+    # existing per-operation quota and validation order.
+    await enforce_rate_limit(user_id, membership=True)
+    try:
+        bot = Bot(token=get_settings().bot_token)
+    except (RuntimeError, ValueError, TypeError):
+        logger.error("Telegram membership verifier initialization failed")
+        raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
+    try:
+        try:
+            decision = await verify_memberships(
+                bot, user_id=user_id, channels=channels, now=now,
+            )
+        except (ValueError, TypeError, OSError):
+            logger.error("Telegram membership policy configuration unavailable")
+            raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
+    finally:
+        await bot.session.close()
+    if decision is AccessDecision.SUBSCRIPTION_REQUIRED:
+        raise HTTPException(status_code=403, detail="Подпишись на обязательные каналы")
+    if decision is not AccessDecision.ALLOWED:
+        raise HTTPException(status_code=503, detail="Не удалось проверить подписку. Повтори позже")
+    return user_id
+
+
+async def enforce_rate_limit(user_id: int, *, membership: bool = False) -> None:
     now = time.monotonic()
     async with limiter_lock:
-        window = recent_requests[user_id]
+        cache = recent_membership_checks if membership else recent_requests
+        window = cache[user_id]
         while window and now - window[0] > 60:
             window.popleft()
         if len(window) >= RATE_LIMIT_PER_MINUTE:
             raise HTTPException(status_code=429, detail="Слишком много запросов. Повтори позже.")
         window.append(now)
         # Prevent unused per-user queues from accumulating forever.
-        if len(recent_requests) > 10_000:
-            for key in list(recent_requests):
-                if not recent_requests[key] or now - recent_requests[key][-1] > 120:
-                    del recent_requests[key]
+        if len(cache) > 10_000:
+            for key in list(cache):
+                if not cache[key] or now - cache[key][-1] > 120:
+                    del cache[key]
 
 
 async def maintain_metadata(store):
@@ -321,7 +379,7 @@ async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
 @api.post("/api/v1/jobs", status_code=202)
 async def create_background_job(
     upload: UploadFile = FileField(...), action: str = Form(...),
-    pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+    pages: str = Form(default=""), user_id: int = Depends(authorize_new_processing),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     try:
@@ -359,7 +417,7 @@ async def cancel_background_job(job_id: str, user_id: int = Depends(authenticate
 @api.post("/api/v1/jobs/{job_id}/retry", status_code=202)
 async def retry_background_job(
     job_id: str, upload: UploadFile = FileField(...), action: str = Form(...),
-    pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+    pages: str = Form(default=""), user_id: int = Depends(authorize_new_processing),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     try:
@@ -579,7 +637,7 @@ async def convert(
     upload: UploadFile = FileField(...),
     action: str = Form(...),
     pages: str = Form(default=""),
-    user_id: int = Depends(authenticated_user),
+    user_id: int = Depends(authorize_new_processing),
 ):
     kind, suffix = file_kind(upload.filename or "")
     if action not in SUPPORTED.get(kind, set()):
@@ -656,7 +714,7 @@ async def convert(
 @api.post("/api/v1/images/pdf")
 async def multi_image_pdf(
     uploads: list[UploadFile] = FileField(...),
-    user_id: int = Depends(authenticated_user),
+    user_id: int = Depends(authorize_new_processing),
 ):
     """Convert 2–8 pictures to one PDF without storing user data."""
     if not MIN_IMAGES <= len(uploads) <= MAX_IMAGES:
