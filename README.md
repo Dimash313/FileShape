@@ -53,11 +53,11 @@ is still **20 MiB**, not a promised 100 MiB paid upload. No billing is enabled.
   payment verification belongs to 4.24. Bot profile and plan purchasing
   screens remain incomplete until 4.25.
 
-**Release gate:** This section documents an *unmerged PR*, not a production
-deployment. Tests, Docker build, cross-ingress auditing and final-head
-GitHub Actions must pass before merge. The production bot must use the
-Compose internal access URL (or equivalent trusted
-`FILESHAPE_OPERATION_GATE_URL`) and a running API on the same BOT_TOKEN.
+**Merged:** PR #67 passed its final-head CI and the merged-main Actions
+run #43516074402 passed Python, Mini App and Docker. This is repository
+validation, **not** a claim of production deployment. The bot must use
+Compose's internal access URL (or trusted `FILESHAPE_OPERATION_GATE_URL`)
+and share the same BOT_TOKEN with the API.
 
 ## FileShape 4.22 — authenticated usage status (read-only)
 
