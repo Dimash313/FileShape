@@ -49,6 +49,30 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.6 — monochrome Mini App (verification pending)
+
+The proposed Mini App refresh replaces the earlier blue palette with a consistent
+**black, graphite and white** visual system. It covers the file-upload stage,
+quick tools, PDF page controls, image preview, batch selection, server jobs,
+history, profile, notices and empty/error/working states. The white primary
+action and selected formats/pages have dark text; secondary controls use
+graphite surfaces. The navigation has a visible selected indicator. The
+Android/Telegram viewport retains bottom safe-area padding.
+
+The styling includes explicit keyboard focus, touch-friendly action sizes,
+reduced-motion support and forced-color selection outlines. Navigation announces
+the current page and the local conversion format exposes its selected state.
+Native Node regression checks reject chromatic CSS values and enforce key
+contrast ratios and accessibility hooks. Actual server progress and status
+semantics are unchanged; no fabricated completion or percentage is introduced.
+
+No converter, storage, authentication, background processing, retention,
+payment or deployment behavior changes in this revision. The design has not
+yet been verified on a real Android Telegram WebView. A separate PR must pass
+Python unit tests, native Node tests, TypeScript/Mini App build and Docker build,
+then the merged-main GitHub Actions must pass before the version is called
+complete. The selected design is intentionally monochrome, not dark blue.
+
 ## FileShape 4.5 — restart recovery and bounded cleanup
 
 Recovery keeps the existing single-instance contract: an API process acquires
