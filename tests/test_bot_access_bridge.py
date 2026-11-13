@@ -176,6 +176,64 @@ class BotEntryPointTests(unittest.IsolatedAsyncioTestCase):
             self.bot.download.assert_not_awaited()
             state.clear.assert_not_awaited()
 
+    async def test_quota_denial_blocks_merge_zip_and_page_processing_before_download(self):
+        for operation, state_value, data in (
+            (main.run_merge, main.MergeState.collecting.state,
+             {"pdfs": [{"file_id": "a"}, {"file_id": "b"}]}),
+            (main.run_zip_bundle, main.ZipState.collecting.state,
+             {"zip_files": [{"file_id": "a"}, {"file_id": "b"}]}),
+        ):
+            state = SimpleNamespace(
+                get_state=AsyncMock(return_value=state_value),
+                get_data=AsyncMock(return_value=data), clear=AsyncMock()
+            )
+            msg = SimpleNamespace(
+                answer=AsyncMock(),
+                chat=SimpleNamespace(type="private", id=11),
+            )
+            with (
+                self.subTest(handler=operation.__name__),
+                patch.object(main, "allow_processing", new_callable=AsyncMock, return_value=True),
+                patch.object(main, "reserve_bot_operation", new_callable=AsyncMock,
+                             side_effect=main.BotOperationQuotaExceeded()),
+            ):
+                await operation(msg, self.bot, state, 11)
+                self.bot.download.assert_not_awaited()
+                state.clear.assert_not_awaited()
+
+        state = SimpleNamespace(
+            get_data=AsyncMock(return_value={"file_id": "file", "pdf_mode": "pdf:extract"}),
+            clear=AsyncMock(),
+        )
+        msg = SimpleNamespace(
+            text="1-2", from_user=self.actor,
+            chat=SimpleNamespace(type="private", id=11),
+            answer=AsyncMock(),
+        )
+        with (
+            patch.object(main, "allow_processing", new_callable=AsyncMock, return_value=True),
+            patch.object(main, "reserve_bot_operation", new_callable=AsyncMock,
+                         side_effect=main.BotOperationQuotaExceeded()),
+        ):
+            await main.extract_by_range(msg, self.bot, state)
+            self.bot.download.assert_not_awaited()
+            state.clear.assert_not_awaited()
+
+    async def test_quota_denial_blocks_single_file_worker_before_download(self):
+        doc = Document(file_id="file", file_unique_id="unique", file_name="file.pdf", file_size=200)
+        origin = self.make_message(1, doc=doc)
+        menu = self.make_message(2, sender=self.bot_user, reply=origin)
+        state = SimpleNamespace(get_state=AsyncMock(return_value=None))
+        callback = SimpleNamespace(message=menu, from_user=self.actor, data="pdf:rotate", answer=AsyncMock())
+        with (
+            patch.object(main, "allow_processing", new_callable=AsyncMock, return_value=True),
+            patch.object(main, "reserve_bot_operation", new_callable=AsyncMock,
+                         side_effect=main.BotOperationQuotaExceeded()),
+            patch.object(Message, "answer", new_callable=AsyncMock),
+        ):
+            await main.run_action(callback, self.bot, state)
+        self.bot.download.assert_not_awaited()
+
     async def test_callback_completion_uses_actor_not_bot_message_sender(self):
         msg = self.make_message(2, sender=self.bot_user)
         for method, handler in ((main.run_merge, main.done_button),
