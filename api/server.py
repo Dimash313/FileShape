@@ -98,6 +98,7 @@ shutdown_task = None
 download_slots = asyncio.Semaphore(4)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
+recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
 
 
 def file_kind(filename: str) -> tuple[str, str]:
@@ -137,8 +138,6 @@ async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -
     """Only new admissions are gated. Status, cancellation and results stay owner-scoped."""
     if jobs is None:
         raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
-    # Rate-limit before slow Telegram calls, including denied memberships.
-    await enforce_rate_limit(user_id)
     if job_runtime is None and not hasattr(jobs, "premium_expiry"):
         # Legacy in-memory test harness; production always starts JobRuntime.
         return user_id
@@ -161,6 +160,9 @@ async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -
     except (sqlite3.Error, ValueError, OverflowError, OSError):
         logger.error("Access configuration unavailable")
         raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
+    # Separate verification budget protects Telegram API without changing the
+    # existing per-operation quota and validation order.
+    await enforce_rate_limit(user_id, membership=True)
     try:
         bot = Bot(token=get_settings().bot_token)
     except (RuntimeError, ValueError, TypeError):
@@ -183,20 +185,21 @@ async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -
     return user_id
 
 
-async def enforce_rate_limit(user_id: int) -> None:
+async def enforce_rate_limit(user_id: int, *, membership: bool = False) -> None:
     now = time.monotonic()
     async with limiter_lock:
-        window = recent_requests[user_id]
+        cache = recent_membership_checks if membership else recent_requests
+        window = cache[user_id]
         while window and now - window[0] > 60:
             window.popleft()
         if len(window) >= RATE_LIMIT_PER_MINUTE:
             raise HTTPException(status_code=429, detail="Слишком много запросов. Повтори позже.")
         window.append(now)
         # Prevent unused per-user queues from accumulating forever.
-        if len(recent_requests) > 10_000:
-            for key in list(recent_requests):
-                if not recent_requests[key] or now - recent_requests[key][-1] > 120:
-                    del recent_requests[key]
+        if len(cache) > 10_000:
+            for key in list(cache):
+                if not cache[key] or now - cache[key][-1] > 120:
+                    del cache[key]
 
 
 async def maintain_metadata(store):
@@ -383,6 +386,7 @@ async def create_background_job(
         kind, suffix = file_kind(upload.filename or "")
         if action not in SUPPORTED.get(kind, set()) or len(pages) > 90:
             raise HTTPException(422, "Недопустимая операция или диапазон страниц")
+        await enforce_rate_limit(user_id)
         if background_jobs is None or admission.closing:
             raise HTTPException(503, "Обработчики не запущены")
         # Constants remain patchable in boundary tests; one event-loop instance.
@@ -420,6 +424,7 @@ async def retry_background_job(
         kind, suffix = file_kind(upload.filename or "")
         if action not in SUPPORTED.get(kind, set()) or len(pages) > 90:
             raise HTTPException(422, "Недопустимая операция или диапазон страниц")
+        await enforce_rate_limit(user_id)
         if background_jobs is None or admission.closing:
             raise HTTPException(503, "Обработчики не запущены")
         background_jobs.max_input = MAX_INPUT_BYTES
@@ -639,6 +644,7 @@ async def convert(
         raise HTTPException(status_code=422, detail="Эта операция недоступна для выбранного файла")
     if len(pages) > 90:
         raise HTTPException(status_code=422, detail="Слишком длинный диапазон страниц")
+    await enforce_rate_limit(user_id)
     async with conversion_job(user_id, [upload]) as job_id:
         work = None
         try:
@@ -717,6 +723,7 @@ async def multi_image_pdf(
         kind, _ = file_kind(upload.filename or "")
         if kind != "image":
             raise HTTPException(status_code=422, detail="Поддерживаются только JPG, PNG и WebP")
+    await enforce_rate_limit(user_id)
     async with conversion_job(user_id, uploads) as job_id:
         work = None
         try:
