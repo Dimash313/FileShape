@@ -2,7 +2,27 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## FileShape 4.23 — enforced quota across API, Mini App and bot (PR in review)
+## FileShape 4.24 — Telegram Stars verified order foundation (in development)
+
+**Storage-only initial slice; payments/purchases are disabled.** The private
+API-owned SQLite database now supports immutable, owner-scoped Stars quotes
+with server-defined prices: Pro 30 days 149 XTR, 10 operations 19 XTR, and
+30 operations 49 XTR. Quotes expire after 30 minutes for checkout approval.
+Receipts have a globally unique, durable Telegram charge ID and can be
+recorded idempotently only against the matching owner, price and currency.
+A recorded receipt is **not** proof that the backend verified a Telegram
+update: only the forthcoming trusted bot-to-API bridge will be allowed to
+call it. This initial code neither sends invoices, accepts webhook payments,
+auto-renews subscriptions, nor grants paid access or operation packs.
+
+Before enabling purchases: implement Telegram `pre_checkout_query` reply
+within 10 seconds, trusted `successful_payment` forwarding with scoped
+HMAC authorization, atomic/effectively-once fulfillment, audit/reconciliation,
+`refundStarPayment` and reversal/debt policy, support/terms, test payments
+and full CI. Reject any mismatch or duplicate charge. Keep all invoices
+and purchase buttons disabled until verified end-to-end.
+
+## FileShape 4.23 — enforced quota across API, Mini App and bot (merged; CI passed)
 
 Every operation must first obtain a durable reservation from the **one**
 API-owned SQLite ledger; the request is rejected if the daily allowance/pack
