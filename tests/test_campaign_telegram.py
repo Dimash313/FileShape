@@ -74,7 +74,7 @@ class TelegramCampaignInviteTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_and_revoke_link(self):
         bot = SimpleNamespace(
             create_chat_invite_link=AsyncMock(return_value=SimpleNamespace(invite_link=LINK)),
-            revoke_chat_invite_link=AsyncMock(),
+            revoke_chat_invite_link=AsyncMock(return_value=True),
         )
         campaign_id = "abcdefghijklmnopqrstuvwx"
         self.assertEqual(await create_campaign_invite(bot, chat_id=-1001234,
@@ -85,6 +85,11 @@ class TelegramCampaignInviteTests(unittest.IsolatedAsyncioTestCase):
         await revoke_campaign_invite(bot, chat_id=-1001234, invite_link=LINK)
         bot.revoke_chat_invite_link.assert_awaited_once_with(
             chat_id=-1001234, invite_link=LINK)
+
+    async def test_revoke_requires_explicit_telegram_acknowledgement(self):
+        bot = SimpleNamespace(revoke_chat_invite_link=AsyncMock(return_value=False))
+        with self.assertRaises(RuntimeError):
+            await revoke_campaign_invite(bot, chat_id=-1001234, invite_link=LINK)
 
     async def test_telegram_errors_propagate_without_fake_links(self):
         bot = SimpleNamespace(create_chat_invite_link=AsyncMock(side_effect=RuntimeError("forbidden")))
