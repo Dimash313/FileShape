@@ -30,6 +30,7 @@ from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.internal_access import ReplayGuard
 from api.campaign_bridge import JoinReplayGuard
+from api.campaign_owner import make_campaign_router
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.job_runtime import JobRuntime
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
@@ -863,3 +864,7 @@ async def multi_image_pdf(
                 work.cleanup()
             logger.error("Multi-image PDF failed")
             raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
+
+
+# Owner-only campaign endpoints share the API-owned durable SQLite store.
+api.include_router(make_campaign_router(authenticated_user, lambda: jobs if job_runtime is not None else None))
