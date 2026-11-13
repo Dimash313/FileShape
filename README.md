@@ -12,7 +12,9 @@ commits atomically with the state change. The opted-in path caps active
 reservations at **one Free** or **three Pro** per user; grants preserve
 capacity for outstanding pack refunds. Rejected queued claims, unaccepted
 uploads and interrupted jobs after restart release their reservations.
-Older, unmetered job records are not retroactively billed. The existing
+Older, unmetered job records are not retroactively billed. BackgroundJobs
+also accepts an explicit internal `metered=True` option for creation and retry,
+which is deliberately not passed by the public endpoints yet. The existing
 quota methods retain their public semantics.
 
 **Do not enable purchases or show enforced usage:** bot actions, API legacy
