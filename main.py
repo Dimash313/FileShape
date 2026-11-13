@@ -314,8 +314,8 @@ async def help_message(message: Message):
 async def profile_message(message: Message):
     await message.answer(
         "👤 Профиль FileShape\\n\\n"
-        "Учёт операций и тариф пока не подключены. "
-        "Здесь появятся реальный остаток лимита и срок Pro после запуска оплаты.",
+        "Операции учитываются сервером: Free — 10 успешных действий за сутки UTC. "
+        "Персональный остаток и дата окончания Pro появятся здесь в обновлении профиля.",
         reply_markup=back_keyboard(),
     )
 
@@ -324,9 +324,10 @@ async def profile_message(message: Message):
 async def plans_message(message: Message):
     await message.answer(
         "💎 Тарифы FileShape\\n\\n"
-        "Free и Pro, а также пакеты дополнительных операций — в разработке.\\n"
-        "Оплата Telegram Stars пока недоступна. "
-        "Действующие лимиты обработки файлов: до 20 МБ.",
+        "Free: 10 успешных операций в сутки UTC, один активный запрос.\\n"
+        "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\\n"
+        "Покупка Pro и пакетов через Telegram Stars пока недоступна. "
+        "Лимит размера файла сейчас — 20 МБ.",
         reply_markup=back_keyboard(),
     )
 
