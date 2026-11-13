@@ -137,6 +137,8 @@ async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -
     """Only new admissions are gated. Status, cancellation and results stay owner-scoped."""
     if jobs is None:
         raise HTTPException(status_code=503, detail="Хранилище заданий не запущено")
+    # Rate-limit before slow Telegram calls, including denied memberships.
+    await enforce_rate_limit(user_id)
     if job_runtime is None and not hasattr(jobs, "premium_expiry"):
         # Legacy in-memory test harness; production always starts JobRuntime.
         return user_id
@@ -159,11 +161,19 @@ async def authorize_new_processing(user_id: int = Depends(authenticated_user)) -
     except (sqlite3.Error, ValueError, OverflowError, OSError):
         logger.error("Access configuration unavailable")
         raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
-    bot = Bot(token=get_settings().bot_token)
     try:
-        decision = await verify_memberships(
-            bot, user_id=user_id, channels=channels, now=now,
-        )
+        bot = Bot(token=get_settings().bot_token)
+    except (RuntimeError, ValueError, TypeError):
+        logger.error("Telegram membership verifier initialization failed")
+        raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
+    try:
+        try:
+            decision = await verify_memberships(
+                bot, user_id=user_id, channels=channels, now=now,
+            )
+        except (ValueError, TypeError, OSError):
+            logger.error("Telegram membership policy configuration unavailable")
+            raise HTTPException(status_code=503, detail="Проверка доступа временно недоступна") from None
     finally:
         await bot.session.close()
     if decision is AccessDecision.SUBSCRIPTION_REQUIRED:
@@ -373,7 +383,6 @@ async def create_background_job(
         kind, suffix = file_kind(upload.filename or "")
         if action not in SUPPORTED.get(kind, set()) or len(pages) > 90:
             raise HTTPException(422, "Недопустимая операция или диапазон страниц")
-        await enforce_rate_limit(user_id)
         if background_jobs is None or admission.closing:
             raise HTTPException(503, "Обработчики не запущены")
         # Constants remain patchable in boundary tests; one event-loop instance.
@@ -411,7 +420,6 @@ async def retry_background_job(
         kind, suffix = file_kind(upload.filename or "")
         if action not in SUPPORTED.get(kind, set()) or len(pages) > 90:
             raise HTTPException(422, "Недопустимая операция или диапазон страниц")
-        await enforce_rate_limit(user_id)
         if background_jobs is None or admission.closing:
             raise HTTPException(503, "Обработчики не запущены")
         background_jobs.max_input = MAX_INPUT_BYTES
@@ -631,7 +639,6 @@ async def convert(
         raise HTTPException(status_code=422, detail="Эта операция недоступна для выбранного файла")
     if len(pages) > 90:
         raise HTTPException(status_code=422, detail="Слишком длинный диапазон страниц")
-    await enforce_rate_limit(user_id)
     async with conversion_job(user_id, [upload]) as job_id:
         work = None
         try:
@@ -710,7 +717,6 @@ async def multi_image_pdf(
         kind, _ = file_kind(upload.filename or "")
         if kind != "image":
             raise HTTPException(status_code=422, detail="Поддерживаются только JPG, PNG и WebP")
-    await enforce_rate_limit(user_id)
     async with conversion_job(user_id, uploads) as job_id:
         work = None
         try:
