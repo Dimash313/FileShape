@@ -1,8 +1,16 @@
+# Runtime source allowlist; exclude frontend, test data, state and secrets.
+**
+!requirements.txt
+!main.py
+!config.py
+!api/
+!api/*.py
+!services/
+!services/*.py
 .git
 .github
 .env
 .env.*
-!.env.example
 __pycache__
 *.pyc
 *.pyo

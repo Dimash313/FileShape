@@ -151,6 +151,20 @@ class DurableJobStore:
         return JobSnapshot(job_id, state, item.created_at, now)
 
     @serialized
+    def discard_queued(self, job_id: str, owner_id: int) -> bool:
+        """Remove an admission that was never accepted/returned to a caller.
+
+        Callers must not use this for admitted jobs. The owner/state predicates
+        also prevent deleting another owner's or an already running record.
+        """
+        if type(owner_id) is not int or not 0 < owner_id <= 2**63 - 1:
+            raise JobNotFound()
+        return self._db.execute(
+            "DELETE FROM jobs WHERE job_id=? AND owner_id=? AND state='queued'",
+            (job_id, owner_id),
+        ).rowcount == 1
+
+    @serialized
     def mark_interrupted_failed(self) -> int:
         """Run only when all workers are stopped; does not replay any work."""
         return self._db.execute(

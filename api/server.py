@@ -1,6 +1,6 @@
 """Authenticated, short-lived file transformations for the FileShape Mini App.
 
-Run one API worker behind an HTTPS reverse proxy. No user files are persisted.
+Run one API worker behind an HTTPS reverse proxy. Background results are temporary and are not recovered after restart.
 """
 import asyncio
 from collections import defaultdict, deque
@@ -15,9 +15,11 @@ import time
 
 from fastapi import Depends, FastAPI, File as FileField, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
+from api.artifacts import ArtifactStore, ArtifactUnavailable
+from api.background_jobs import BackgroundJobs
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
@@ -85,6 +87,8 @@ jobs = None
 job_runtime = None
 metadata_maintenance = None
 job_manager = None
+background_jobs = None
+download_slots = asyncio.Semaphore(4)
 limiter_lock = asyncio.Lock()
 recent_requests: dict[int, deque[float]] = defaultdict(deque)
 
@@ -107,7 +111,7 @@ def file_kind(filename: str) -> tuple[str, str]:
 api.add_middleware(
     UploadIngressGuard,
     max_bytes=MAX_REQUEST_BYTES,
-    paths={"/api/v1/convert", "/api/v1/images/pdf"},
+    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/jobs"},
 )
 # Outer middleware also observes requests rejected before multipart parsing.
 api.add_middleware(RequestTrace)
@@ -142,38 +146,47 @@ async def maintain_metadata(store):
     while True:
         await asyncio.sleep(60)
         try:
+            if background_jobs is not None:
+                background_jobs.artifacts.prune()
             store.prune_terminal()
-        except sqlite3.Error:
+            await asyncio.to_thread(cleanup_orphans)
+        except (sqlite3.Error, OSError):
             logger.error("Job metadata maintenance failed")
 
 
 @api.on_event("shutdown")
 async def stop_accepting_conversions():
-    global job_runtime, metadata_maintenance, jobs, job_manager
+    global job_runtime, metadata_maintenance, jobs, job_manager, background_jobs
     admission.close()
     if job_manager is not None:
         await job_manager.close()
         job_manager = None
-    if metadata_maintenance is not None:
-        metadata_maintenance.cancel()
-        await asyncio.gather(metadata_maintenance, return_exceptions=True)
-        metadata_maintenance = None
-    if job_runtime is not None:
-        job_runtime.close()
-        job_runtime = None
-        jobs = None
-    else:
+    try:
+        if background_jobs is not None:
+            background_jobs.close()
+    finally:
+        background_jobs = None
+        if metadata_maintenance is not None:
+            metadata_maintenance.cancel()
+            await asyncio.gather(metadata_maintenance, return_exceptions=True)
+            metadata_maintenance = None
+        if job_runtime is not None:
+            try:
+                job_runtime.close()
+            finally:
+                job_runtime = None
         jobs = None
 
 
 @api.on_event("startup")
 async def remove_abandoned_workspaces():
-    global admission, jobs, job_runtime, metadata_maintenance, job_manager
+    global admission, jobs, job_runtime, metadata_maintenance, job_manager, background_jobs
     if job_runtime is not None:
         raise RuntimeError("API lifecycle already started")
     runtime = JobRuntime(os.environ.get("FILESHAPE_STATE_DIR", "./state"))
     try:
         await asyncio.to_thread(cleanup_orphans)
+        artifacts = ArtifactStore()
     except BaseException:
         runtime.close()
         raise
@@ -182,6 +195,7 @@ async def remove_abandoned_workspaces():
     job_manager = JobManager(MAX_CONCURRENT_JOBS, max_pending=20)
     job_runtime = runtime
     jobs = runtime.store
+    background_jobs = BackgroundJobs(jobs, job_manager, artifacts, lambda payload: run_worker(payload), MAX_INPUT_BYTES, MAX_RESULT_BYTES)
     metadata_maintenance = asyncio.create_task(maintain_metadata(jobs))
 
 
@@ -209,6 +223,10 @@ def queue_snapshot() -> dict:
     # Sampled on the API event loop, this is a point-in-time view,
     # not an SLA and not an aggregate across API replicas.
     available = max(0, min(MAX_CONCURRENT_JOBS, slots._value))
+    if job_manager is not None:
+        return {"capacity": MAX_CONCURRENT_JOBS, "active": job_manager.active,
+                "waiting": admission.waiting + job_manager.waiting,
+                "waiting_limit": admission.max_waiters + 20, "accepting": not admission.closing}
     return {
         "capacity": MAX_CONCURRENT_JOBS,
         "active": MAX_CONCURRENT_JOBS - available,
@@ -236,6 +254,85 @@ async def job_status(job_id: str, user_id: int = Depends(authenticated_user)):
     except sqlite3.Error:
         raise HTTPException(status_code=503, detail="Хранилище заданий временно недоступно") from None
     return JSONResponse(item.public(), headers={"Cache-Control": "no-store"})
+
+
+@api.post("/api/v1/jobs", status_code=202)
+async def create_background_job(
+    upload: UploadFile = FileField(...), action: str = Form(...),
+    pages: str = Form(default=""), user_id: int = Depends(authenticated_user),
+):
+    try:
+        kind, suffix = file_kind(upload.filename or "")
+        if action not in SUPPORTED.get(kind, set()) or len(pages) > 90:
+            raise HTTPException(422, "Недопустимая операция или диапазон страниц")
+        await enforce_rate_limit(user_id)
+        if background_jobs is None or admission.closing:
+            raise HTTPException(503, "Обработчики не запущены")
+        # Constants remain patchable in boundary tests; one event-loop instance.
+        background_jobs.max_input = MAX_INPUT_BYTES
+        background_jobs.max_result = MAX_RESULT_BYTES
+        item = await background_jobs.create(upload, action, suffix, pages, user_id)
+        return JSONResponse(item.public(), status_code=202, headers={
+            "Cache-Control": "no-store", "Location": f"/api/v1/jobs/{item.job_id}",
+        })
+    finally:
+        await upload.close()
+
+
+class ResultStream(StreamingResponse):
+    def __init__(self, file, size, media_type, filename):
+        self.file = file
+        async def chunks():
+            while data := file.read(65536):
+                yield data
+        super().__init__(chunks(), media_type=media_type, headers={
+            "Content-Length": str(size), "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        })
+
+    async def __call__(self, scope, receive, send):
+        try:
+            async with asyncio.timeout(120):
+                await super().__call__(scope, receive, send)
+        finally:
+            try:
+                self.file.close()
+            finally:
+                download_slots.release()
+
+
+@api.get("/api/v1/jobs/{job_id}/result")
+async def background_result(job_id: str, user_id: int = Depends(authenticated_user)):
+    await enforce_rate_limit(user_id)
+    if jobs is None or background_jobs is None:
+        raise HTTPException(503, "Обработчики не запущены")
+    try:
+        item = jobs.get(job_id, user_id)  # Owner check ALWAYS precedes file access.
+    except JobNotFound:
+        raise HTTPException(404, "Задание не найдено") from None
+    except sqlite3.Error:
+        raise HTTPException(503, "Хранилище временно недоступно") from None
+    if item.state in {"queued", "processing"}:
+        raise HTTPException(409, "Результат ещё не готов")
+    if item.state != "completed":
+        raise HTTPException(404, "Результат недоступен")
+    if download_slots.locked():
+        raise HTTPException(429, "Слишком много скачиваний", headers={"Retry-After": "5"})
+    await download_slots.acquire()
+    try:
+        file, size, media_type, filename = background_jobs.artifacts.open_result(job_id)
+        try:
+            return ResultStream(file, size, media_type, filename)
+        except BaseException:
+            file.close()
+            raise
+    except (ArtifactUnavailable, FileNotFoundError, ValueError, OSError):
+        download_slots.release()
+        raise HTTPException(404, "Результат удалён или недоступен") from None
+    except BaseException:
+        download_slots.release()
+        raise
 
 
 def new_job(user_id: int) -> str:

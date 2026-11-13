@@ -4,7 +4,7 @@ Operations must cooperate with cancellation; production operations use the
 resource-limited subprocess runner, which kills/reaps its process group.
 """
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -21,9 +21,53 @@ class ManagerFull(Exception):
 class _Ticket:
     operation: Callable[[], Awaitable[Any]]
     result: asyncio.Future
-    finished: asyncio.Event = field(default_factory=asyncio.Event)
+    finished: asyncio.Future
     task: asyncio.Task | None = None
     cancellation_requested: bool = False
+
+
+class JobHandle:
+    """One admitted operation; result completion and cleanup are distinct.
+
+    Use cancel() to cancel and wait for resource cleanup. The finished future
+    resolves only after cleanup (or before execution for queued cancellation).
+    Result exceptions are observed even if no HTTP caller waits for them.
+    """
+    def __init__(self, manager, ticket):
+        self._manager = manager
+        self._ticket = ticket
+
+    @property
+    def result(self) -> asyncio.Future:
+        return self._ticket.result
+
+    @property
+    def finished(self) -> asyncio.Future:
+        # A callback/awaiter cannot cancel the manager's cleanup notification.
+        return asyncio.shield(self._ticket.finished)
+
+    @property
+    def done(self) -> bool:
+        return self._ticket.finished.done()
+
+    async def cancel(self) -> None:
+        self._manager._cancel(self._ticket)
+        interrupted = False
+        while not self._ticket.finished.done():
+            try:
+                await asyncio.shield(self._ticket.finished)
+            except asyncio.CancelledError:
+                # Repeated caller cancellation must not race file cleanup.
+                interrupted = True
+        if interrupted:
+            raise asyncio.CancelledError()
+
+    async def wait(self) -> Any:
+        try:
+            return await asyncio.shield(self.result)
+        except asyncio.CancelledError:
+            await self.cancel()
+            raise
 
 
 class JobManager:
@@ -55,29 +99,36 @@ class JobManager:
         if ticket.task is not None:
             ticket.task.cancel()
         else:
-            ticket.finished.set()
+            JobManager._finish(ticket)
 
-    async def run(self, operation: Callable[[], Awaitable[Any]]) -> Any:
+    @staticmethod
+    def _finish(ticket):
+        if not ticket.finished.done():
+            ticket.finished.set_result(None)
+
+    def _observe_result(self, ticket, result):
+        if result.cancelled():
+            self._cancel(ticket)
+        else:
+            # Retrieve failures for fire-and-forget submissions. Awaiting the
+            # same future still raises its original operation exception.
+            result.exception()
+
+    def submit(self, operation: Callable[[], Awaitable[Any]]) -> JobHandle:
+        """Admit synchronously; only fixed consumers start operation tasks."""
         if self._closed:
             raise ManagerClosed()
-        ticket = _Ticket(operation, asyncio.get_running_loop().create_future())
+        loop = asyncio.get_running_loop()
+        ticket = _Ticket(operation, loop.create_future(), loop.create_future())
         try:
             self._queue.put_nowait(ticket)
         except asyncio.QueueFull:
             raise ManagerFull() from None
-        try:
-            return await asyncio.shield(ticket.result)
-        except asyncio.CancelledError:
-            self._cancel(ticket)
-            # Do not let caller cleanup remove files under a live subprocess.
-            cleanup = asyncio.create_task(ticket.finished.wait())
-            while not cleanup.done():
-                try:
-                    await asyncio.shield(cleanup)
-                except asyncio.CancelledError:
-                    # A repeated caller cancellation must not race file cleanup.
-                    continue
-            raise
+        ticket.result.add_done_callback(lambda result: self._observe_result(ticket, result))
+        return JobHandle(self, ticket)
+
+    async def run(self, operation: Callable[[], Awaitable[Any]]) -> Any:
+        return await self.submit(operation).wait()
 
     async def _consume(self):
         while True:
@@ -102,7 +153,7 @@ class JobManager:
                     ticket.result.set_exception(exc.with_traceback(None))
             finally:
                 self._active.discard(ticket)
-                ticket.finished.set()
+                JobManager._finish(ticket)
                 self._queue.task_done()
 
     async def close(self):

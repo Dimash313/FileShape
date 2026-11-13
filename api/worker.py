@@ -15,6 +15,9 @@ def execute(request: dict) -> dict:
     if not work.is_dir():
         raise ValueError("Рабочая папка недоступна")
 
+    if operation == "validate_only":
+        validate_upload(work / ("source" + request["suffix"]), request["suffix"])
+        return {"ok": True}
     if operation == "single":
         source = work / ("source" + request["suffix"])
         validate_upload(source, request["suffix"])
