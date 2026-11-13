@@ -37,6 +37,7 @@ from api.campaign_owner import make_campaign_router
 from api.campaign_revocations import dispatch_campaign_revocations
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError, JobRegistry
 from api.job_runtime import JobRuntime
+from api.durable_jobs import DurableJobStore
 from api.usage_ledger import OperationQuotaExceeded, OperationConcurrencyExceeded
 from api.job_manager import JobManager, ManagerClosed, ManagerFull
 from api.observability import RequestTrace
@@ -779,11 +780,7 @@ async def conversion_job(user_id, uploads):
 
 @api.get("/api/v1/usage")
 async def usage_status(user_id: int = Depends(authenticated_user)):
-    """Owner-scoped persisted allowances, explicitly not active metering.
-
-    Do not expose these counts as an enforced balance until every conversion
-    admission path has been wired to reserve and settle operations.
-    """
+    """Owner-scoped persisted allowances from the processing quota ledger."""
     await enforce_rate_limit(user_id)
     if jobs is None or not hasattr(jobs, "usage_snapshot"):
         raise HTTPException(status_code=503, detail="Учёт операций временно недоступен")
@@ -794,7 +791,7 @@ async def usage_status(user_id: int = Depends(authenticated_user)):
         raise HTTPException(status_code=503, detail="Учёт операций временно недоступен") from None
     return JSONResponse({
         **snapshot,
-        "enforced": False,
+        "enforced": job_runtime is not None and isinstance(jobs, DurableJobStore),
         "purchases_enabled": False,
     }, headers={"Cache-Control": "no-store"})
 
