@@ -49,6 +49,28 @@ Send a file in a **private chat** with the bot; the bot shows actions appropriat
 - The bot has no database or persistent user-file storage.
 - The bot uses basic in-process concurrency limits; it needs deployment-level resource limits and isolation before public launch.
 
+## FileShape 4.13 — advertising campaign ledger (CI validation required)
+
+The private API-owned SQLite store now has an **owner-only advertising
+campaign ledger** with two explicit completion modes: scheduled duration and
+target number of confirmed joins, always bounded by a maximum end time.
+Campaigns are created as drafts, receive a unique Telegram private invite
+link, and can be started, paused, resumed, stopped or completed. State
+transitions and owner changes are audited. Replayed join events for the same
+campaign/user are counted once, and different campaigns never share their
+counts. Event storage uses keyed user digests rather than raw Telegram IDs.
+
+**Important: storage and lifecycle only.** The Telegram `chat_member`
+adapter, bot-generated invite-link creation/revocation, owner admin UI,
+background expiry scheduler, and real advertiser analytics are **not wired
+yet**. Therefore no production campaign is running, no real joins are being
+recorded and no subscriber count is being advertised. The internal
+`record_confirmed_join` method must only be called after verifying a real
+Telegram join event and matching its exact bot-generated invite link.
+Successful membership checks are not join events, and Telegram does not
+provide reliable invite-link click counts. Do not accept client-supplied
+membership or raw user IDs as trusted event evidence.
+
 ## FileShape 4.12 — bot/API access bridge (CI validation required)
 
 Docker Compose now configures the Telegram bot to call the **internal** API endpoint
