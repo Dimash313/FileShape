@@ -29,6 +29,19 @@ const nav: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: 'history', label: 'История', icon: Clock3 },
   { tab: 'profile', label: 'Профиль', icon: UserRound },
 ];
+const jobStateLabels: Record<string, string> = {
+  queued: 'в очереди',
+  processing: 'обрабатывается',
+  completed: 'готово',
+  failed: 'ошибка',
+  cancelled: 'отменено',
+};
+const pageKickers: Record<Tab, string> = {
+  home: 'ФАЙЛЫ И КОНВЕРТАЦИЯ',
+  tools: 'КАТАЛОГ ИНСТРУМЕНТОВ',
+  history: 'ПОСЛЕДНИЕ ДЕЙСТВИЯ',
+  profile: 'ПАРАМЕТРЫ И ПРИВАТНОСТЬ',
+};
 const formats: { value: ImageFormat; label: string }[] = [
   { value: 'image/jpeg', label: 'JPG' },
   { value: 'image/png', label: 'PNG' },
@@ -377,6 +390,7 @@ export default function App() {
   const title = tab === 'home' ? 'Работа с файлами' : tab === 'tools' ? 'Все инструменты' : tab === 'history' ? 'История' : 'Профиль';
 
   return <div className="app-shell">
+    <a className="skip-link" href="#main-content">Перейти к содержимому</a>
     <input ref={inputRef} className="visually-hidden" type="file" onChange={e => acceptFile(e.target.files?.[0])} />
     <input ref={batchInputRef} className="visually-hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
       onChange={e => chooseBatch(Array.from(e.target.files ?? []))} />
@@ -387,9 +401,9 @@ export default function App() {
       </div>
       <button className="icon-button" type="button" aria-label="Профиль" onClick={() => setTab('profile')}><Settings2 size={20} /></button>
     </header>
-    <main>
-      <div className="page-kicker">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      <h1>{title}<span className="blue-dot">.</span></h1>
+    <main id="main-content" tabIndex={-1}>
+      <div className="page-kicker">{pageKickers[tab]}</div>
+      <h1 id="screen-title">{title}<span className="blue-dot">.</span></h1>
       {(tab === 'home' || tab === 'history') && <BackgroundJobsPanel jobs={background} busy={busy} />}
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
@@ -441,7 +455,7 @@ export default function App() {
           {kind === 'image' ? <div className="convert-panel">
             <div className="panel-title"><Sparkles size={17}/> Быстрая конвертация</div>
             <p>Выберите формат для сохранения изображения на устройство.</p>
-            <div className="format-options">{formats.map(item => <button type="button" key={item.value} className={`format-chip ${format === item.value ? 'active' : ''}`} onClick={() => setFormat(item.value)}>{item.label}</button>)}</div>
+            <div className="format-options">{formats.map(item => <button type="button" key={item.value} className={`format-chip ${format === item.value ? 'active' : ''}`} aria-pressed={format === item.value} disabled={busy} onClick={() => setFormat(item.value)}>{item.label}</button>)}</div>
             <button className="primary-button full" disabled={busy} onClick={convert}>{busy ? 'Обрабатываю…' : 'Конвертировать'} <ArrowDownToLine size={17}/></button>
           </div> : null}
           {serverActions.length > 0 ? <div className="convert-panel server-panel">
@@ -510,15 +524,15 @@ export default function App() {
         </section>}
         {progress && <ProgressIndicator progress={progress} />}
         <div className="section-head tools-head"><h2>Быстрые инструменты</h2><button className="text-button" onClick={() => setTab('tools')}>Все <ChevronRight size={17}/></button></div>
-        <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.title} onClick={() => { if (tool.title === 'Сканер') { setTab('tools'); setNotice('Сканер появится позже.'); } else if (tool.title === 'Пакетно') showBatch(); else pick(); }}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
+        <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.title} disabled={busy} onClick={() => { if (tool.title === 'Сканер') { setTab('tools'); setNotice('Сканер появится позже.'); } else if (tool.title === 'Пакетно') showBatch(); else pick(); }}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span><small>{tool.subtitle}</small></button>)}</div>
       </>}
-      {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
-      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + item.jobState : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
+      {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} disabled={busy} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
+      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + (jobStateLabels[item.jobState] ?? item.jobState) : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
       {tab === 'profile' && <>
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.5</span></div>
+          <div><strong>FileShape Studio</strong><span>Предварительная версия 4.6</span></div>
         </div>
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">
@@ -542,6 +556,6 @@ export default function App() {
       </>}
       {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
     </main>
-    <footer className="bottom-nav">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</footer>
+    <nav className="bottom-nav" aria-label="Основные разделы">{nav.map(item => <button type="button" key={item.tab} className={`nav-item ${tab === item.tab ? 'active' : ''}`} aria-current={tab === item.tab ? 'page' : undefined} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</nav>
   </div>;
 }
