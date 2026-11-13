@@ -287,6 +287,39 @@ class CampaignMixin:
             raise
 
     @serialized
+    def list_campaigns(self, *, actor_id, owner_id, limit=20, offset=0):
+        """Owner-only bounded overview; never expose member digests or user IDs.
+
+        Stable newest-first order supports mobile pagination and review.
+        """
+        self._campaign_owner(actor_id, owner_id)
+        if type(limit) is not int or not 1 <= limit <= 30:
+            raise ValueError("Invalid campaign limit")
+        if type(offset) is not int or not 0 <= offset <= 10000:
+            raise ValueError("Invalid campaign offset")
+        total = self._db.execute("SELECT COUNT(*) FROM ad_campaigns").fetchone()[0]
+        rows = self._db.execute("""
+            SELECT c.campaign_id,c.chat_id,c.mode,c.target_joins,
+                   c.starts_at,c.ends_at,c.state,c.confirmed_joins,
+                   c.invite_link,c.created_at,
+                   CASE WHEN c.invite_link IS NULL THEN 'not_applicable'
+                        WHEN r.state IS NOT NULL THEN r.state
+                        WHEN c.state IN ('stopped','completed') THEN 'pending'
+                        ELSE 'not_due' END,
+                   COALESCE(r.attempts,0),r.revoked_at
+            FROM ad_campaigns AS c
+            LEFT JOIN ad_campaign_revocations AS r ON r.campaign_id=c.campaign_id
+            ORDER BY c.created_at DESC,c.campaign_id DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        keys = (
+            "campaign_id","chat_id","mode","target_joins","starts_at",
+            "ends_at","state","confirmed_joins","invite_link","created_at",
+            "invite_revocation","revoke_attempts","revoked_at",
+        )
+        return {"items": [dict(zip(keys, row)) for row in rows], "total": total}
+
+    @serialized
     def campaign_snapshot(self, *, actor_id, owner_id, campaign_id):
         self._campaign_owner(actor_id, owner_id)
         self._campaign_id(campaign_id)
