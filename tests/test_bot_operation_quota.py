@@ -176,6 +176,16 @@ class BotOperationApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(limited.exception.status_code, 429)
         self.assertEqual(self.store.usage_snapshot(OWNER)["daily_remaining"], 0)
 
+    async def test_rate_limit_blocks_bot_admission_without_charging(self):
+        with patch.object(
+            server, "enforce_rate_limit", new_callable=AsyncMock,
+            side_effect=HTTPException(status_code=429, detail="rate limited"),
+        ):
+            result = await self.reserve(secrets.token_hex(16))
+        self.assertEqual(result.status_code, 429)
+        self.assertEqual(self.store.usage_snapshot(OWNER)["daily_used"], 0)
+        self.assertEqual(self.store._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+
     async def test_scope_tamper_unsigned_and_bounded_body(self):
         request_id = secrets.token_hex(16)
         route = "/internal/v1/operations/reserve"
