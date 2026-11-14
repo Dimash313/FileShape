@@ -1,6 +1,6 @@
 """Authoritative Telegram transaction-history recovery for lost Stars updates."""
 from types import SimpleNamespace as S
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import unittest
 
 from aiogram.types import StarTransaction, TransactionPartnerUser, User
@@ -84,6 +84,12 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     def test_unix_time_rejects_invalid_or_naive_datetimes(self):
         self.assertEqual(_unix_time(datetime.fromtimestamp(NOW, tz=timezone.utc)), NOW)
+        # The same transaction instant viewed from Kazakhstan (UTC+5)
+        # must not shift the billed/payment day.
+        self.assertEqual(
+            _unix_time(datetime.fromtimestamp(NOW, tz=timezone(timedelta(hours=5)))),
+            NOW,
+        )
         self.assertEqual(_unix_time(NOW), NOW)
         for invalid in (True, 0, float("nan"), "1800000000", datetime(2026, 11, 14)):
             with self.subTest(invalid=invalid):
