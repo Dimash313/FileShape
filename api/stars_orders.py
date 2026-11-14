@@ -73,6 +73,12 @@ def initialize_stars_order_tables(db):
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_owner ON stars_orders(owner_id,created_at DESC)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_status ON stars_orders(status,created_at)")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS stars_pack_debts (
+            owner_id INTEGER PRIMARY KEY CHECK (owner_id > 0),
+            debt INTEGER NOT NULL CHECK (debt >= 0)
+        )
+    """)
 
 
 def _public(row):
@@ -179,6 +185,179 @@ class StarsOrderMixin:
                     created = True
                 self._db.execute("COMMIT")
                 return {"order_id": order_id, "sku": row[0], "status": "verified" if created else row[3]}, created
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
+    def fulfill_stars_order(self, owner_id: int, order_id: str, *, now=None):
+        """Exactly-once fulfilment in the *same* SQLite write as the order state.
+
+        Called exclusively by a trusted successful_payment bridge, never from
+        pre_checkout_query or an untrusted Mini App callback.
+        """
+        self._validate_owner(owner_id)
+        _order_id(order_id)
+        now = _time(now)
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    """SELECT sku,status,telegram_charge_id
+                       FROM stars_orders WHERE order_id=? AND owner_id=?""",
+                    (order_id, owner_id),
+                ).fetchone()
+                if row is None or row[1] not in ("verified", "fulfilled") or not row[2]:
+                    raise ValueError("Order not verified by Telegram")
+                sku, status, charge_id = row
+                if status == "fulfilled":
+                    self._db.execute("COMMIT")
+                    return {"order_id": order_id, "sku": sku, "status": "fulfilled"}, False
+                product = PRODUCTS[sku]
+                grant_key = "stars:order:" + order_id
+                if sku == "pro_30d":
+                    if self._db.execute(
+                        "SELECT 1 FROM premium_grants WHERE grant_key=?", (grant_key,)
+                    ).fetchone():
+                        raise ValueError("Unexpected duplicate premium grant")
+                    existing = self._db.execute(
+                        "SELECT expires_at FROM premium_entitlements WHERE owner_id=?",
+                        (owner_id,),
+                    ).fetchone()
+                    base = max(now, float(existing[0])) if existing else now
+                    expiry = base + product["duration_seconds"]
+                    self._db.execute(
+                        """INSERT INTO premium_entitlements(owner_id,expires_at) VALUES(?,?)
+                           ON CONFLICT(owner_id) DO UPDATE SET expires_at=excluded.expires_at""",
+                        (owner_id, expiry),
+                    )
+                    self._db.execute(
+                        """INSERT INTO premium_grants(grant_key,owner_id,seconds,granted_at,resulting_expiry)
+                           VALUES(?,?,?,?,?)""",
+                        (grant_key, owner_id, product["duration_seconds"], now, expiry),
+                    )
+                else:
+                    if self._db.execute(
+                        "SELECT 1 FROM operation_pack_grants WHERE grant_key=?", (grant_key,)
+                    ).fetchone():
+                        raise ValueError("Unexpected duplicate operation grant")
+                    count = product["operations"]
+                    current = self._db.execute(
+                        "SELECT balance FROM operation_pack_balances WHERE owner_id=?",
+                        (owner_id,),
+                    ).fetchone()
+                    balance = int(current[0]) if current else 0
+                    outstanding = self._db.execute(
+                        """SELECT COUNT(*) FROM operation_usage
+                           WHERE owner_id=? AND source='pack' AND status='reserved'""",
+                        (owner_id,),
+                    ).fetchone()[0]
+                    debts = self._db.execute(
+                        "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (owner_id,)
+                    ).fetchone()
+                    debt = int(debts[0]) if debts else 0
+                    covered = min(count, debt)
+                    debt -= covered
+                    balance += count - covered
+                    if balance + outstanding > 10000:
+                        raise ValueError("Pack balance limit with outstanding refunds")
+                    self._db.execute(
+                        """INSERT INTO stars_pack_debts(owner_id,debt) VALUES(?,?)
+                           ON CONFLICT(owner_id) DO UPDATE SET debt=excluded.debt""",
+                        (owner_id, debt),
+                    )
+                    self._db.execute(
+                        """INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)
+                           ON CONFLICT(owner_id) DO UPDATE SET balance=excluded.balance""",
+                        (owner_id, balance),
+                    )
+                    self._db.execute(
+                        """INSERT INTO operation_pack_grants
+                           (grant_key,owner_id,operations,granted_at,resulting_balance)
+                           VALUES(?,?,?,?,?)""",
+                        (grant_key, owner_id, count, now, balance),
+                    )
+                changed = self._db.execute(
+                    """UPDATE stars_orders SET status='fulfilled',fulfilled_at=?
+                       WHERE owner_id=? AND order_id=? AND status='verified'""",
+                    (now, owner_id, order_id),
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("Stars fulfillment state conflict")
+                self._db.execute("COMMIT")
+                return {"order_id": order_id, "sku": sku, "status": "fulfilled"}, True
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
+    def mark_stars_refunded(self, owner_id: int, charge_id: str, *, now=None):
+        """Apply a verified Telegram refund *after* Telegram reports success.
+
+        Unspent pack credit is revoked; the remainder becomes non-spendable
+        debt, deducted from future pack grants/pack-job refunds. For Pro,
+        retract up to the duration from any remaining entitlement time.
+        A failed refund API call must never invoke this method.
+        """
+        self._validate_owner(owner_id)
+        _charge(charge_id)
+        now = _time(now)
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    """SELECT order_id,sku,status FROM stars_orders
+                       WHERE owner_id=? AND telegram_charge_id=?""",
+                    (owner_id, charge_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("Unknown payment charge")
+                order_id, sku, status = row
+                if status == "refunded":
+                    self._db.execute("COMMIT")
+                    return {"order_id": order_id, "sku": sku, "status": "refunded"}, False
+                if status not in ("verified", "fulfilled"):
+                    raise ValueError("Refund order not verified")
+                if status == "fulfilled":
+                    product = PRODUCTS[sku]
+                    if sku == "pro_30d":
+                        current = self._db.execute(
+                            "SELECT expires_at FROM premium_entitlements WHERE owner_id=?",
+                            (owner_id,),
+                        ).fetchone()
+                        if current is None:
+                            raise ValueError("Missing granted premium entitlement")
+                        expiry = max(now, float(current[0]) - product["duration_seconds"])
+                        self._db.execute(
+                            "UPDATE premium_entitlements SET expires_at=? WHERE owner_id=?",
+                            (expiry, owner_id),
+                        )
+                    else:
+                        available = self._db.execute(
+                            "SELECT balance FROM operation_pack_balances WHERE owner_id=?",
+                            (owner_id,),
+                        ).fetchone()
+                        balance = int(available[0]) if available else 0
+                        count = product["operations"]
+                        remaining = max(0, balance - count)
+                        unrecouped = max(0, count - balance)
+                        self._db.execute(
+                            """INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)
+                               ON CONFLICT(owner_id) DO UPDATE SET balance=excluded.balance""",
+                            (owner_id, remaining),
+                        )
+                        self._db.execute(
+                            """INSERT INTO stars_pack_debts(owner_id,debt) VALUES(?,?)
+                               ON CONFLICT(owner_id) DO UPDATE SET debt=debt+excluded.debt""",
+                            (owner_id, unrecouped),
+                        )
+                changed = self._db.execute(
+                    """UPDATE stars_orders SET status='refunded',refunded_at=?
+                       WHERE order_id=? AND owner_id=? AND status=?""",
+                    (now, order_id, owner_id, status),
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("Stars refund state conflict")
+                self._db.execute("COMMIT")
+                return {"order_id": order_id, "sku": sku, "status": "refunded"}, True
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
