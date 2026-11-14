@@ -64,7 +64,7 @@ async def _call(user_id: int, token: str, action: str, fields: dict, *, checkout
         try:
             async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as session:
                 async with session.post(
-                    url + "/" + action, json=fields, headers=headers,
+                    url + "/" + ("refund-confirm" if action == "refund" else action), json=fields, headers=headers,
                     allow_redirects=False,
                 ) as response:
                     if response.status != 200:
@@ -127,7 +127,7 @@ async def confirm_stars_payment(user_id: int, token: str, order_id: str,
 async def confirm_stars_refund(user_id: int, token: str, charge_id: str) -> dict:
     """Call only after the official refundStarPayment method returns success."""
     result = await _call(
-        user_id, token, "refund-confirm", {"charge_id": charge_id},
+        user_id, token, "refund", {"charge_id": charge_id},
     )
     if result.get("status") != "refunded" or type(result.get("changed")) is not bool:
         raise StarsBridgeUnavailable("Stars refund not reconciled")
