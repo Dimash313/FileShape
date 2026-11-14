@@ -71,7 +71,7 @@ class StarsApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.store._db.execute("SELECT COUNT(*) FROM stars_orders").fetchone()[0], 0)
 
     async def test_quote_check_confirmation_and_replayed_receipt(self):
-        with patch.dict(os.environ, {"FILESHAPE_STARS_CHECKOUT_ENABLED": "true"}):
+        with patch.dict(os.environ, {"FILESHAPE_STARS_CHECKOUT_ENABLED": "true", "FILESHAPE_SUPPORT_USERNAME": "FileShapeHelp"}):
             quote = await self.post("quote", {"sku": "pack_10"})
             self.assertEqual(quote.status_code, 200, quote.text)
             order = quote.json()
