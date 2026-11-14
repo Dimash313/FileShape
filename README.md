@@ -1,5 +1,7 @@
 # FileShape
 
+> **For AI agents and contributors:** Read [AGENTS.md](AGENTS.md) before changing any code, design, dependencies, advertising, or monetization. The owner requires halal-only development and review of doubtful features.
+
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
 ## FileShape 4.23 — enforced quota across API, Mini App and bot (PR in review)
