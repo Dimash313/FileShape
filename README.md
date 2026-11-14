@@ -28,8 +28,10 @@ a bounded reconciliation pass safely retries the fulfillment.
 The bot also checks Telegram's authoritative getStarTransactions history
 on startup and every five minutes. It verifies incoming user invoice payments
 by Telegram charge ID, buyer ID, exact invoice payload and Stars amount,
-and reconciles outgoing invoice refunds. It forwards only scoped signed
-assertions; it never touches the API-owned SQLite. A bounded 30-day,
+and reconciles outgoing invoice refunds. When both directions for a
+matching charge are visible, the API atomically records the full refund
+without granting any interim Pro or pack credit. It forwards only scoped
+signed assertions; it never touches the API-owned SQLite. A bounded 30-day,
 up-to-1000-transaction scan and in-memory duplicate suppression reduce
 repeated processing. The full history may be larger or older than this
 window: truncated scans and failed API confirmations are **logged as
