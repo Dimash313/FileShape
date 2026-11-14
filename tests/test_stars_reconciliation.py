@@ -266,6 +266,52 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["complete"])
         receipt.assert_not_awaited()
 
+    async def test_truncated_history_never_grants_when_refund_may_be_unseen(self):
+        # A payment appears on the first page; its refund might be on the
+        # next page, beyond this bounded scan. Do not grant prematurely.
+        paid = transaction(charge="unseen_refund_risk")
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[paid] + [
+                transaction(kind="paid_media_payment", charge=f"filler_{i}")
+                for i in range(99)
+            ],
+        )
+        with patch(
+            "services.stars_reconciliation.confirm_stars_payment",
+            new_callable=AsyncMock,
+        ) as grant:
+            result = await reconcile_star_transactions(
+                self.bot, now=NOW, max_pages=1,
+            )
+        grant.assert_not_awaited()
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(result["confirmed"], 0)
+
+    async def test_truncated_history_can_still_reconcile_verified_refunds(self):
+        returned = transaction(charge="refund_on_first_page", refund=True, amount=-19)
+        returned.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[returned] + [
+                transaction(kind="paid_media_payment", charge=f"filler_{i}")
+                for i in range(99)
+            ],
+        )
+        with (
+            patch("services.stars_reconciliation.confirm_stars_refund",
+                  new_callable=AsyncMock, return_value={"status": "refunded"}) as refund,
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as grant,
+        ):
+            result = await reconcile_star_transactions(self.bot, now=NOW, max_pages=1)
+        refund.assert_awaited_once_with(
+            OWNER, self.bot.token, "refund_on_first_page",
+        )
+        grant.assert_not_awaited()
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["refunded"], 1)
+
     async def test_invalid_bot_api_response_fails_closed(self):
         self.bot.get_star_transactions.return_value = S(transactions=None)
         with self.assertRaises(StarsBridgeUnavailable):
