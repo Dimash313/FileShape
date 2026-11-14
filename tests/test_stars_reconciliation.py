@@ -52,6 +52,23 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_incoming_invoice(entry),
                          (OWNER, ORDER, 19, "real_aiogram_charge", NOW - 10))
 
+    def test_real_telegram_json_date_is_converted_by_aiogram_pydantic(self):
+        entry = StarTransaction.model_validate({
+            "id": "wire_telegram_charge",
+            "amount": 19,
+            "date": NOW - 10,
+            "source": {
+                "type": "user", "transaction_type": "invoice_payment",
+                "user": {"id": OWNER, "is_bot": False, "first_name": "Test buyer"},
+                "invoice_payload": "fileshape:" + ORDER,
+            },
+        })
+        self.assertIsInstance(entry.date, datetime)
+        self.assertEqual(
+            _incoming_invoice(entry),
+            (OWNER, ORDER, 19, "wire_telegram_charge", NOW - 10),
+        )
+
     def test_actual_aiogram_model_datetime_is_parsed_for_refund(self):
         date = datetime.fromtimestamp(NOW - 10, tz=timezone.utc)
         partner = TransactionPartnerUser(
