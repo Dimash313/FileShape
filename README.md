@@ -1,5 +1,20 @@
 # FileShape
 
+## FileShape 4.25b — Telegram bot profile (PR in review)
+
+The Telegram bot's `/profile` and Profile menu use a signed, scoped,
+replay-guarded internal usage request to the **API-owned** quota ledger.
+Only the sender's verified private-chat user ID is queried. The bot validates
+Free/Pro tier, UTC day, daily counts, pack balance and Pro expiration before
+displaying them. Unavailable or malformed responses hide the balance instead
+of inventing values; no local cache or bot SQLite access is used.
+
+This is a code review milestone, **not a deployment or payment launch**.
+Telegram Stars checkout, invoices, purchase history and purchases remain
+disabled until 4.24 is verified and merged. The existing 20 MiB file limit
+still applies.
+
+
 > **For AI agents and contributors:** Read [AGENTS.md](AGENTS.md) before changing any code, design, dependencies, advertising, or monetization. The owner requires halal-only development and review of doubtful features.
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
