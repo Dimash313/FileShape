@@ -83,3 +83,20 @@ trusted local paths. Do not advertise distributed worker support until
 storage authorization, durable admission, lease fencing and transactional
 settlement have been implemented and tested. Multi-file jobs require an
 explicit separate contract.
+
+
+## Phase C0 — opt-in metered outbox prototype (review only)
+
+The separate DurableDispatchStore in api/durable_dispatch.py exercises
+single-transaction admission (hashed idempotency + existing quota ledger +
+path-free job envelope), SQLite lease acquisition/retry, stale-lease fencing,
+owner cancellation, terminal settlement and expired-lease refunds.
+
+Contract tests cover multiple SQLite connections and reopens. See
+[DURABLE_DISPATCH.md](DURABLE_DISPATCH.md) for the required production gates.
+
+**No existing route or runtime has been switched.** The current startup
+recovery deliberately fails local interrupted jobs and would conflict with
+resuming a durable outbox. A future activation PR must redesign restart
+recovery, authenticated input staging and fenced artifact publishing, then
+prove charge consistency under process crash and duplicate delivery.
