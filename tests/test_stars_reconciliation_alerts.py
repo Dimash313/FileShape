@@ -52,6 +52,31 @@ class OwnerReconciliationAlertsTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await alert.send(bot, "x" * 401, now=5000))
         bot.send_message.assert_awaited_once_with(chat_id=OWNER, text="billing warning")
 
+    async def test_history_scan_timeout_notifies_operator_and_never_hangs(self):
+        import asyncio
+
+        bot = self.bot()
+        started = asyncio.Event()
+
+        async def hangs(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        with (
+            self.env(),
+            patch("services.stars_reconciliation.MAX_SCAN_WALL_SECONDS", 0.01),
+            patch("services.stars_reconciliation.reconcile_star_transactions",
+                  side_effect=hangs),
+            patch("services.stars_reconciliation.asyncio.sleep",
+                  new_callable=AsyncMock, side_effect=asyncio.CancelledError()),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await star_reconciliation_loop(bot)
+        self.assertTrue(started.is_set())
+        bot.send_message.assert_awaited_once()
+        self.assertIn("история Telegram недоступна",
+                      bot.send_message.call_args.kwargs["text"])
+
     async def test_incomplete_scan_triggers_owner_notification(self):
         bot = self.bot()
         outcome = {
