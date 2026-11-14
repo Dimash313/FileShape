@@ -13,7 +13,7 @@ import re
 import time
 
 from services.stars_bridge import (
-    StarsBridgeUnavailable, confirm_stars_payment,
+    StarsBridgeUnavailable, confirm_stars_payment, confirm_stars_refund,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,37 @@ def _incoming_invoice(transaction):
     return buyer, payload[len("fileshape:"):], amount, charge, date
 
 
+def _outgoing_invoice_refund(transaction):
+    """Extract an authoritative outgoing Telegram refund, never a user claim.
+
+    Refunds reuse their original incoming charge ID. Ledger reconciliation
+    additionally requires that the exact charge belongs to this buyer.
+    """
+    partner = getattr(transaction, "receiver", None)
+    if (partner is None or getattr(partner, "type", None) != "user"
+            or getattr(partner, "transaction_type", None) not in (None, "invoice_payment")
+            or getattr(transaction, "source", None) is not None):
+        return None
+    buyer = getattr(getattr(partner, "user", None), "id", None)
+    charge = getattr(transaction, "id", None)
+    amount = getattr(transaction, "amount", None)
+    date = getattr(transaction, "date", None)
+    invoice_payload = getattr(partner, "invoice_payload", None)
+    if (
+        type(buyer) is not int or not 0 < buyer <= 2**63 - 1
+        or type(amount) is not int or amount >= 0
+        or type(date) is not int or date <= 0
+        or not isinstance(charge, str) or not 1 <= len(charge) <= 256
+        or not charge.isascii()
+        or (invoice_payload is not None and (
+            not isinstance(invoice_payload, str)
+            or _PAYLOAD.fullmatch(invoice_payload) is None
+        ))
+    ):
+        return None
+    return buyer, charge, date
+
+
 async def reconcile_star_transactions(
     bot, *, now=None, lookback_seconds=HISTORY_LOOKBACK_SECONDS,
     max_pages=MAX_HISTORY_PAGES,
@@ -71,7 +102,7 @@ async def reconcile_star_transactions(
             or type(max_pages) is not int or not 1 <= max_pages <= 20):
         raise ValueError("Invalid reconciliation bounds")
     start = now - lookback_seconds
-    scanned = matched = delivered = failed = 0
+    scanned = matched = delivered = failed = refunded = refund_failed = 0
     complete = False
     # Iterate all pages even when data appears old: Telegram documents
     # chronological order, but we cannot assume sort direction.
@@ -89,26 +120,38 @@ async def reconcile_star_transactions(
         scanned += len(transactions)
         for transaction in transactions:
             invoice = _incoming_invoice(transaction)
-            if invoice is None:
+            if invoice is not None:
+                owner, order_id, amount, charge_id, paid_at = invoice
+                if paid_at < start or paid_at > now + 120:
+                    continue
+                matched += 1
+                try:
+                    await confirm_stars_payment(owner, bot.token, order_id,
+                                                amount, "XTR", charge_id)
+                except StarsBridgeUnavailable:
+                    failed += 1
+                    # API grants are replay-safe even when the bot lost the reply.
+                else:
+                    delivered += 1
                 continue
-            owner, order_id, amount, charge_id, paid_at = invoice
-            if paid_at < start or paid_at > now + 120:
-                continue
-            matched += 1
-            try:
-                await confirm_stars_payment(owner, bot.token, order_id,
-                                            amount, "XTR", charge_id)
-            except StarsBridgeUnavailable:
-                failed += 1
-                # Retries are safe: API records each Telegram charge exactly once.
-            else:
-                delivered += 1
+            refund = _outgoing_invoice_refund(transaction)
+            if refund is not None:
+                owner, charge_id, refunded_at = refund
+                if refunded_at < start or refunded_at > now + 120:
+                    continue
+                try:
+                    await confirm_stars_refund(owner, bot.token, charge_id)
+                except StarsBridgeUnavailable:
+                    refund_failed += 1
+                else:
+                    refunded += 1
         if len(transactions) < _HISTORY_PAGE_SIZE:
             complete = True
             break
     return {
         "scanned": scanned, "matched": matched,
         "confirmed": delivered, "failed": failed,
+        "refunded": refunded, "refund_failed": refund_failed,
         "complete": complete,
     }
 
@@ -118,10 +161,10 @@ async def star_reconciliation_loop(bot):
     while True:
         try:
             result = await reconcile_star_transactions(bot)
-            if not result["complete"] or result["failed"]:
+            if not result["complete"] or result["failed"] or result["refund_failed"]:
                 logger.error(
-                    "Stars reconciliation incomplete: scanned=%d matching=%d failed=%d",
-                    result["scanned"], result["matched"], result["failed"],
+                    "Stars reconciliation incomplete: scanned=%d matching=%d paid_failed=%d refund_failed=%d",
+                    result["scanned"], result["matched"], result["failed"], result["refund_failed"],
                 )
         except asyncio.CancelledError:
             raise
