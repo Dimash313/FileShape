@@ -85,8 +85,9 @@ minimum_age_seconds=300, scan_limit=1000, delete_limit=100).
   are eligible. It skips live metadata, fresh files, unexpected names,
   directories, symlinks, hardlinked files and unsafe ownership/permissions.
   It also verifies that the private root has not been replaced since open.
-- Age is assessed using filesystem modification time, with an explicit
-  300-second default grace period. Sweep is bounded by both scan and delete
+- Age is assessed using filesystem modification time, with a mandatory
+  60-second minimum grace and a 300-second default. Zero-age sweeps are
+  intentionally rejected to avoid accidental immediate deletion. Sweep is bounded by both scan and delete
   limits; repeat calls are needed for a large backlog.
 - Reports aggregate counts only (scanned, removed, preserved_live,
   skipped_young, skipped_unsafe), never filenames or user data.
