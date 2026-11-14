@@ -122,6 +122,12 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         other.receiver.transaction_type = "invoice_payment"
         other.receiver.invoice_payload = "other-product"
         self.assertIsNone(_outgoing_invoice_refund(other))
+        fractional = transaction(refund=True, amount=-19, nanostars=1)
+        fractional.receiver.transaction_type = "invoice_payment"
+        self.assertIsNone(_outgoing_invoice_refund(fractional))
+        negative_fraction = transaction(refund=True, amount=-19, nanostars=-1)
+        negative_fraction.receiver.transaction_type = "invoice_payment"
+        self.assertIsNone(_outgoing_invoice_refund(negative_fraction))
 
     async def test_multi_page_recovery_uses_offset_and_no_sort_direction_guess(self):
         transactions = [
@@ -311,6 +317,26 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         grant.assert_not_awaited()
         self.assertFalse(result["complete"])
         self.assertEqual(result["refunded"], 1)
+
+    async def test_fractional_refund_record_blocks_new_entitlement(self):
+        paid = transaction(charge="fractional_refund_seen")
+        unusual = transaction(
+            refund=True, charge="fractional_refund_seen",
+            amount=-19, nanostars=-1,
+        )
+        unusual.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(transactions=[paid, unusual])
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as grant,
+            patch("services.stars_reconciliation.confirm_stars_refund",
+                  new_callable=AsyncMock) as refund,
+        ):
+            result = await reconcile_star_transactions(self.bot, now=NOW)
+        grant.assert_not_awaited()
+        refund.assert_not_awaited()
+        self.assertEqual(result["confirmed"], 0)
+        self.assertEqual(result["failed"], 1)
 
     async def test_duplicate_charge_with_conflicting_invoices_never_grants(self):
         first = transaction(charge="collision_charge", amount=19)
