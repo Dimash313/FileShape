@@ -18,6 +18,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
     WebAppInfo,
+    LabeledPrice,
+    PreCheckoutQuery,
 )
 
 from config import get_settings
@@ -27,6 +29,10 @@ from services.bot_operations import (
     reserve_bot_operation, settle_bot_operation,
 )
 from services.campaign_bridge import forward_campaign_join
+from services.stars_bridge import (
+    StarsBridgeUnavailable, checkout_enabled, create_stars_quote,
+    approve_stars_checkout, confirm_stars_payment,
+)
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
@@ -129,6 +135,23 @@ def navigation_keyboard() -> InlineKeyboardMarkup:
 
 def back_keyboard() -> InlineKeyboardMarkup:
     return buttons([[("🧰 Все инструменты", "nav:tools"), ("🏠 Главное меню", "nav:home")]])
+
+
+STARS_SKUS = {
+    "pro_30d": ("FileShape Pro · 30 дней", "До 100 операций в сутки UTC", 149),
+    "pack_10": ("10 операций FileShape", "Дополнительные операции без срока действия", 19),
+    "pack_30": ("30 операций FileShape", "Дополнительные операции без срока действия", 49),
+}
+
+
+def plans_keyboard() -> InlineKeyboardMarkup:
+    if not checkout_enabled():
+        return back_keyboard()
+    return buttons([
+        [("💎 Pro · 149 ⭐", "buy:pro_30d")],
+        [("10 операций · 19 ⭐", "buy:pack_10"), ("30 операций · 49 ⭐", "buy:pack_30")],
+        [("🏠 Главное меню", "nav:home")],
+    ])
 
 
 def file_menu(kind: str) -> InlineKeyboardMarkup:
@@ -328,7 +351,7 @@ async def plans_message(message: Message):
         "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\\n"
         "Покупка Pro и пакетов через Telegram Stars пока недоступна. "
         "Лимит размера файла сейчас — 20 МБ.",
-        reply_markup=back_keyboard(),
+        reply_markup=plans_keyboard(),
     )
 
 
@@ -358,8 +381,9 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
     elif section == "plans":
         text = ("💎 Тарифы FileShape\\n\\n"
                 "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке. "
-                "Оплата Telegram Stars и покупка пакетов пока недоступны.")
-        markup = back_keyboard()
+                "Оплата Telegram Stars и покупка пакетов пока недоступны." if not checkout_enabled()
+                else "Выбери тариф ниже. Оплата проходит через Telegram Stars.")
+        markup = plans_keyboard()
     elif section == "help":
         text = ("❔ Как пользоваться\\n\\n"
                 "1. Отправь PDF, изображение, аудио, DOCX, TXT или ZIP.\\n"
@@ -372,6 +396,100 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer()
     await callback.message.edit_text(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("buy:"))
+async def buy_stars_product(callback: CallbackQuery, bot: Bot):
+    """Only private, explicitly enabled, server-priced Stars invoices."""
+    if (
+        not isinstance(callback.message, Message)
+        or callback.message.chat.type != "private"
+        or callback.message.chat.id != callback.from_user.id
+    ):
+        await callback.answer("Открой личный чат с ботом.", show_alert=True)
+        return
+    sku = (callback.data or "").removeprefix("buy:")
+    if not checkout_enabled() or sku not in STARS_SKUS:
+        await callback.answer("Покупки временно недоступны.", show_alert=True)
+        return
+    await callback.answer()
+    try:
+        quote = await create_stars_quote(callback.from_user.id, bot.token, sku)
+    except StarsBridgeUnavailable:
+        await callback.message.answer("Не удалось подготовить счёт. Операция не оплачена.")
+        return
+    title, description, price = STARS_SKUS[sku]
+    if quote["amount"] != price:
+        logger.error("Unexpected Stars price for %s", sku)
+        await callback.message.answer("Тариф временно недоступен. Операция не оплачена.")
+        return
+    try:
+        await callback.message.answer_invoice(
+            title=title, description=description,
+            payload="fileshape:" + quote["order_id"],
+            currency="XTR", prices=[LabeledPrice(label=title, amount=price)],
+        )
+    except Exception:
+        logger.exception("FileShape invoice delivery failed")
+        await callback.message.answer("Не удалось отправить счёт. Операция не оплачена.")
+
+
+@router.pre_checkout_query()
+async def stars_precheckout(query: PreCheckoutQuery, bot: Bot):
+    """A positive pre-checkout response never grants access or a balance."""
+    payload = query.invoice_payload
+    order_id = payload.removeprefix("fileshape:") if payload.startswith("fileshape:") else ""
+    approved = False
+    if order_id and checkout_enabled():
+        try:
+            approved = await approve_stars_checkout(
+                query.from_user.id, bot.token,
+                order_id, query.total_amount, query.currency,
+            )
+        except StarsBridgeUnavailable:
+            logger.error("Stars pre-checkout verification unavailable")
+    await query.answer(
+        ok=approved,
+        error_message=None if approved else "Проверка заказа недоступна. Попробуй позже.",
+    )
+
+
+@router.message(F.successful_payment)
+async def stars_payment_received(message: Message, bot: Bot):
+    """Only the Telegram-delivered successful_payment event can grant paid value."""
+    payment = message.successful_payment
+    if (
+        payment is None or message.from_user is None
+        or message.chat.type != "private"
+        or message.chat.id != message.from_user.id
+    ):
+        logger.error("Unexpected Telegram Stars receipt context")
+        return
+    payload = payment.invoice_payload
+    order_id = payload.removeprefix("fileshape:") if payload.startswith("fileshape:") else ""
+    try:
+        result = await confirm_stars_payment(
+            message.from_user.id, bot.token, order_id, payment.total_amount,
+            payment.currency, payment.telegram_payment_charge_id,
+        )
+    except StarsBridgeUnavailable:
+        logger.error("Stars payment needs reconciliation; no false confirmation sent")
+        await message.answer(
+            "Платёж получен Telegram, но подтверждение доступа пока не завершено. "
+            "Сохрани чек и обратись в поддержку через /paysupport."
+        )
+        return
+    if result["status"] == "fulfilled":
+        await message.answer("✅ Покупка подтверждена. Доступ или пакет операций начислен.")
+
+
+@router.message(Command("paysupport"))
+async def stars_payment_support(message: Message):
+    await message.answer(
+        "Поддержка платежей FileShape. Если есть проблема с Stars, "
+        "сохрани чек Telegram и напиши владельцу бота через указанный "
+        "в профиле контакт поддержки. Не отправляй пароли или коды."
+    )
 
 
 @router.message(Command("cancel"))
@@ -816,7 +934,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
     try:
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member"])
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member", "pre_checkout_query"])
     finally:
         await bot.session.close()
 
