@@ -139,6 +139,50 @@ class StarsBotTests(unittest.IsolatedAsyncioTestCase):
         confirm.assert_awaited_once_with(OWNER, TOKEN, ORDER, 19, "XTR", CHARGE)
         self.assertIn("подтверждена", message.answer.call_args.args[0])
 
+    async def test_telegram_refund_service_event_reconciles_buyer_entitlement(self):
+        refund = SimpleNamespace(
+            invoice_payload="fileshape:" + ORDER, total_amount=19,
+            currency="XTR", telegram_payment_charge_id=CHARGE,
+        )
+        message = SimpleNamespace(refunded_payment=refund, chat=self.chat, answer=AsyncMock())
+        with patch.object(
+            main, "confirm_stars_refund", new_callable=AsyncMock,
+            return_value={"status": "refunded", "changed": True},
+        ) as reconcile:
+            await main.stars_refund_received(message, self.bot)
+        reconcile.assert_awaited_once_with(OWNER, TOKEN, CHARGE)
+        self.assertIn("Возврат", message.answer.call_args.args[0])
+
+    async def test_refund_unrelated_invoice_is_rejected_before_api_access(self):
+        for payload in ("not-fileshape", "fileshape:abc", "other:" + ORDER):
+            with self.subTest(payload=payload):
+                refund = SimpleNamespace(
+                    invoice_payload=payload, total_amount=19,
+                    currency="XTR", telegram_payment_charge_id=CHARGE,
+                )
+                message = SimpleNamespace(
+                    refunded_payment=refund, chat=self.chat, answer=AsyncMock(),
+                )
+                with patch.object(
+                    main, "confirm_stars_refund", new_callable=AsyncMock,
+                ) as bridge:
+                    await main.stars_refund_received(message, self.bot)
+                bridge.assert_not_awaited()
+                message.answer.assert_not_awaited()
+
+    async def test_telegram_refund_bridge_outage_does_not_falsely_acknowledge(self):
+        refund = SimpleNamespace(
+            invoice_payload="fileshape:" + ORDER, total_amount=19,
+            currency="XTR", telegram_payment_charge_id=CHARGE,
+        )
+        message = SimpleNamespace(refunded_payment=refund, chat=self.chat, answer=AsyncMock())
+        with patch.object(
+            main, "confirm_stars_refund", new_callable=AsyncMock,
+            side_effect=main.StarsBridgeUnavailable(),
+        ):
+            await main.stars_refund_received(message, self.bot)
+        message.answer.assert_not_awaited()
+
     async def test_payment_bridge_outage_does_not_pretend_to_fulfill(self):
         payment = SimpleNamespace(
             invoice_payload="fileshape:" + ORDER, currency="XTR",
