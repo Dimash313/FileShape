@@ -33,7 +33,7 @@ from services.campaign_bridge import forward_campaign_join
 from services.stars_reconciliation import star_reconciliation_loop
 from services.stars_bridge import (
     StarsBridgeUnavailable, checkout_enabled, create_stars_quote,
-    approve_stars_checkout, confirm_stars_payment,
+    approve_stars_checkout, confirm_stars_payment, confirm_stars_refund,
 )
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
@@ -484,6 +484,30 @@ async def stars_payment_received(message: Message, bot: Bot):
         return
     if result["status"] == "fulfilled":
         await message.answer("✅ Покупка подтверждена. Доступ или пакет операций начислен.")
+
+
+@router.message(F.refunded_payment)
+async def stars_refund_received(message: Message, bot: Bot):
+    """Revoke on Telegram's own refunded_payment service event, not user text."""
+    refunded = message.refunded_payment
+    if refunded is None or message.chat.type != "private" or message.chat.id <= 0:
+        return
+    payload = refunded.invoice_payload
+    order_id = payload.removeprefix("fileshape:") if isinstance(payload, str) and payload.startswith("fileshape:") else ""
+    if (len(order_id) != 32 or any(ch not in "0123456789abcdef" for ch in order_id)
+            or refunded.currency != "XTR"
+            or type(refunded.total_amount) is not int or refunded.total_amount <= 0):
+        logger.warning("Ignoring unexpected Telegram payment refund")
+        return
+    try:
+        result = await confirm_stars_refund(
+            message.chat.id, bot.token, refunded.telegram_payment_charge_id,
+        )
+    except StarsBridgeUnavailable:
+        logger.error("Telegram refund received; API reversal awaiting reconciliation")
+        return
+    if result["status"] == "refunded":
+        await message.answer("Возврат Stars подтверждён. Доступ и операции пересчитаны.")
 
 
 @router.message(Command("paysupport"))
