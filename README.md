@@ -15,7 +15,11 @@ XTR and +30 operations for 49 XTR. An order is user-scoped, immutable,
 and eligible for pre-checkout for 30 minutes. Only a signed API quote
 permits a single-price XTR invoice. The bot returns a bounded and signed
 pre-checkout approval within Telegram's ten-second window; this stage
-never grants value.
+never grants value. Before any positive pre-checkout reply, SQLite durably
+marks the invoice as **not safe to prune**. The quote cleanup process deletes
+only invoices that were never approved for checkout, while all legacy orders
+are protected by migration. This preserves invoices paid during a prolonged
+bot/API outage, even if Telegram's payment event is delayed.
 
 On Telegram's successful_payment message, the bot forwards invoice ID,
 user ID, amount, currency and global charge ID via a short-lived,
