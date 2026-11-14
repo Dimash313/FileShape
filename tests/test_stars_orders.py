@@ -144,6 +144,32 @@ class StarsOrdersTests(unittest.TestCase):
         self.assertEqual(self.store.stars_order(OWNER, order["order_id"])["status"], "pending")
 
 
+    def test_unpaid_quote_cap_and_private_expired_quote_pruning(self):
+        orders = [
+            self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+            for _ in range(5)
+        ]
+        with self.assertRaisesRegex(ValueError, "Too many active"):
+            self.store.create_stars_order(OWNER, "pack_10", now=NOW + 1)
+        # A verified payment is a financial record, not an expirable quote.
+        self.store.record_stars_payment(
+            OWNER, orders[0]["order_id"], "retained_charge", 19, "XTR", now=NOW + 1,
+        )
+        self.assertEqual(self.store.prune_expired_stars_quotes(
+            now=NOW + 1800 + 14 * 86400 + 1,
+        ), 4)
+        self.assertEqual(self.store.prune_expired_stars_quotes(
+            now=NOW + 1800 + 14 * 86400 + 1,
+        ), 0)
+        self.assertEqual(self.store.stars_order(
+            OWNER, orders[0]["order_id"],
+        )["status"], "verified")
+        for order in orders[1:]:
+            self.assertIsNone(self.store.stars_order(OWNER, order["order_id"]))
+        self.assertEqual(self.store.create_stars_order(
+            OWNER, "pack_10", now=NOW + 1800 + 14 * 86400 + 2,
+        )["status"], "pending")
+
     def test_verified_order_fulfills_once_and_survives_restart(self):
         order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
         with self.assertRaises(ValueError):
