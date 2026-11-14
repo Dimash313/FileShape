@@ -32,6 +32,8 @@ from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.internal_access import ReplayGuard
+from api.stars_auth import stars_scope, checkout_enabled as stars_checkout_enabled
+from api.stars_orders import PRODUCTS
 from api.campaign_bridge import JoinReplayGuard
 from api.campaign_owner import make_campaign_router
 from api.campaign_revocations import dispatch_campaign_revocations
@@ -223,6 +225,10 @@ async def maintain_metadata(store):
             operations.extend((background_jobs.reconcile, background_jobs.artifacts.reconcile))
         if hasattr(store, "expire_bot_operations"):
             operations.append(store.expire_bot_operations)
+        if hasattr(store, "reconcile_verified_stars_orders"):
+            operations.append(store.reconcile_verified_stars_orders)
+        if hasattr(store, "prune_expired_stars_quotes"):
+            operations.append(store.prune_expired_stars_quotes)
         operations.append(store.prune_terminal)
         if hasattr(store, "expire_campaigns"):
             operations.append(store.expire_campaigns)
@@ -463,6 +469,171 @@ async def internal_bot_settle_operation(
         {"job_id": item.job_id, "state": item.state},
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _stars_checkout_enabled() -> bool:
+    # Fail-closed until approved end-to-end Bot API testing and deployment.
+    return stars_checkout_enabled()
+
+
+def _stars_verify_request(user: str, timestamp: str, nonce: str,
+                          signature: str, *, action: str, data: dict) -> int:
+    try:
+        scope = stars_scope(action, data)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="Invalid Stars request") from None
+    return _verify_bot_operation(user, timestamp, nonce, signature, scope=scope)
+
+
+def _stars_check_order_fields(data: dict) -> None:
+    if (not isinstance(data["order_id"], str)
+            or _BOT_ID_RE.fullmatch(data["order_id"]) is None
+            or type(data["amount"]) is not int or data["amount"] <= 0
+            or data["currency"] != "XTR"):
+        raise HTTPException(status_code=422, detail="Invalid Stars invoice data")
+
+
+def _stars_response(data: dict, *, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(data, status_code=status_code, headers={"Cache-Control": "no-store"})
+
+
+@api.post("/internal/v1/stars/quote")
+async def internal_stars_quote(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Bot-only immutable product quote; never grant or invoice directly."""
+    data = await _read_bot_operation_body(request, allowed_keys={"sku"})
+    owner = _stars_verify_request(user, timestamp, nonce, signature, action="quote", data=data)
+    if not _stars_checkout_enabled():
+        raise HTTPException(status_code=403, detail="Stars purchases are disabled")
+    if not isinstance(data["sku"], str) or data["sku"] not in PRODUCTS:
+        raise HTTPException(status_code=422, detail="Unknown Stars product")
+    await enforce_rate_limit(owner)
+    try:
+        quote = jobs.create_stars_order(owner, data["sku"])
+    except ValueError:
+        raise HTTPException(
+            status_code=429, detail="Слишком много активных неоплаченных счетов",
+            headers={"Retry-After": "60"},
+        ) from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Order storage unavailable") from None
+    return _stars_response(quote)
+
+
+@api.post("/internal/v1/stars/precheckout")
+async def internal_stars_precheckout(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Answer immediately with a verified quote decision; NOT a payment."""
+    data = await _read_bot_operation_body(request, allowed_keys={"order_id", "amount", "currency"})
+    owner = _stars_verify_request(user, timestamp, nonce, signature, action="precheckout", data=data)
+    _stars_check_order_fields(data)
+    if not _stars_checkout_enabled():
+        return _stars_response({"approved": False})
+    try:
+        approved = jobs.can_precheckout_stars_order(
+            owner, data["order_id"], data["amount"], data["currency"]
+        )
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Order storage unavailable") from None
+    return _stars_response({"approved": approved})
+
+
+@api.post("/internal/v1/stars/confirm")
+async def internal_stars_confirm(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Only signed Telegram successful_payment forwarding can grant value."""
+    data = await _read_bot_operation_body(
+        request, allowed_keys={"order_id", "amount", "currency", "charge_id"},
+    )
+    owner = _stars_verify_request(user, timestamp, nonce, signature, action="confirm", data=data)
+    _stars_check_order_fields(data)
+    if not isinstance(data["charge_id"], str) or not 1 <= len(data["charge_id"]) <= 256:
+        raise HTTPException(status_code=422, detail="Invalid charge ID")
+    try:
+        jobs.record_stars_payment(
+            owner, data["order_id"], data["charge_id"],
+            data["amount"], data["currency"],
+        )
+        result, created = jobs.fulfill_stars_order(owner, data["order_id"])
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Stars order/payment mismatch") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Payment storage unavailable") from None
+    return _stars_response({**result, "created": created})
+
+
+@api.post("/internal/v1/stars/confirm-refunded")
+async def internal_stars_paid_and_refunded(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Atomic recovery when Telegram history proves both payment and refund.
+
+    A pending order becomes refunded *without* ever receiving Pro or credit.
+    An already fulfilled order is reversed via the existing idempotent
+    refund transaction. Never accept this route from the Mini App.
+    """
+    data = await _read_bot_operation_body(
+        request, allowed_keys={"order_id", "amount", "currency", "charge_id"},
+    )
+    owner = _stars_verify_request(
+        user, timestamp, nonce, signature, action="refunded", data=data,
+    )
+    _stars_check_order_fields(data)
+    if not isinstance(data["charge_id"], str) or not 1 <= len(data["charge_id"]) <= 256:
+        raise HTTPException(status_code=422, detail="Invalid charge ID")
+    try:
+        result, created = jobs.record_paid_and_refunded_stars_order(
+            owner, data["order_id"], data["charge_id"],
+            data["amount"], data["currency"],
+        )
+        if result["status"] != "refunded":
+            result, changed = jobs.mark_stars_refunded(owner, data["charge_id"])
+        else:
+            changed = created
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Telegram refund/order mismatch") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Refund storage unavailable") from None
+    return _stars_response({**result, "changed": changed})
+
+
+@api.post("/internal/v1/stars/refund-confirm")
+async def internal_stars_refund_confirm(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Called by a trusted bot *only after* refundStarPayment confirms success."""
+    data = await _read_bot_operation_body(request, allowed_keys={"charge_id"})
+    owner = _stars_verify_request(user, timestamp, nonce, signature, action="refund", data=data)
+    try:
+        result, changed = jobs.mark_stars_refunded(owner, data["charge_id"])
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Unknown or invalid Stars refund") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Payment storage unavailable") from None
+    return _stars_response({**result, "changed": changed})
 
 
 @api.post("/internal/v1/campaigns/join")

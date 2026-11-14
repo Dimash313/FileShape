@@ -2,7 +2,69 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## FileShape 4.23 — enforced quota across API, Mini App and bot (PR in review)
+## FileShape 4.24 — Telegram Stars verified accounting (draft)
+
+**PR #69 is not deployed; live Stars payments are disabled.** Live checkout
+defaults to disabled via FILESHAPE_STARS_CHECKOUT_ENABLED=false. An explicit
+true additionally requires a configured, valid FILESHAPE_SUPPORT_USERNAME
+used by /paysupport. Do not enable outside Telegram's official test
+environment until receipt/reversal audit and operational support are ready.
+
+The server-only catalog is Pro 30 days for 149 XTR, +10 operations for 19
+XTR and +30 operations for 49 XTR. An order is user-scoped, immutable,
+and eligible for pre-checkout for 30 minutes. Only a signed API quote
+permits a single-price XTR invoice **only after the buyer opens and
+accepts the current /terms**. The terms screen states prices, 30-day Pro
+duration without automatic renewal, processing limits, and support/refund
+contacts; stale consent buttons cannot issue invoices. The bot returns
+a bounded and signed pre-checkout approval within Telegram's ten-second
+window; this stage never grants value. Before any positive pre-checkout reply, SQLite durably
+marks the invoice as **not safe to prune**. The quote cleanup process deletes
+only invoices that were never approved for checkout, while all legacy orders
+are protected by migration. This preserves invoices paid during a prolonged
+bot/API outage, even if Telegram's payment event is delayed.
+
+On Telegram's successful_payment message, the bot forwards invoice ID,
+user ID, amount, currency and global charge ID via a short-lived,
+replay-protected signed internal API. Only a matching receipt is recorded.
+Each verified receipt is fulfilled atomically together with the Pro
+entitlement or pack grant and the fulfilled order transition. A replay
+cannot grant twice. If the API crashes after saving a verified payment,
+a bounded reconciliation pass safely retries the fulfillment.
+
+The bot also checks Telegram's authoritative getStarTransactions history
+on startup and every five minutes. It verifies incoming user invoice payments
+by Telegram charge ID, buyer ID, exact invoice payload and Stars amount,
+and reconciles outgoing invoice refunds. When both directions for a
+matching charge are visible, the API atomically records the full refund
+without granting any interim Pro or pack credit. It forwards only scoped
+signed assertions; it never touches the API-owned SQLite. A bounded 30-day,
+up-to-1000-transaction scan and in-memory duplicate suppression reduce
+repeated processing. The full history may be larger or older than this
+window: truncated scans and failed API confirmations are **logged as
+incomplete**, never advertised as fully reconciled. A truncated scan
+**cannot create any new paid grant**, because a matching refund might be
+outside the scanned pages; already-visible refunds are still processed. The bot service needs a
+healthy API gateway to deliver already paid orders, even with checkout off.
+Telegram's refund service message is also handled directly.
+
+Refund accounting can only be recorded AFTER an actual Telegram refund
+success. A verified refund retracts unspent pack operations; any spent
+portion becomes non-spendable debt, paid back by later pack grants and
+failed-operation refunds. Refunded Pro time is deducted from the remaining
+entitlement (elapsed service time cannot be revoked). Refund events are
+idempotent. No card/payment or user-file content is stored in the ledger.
+
+**Unshipped release gates:** verify payments and refunds with an actual
+Telegram Stars test bot and live-version contract tests, review scan truncation,
+API outage and transaction history retention assumptions, add operator-facing
+audit/alerts for incomplete reconciliation, confirm support/terms and
+pass CI on the final PR head. Although a bounded authoritative history
+recovery is implemented, unlimited-lifetime delivery is not guaranteed.
+Until these pass, keep production purchases disabled, even if static CI
+is green.
+
+## FileShape 4.23 — enforced quota across API, Mini App and bot (merged; CI passed)
 
 Every operation must first obtain a durable reservation from the **one**
 API-owned SQLite ledger; the request is rejected if the daily allowance/pack
@@ -33,11 +95,11 @@ is still **20 MiB**, not a promised 100 MiB paid upload. No billing is enabled.
   payment verification belongs to 4.24. Bot profile and plan purchasing
   screens remain incomplete until 4.25.
 
-**Release gate:** This section documents an *unmerged PR*, not a production
-deployment. Tests, Docker build, cross-ingress auditing and final-head
-GitHub Actions must pass before merge. The production bot must use the
-Compose internal access URL (or equivalent trusted
-`FILESHAPE_OPERATION_GATE_URL`) and a running API on the same BOT_TOKEN.
+**Merged:** PR #67 passed its final-head CI and the merged-main Actions
+run #43516074402 passed Python, Mini App and Docker. This is repository
+validation, **not** a claim of production deployment. The bot must use
+Compose's internal access URL (or trusted `FILESHAPE_OPERATION_GATE_URL`)
+and share the same BOT_TOKEN with the API.
 
 ## FileShape 4.22 — authenticated usage status (read-only)
 
