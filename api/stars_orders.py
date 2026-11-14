@@ -1,8 +1,8 @@
-"""Private durable Stars order registry. No checkout/payment activation.
+"""Private durable Stars order registry and exactly-once accounting.
 
-Only Telegram-received successful_payment claims may eventually reach the
-trusted bridge. This module stores exact orders and deduplicates charge IDs;
-it deliberately does NOT grant Pro, add pack balance, or create invoices.
+Only trusted Telegram successful_payment forwarding may verify an invoice.
+An atomic SQLite transaction fulfills verified receipts into Pro or pack
+entitlements; pending invoices never grant paid access.
 """
 import math
 import re
@@ -156,10 +156,10 @@ class StarsOrderMixin:
 
     def record_stars_payment(self, owner_id: int, order_id: str, charge_id: str,
                              amount: int, currency: str, *, now=None):
-        """Persist a trusted successful_payment claim exactly once.
+        """Persist a trusted Telegram successful_payment claim exactly once.
 
-        Only a later signed Telegram update bridge may invoke this method.
-        This method intentionally does not fulfill paid entitlements yet.
+        This operation verifies the order; fulfillment is a separate atomic
+        transaction that can be retried after process crashes.
         """
         self._validate_owner(owner_id)
         _order_id(order_id)
