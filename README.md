@@ -25,6 +25,18 @@ entitlement or pack grant and the fulfilled order transition. A replay
 cannot grant twice. If the API crashes after saving a verified payment,
 a bounded reconciliation pass safely retries the fulfillment.
 
+The bot also checks Telegram's authoritative getStarTransactions history
+on startup and every five minutes. It verifies incoming user invoice payments
+by Telegram charge ID, buyer ID, exact invoice payload and Stars amount,
+and reconciles outgoing invoice refunds. It forwards only scoped signed
+assertions; it never touches the API-owned SQLite. A bounded 30-day,
+up-to-1000-transaction scan and in-memory duplicate suppression reduce
+repeated processing. The full history may be larger or older than this
+window: truncated scans and failed API confirmations are **logged as
+incomplete**, never advertised as fully reconciled. The bot service needs a
+healthy API gateway to deliver already paid orders, even with checkout off.
+Telegram's refund service message is also handled directly.
+
 Refund accounting can only be recorded AFTER an actual Telegram refund
 success. A verified refund retracts unspent pack operations; any spent
 portion becomes non-spendable debt, paid back by later pack grants and
@@ -32,11 +44,14 @@ failed-operation refunds. Refunded Pro time is deducted from the remaining
 entitlement (elapsed service time cannot be revoked). Refund events are
 idempotent. No card/payment or user-file content is stored in the ledger.
 
-**Unshipped safety gates:** official Telegram Stars test-environment purchase,
-refundStarPayment initiation and verification, durable recovery of
-Telegram payment events lost before delivery to the API, final audit,
-support/terms verification and current CI on the final PR head. Until
-these pass, keep purchases disabled, even if static CI is green.
+**Unshipped release gates:** verify payments and refunds with an actual
+Telegram Stars test bot and live-version contract tests, review scan truncation,
+API outage and transaction history retention assumptions, add operator-facing
+audit/alerts for incomplete reconciliation, confirm support/terms and
+pass CI on the final PR head. Although a bounded authoritative history
+recovery is implemented, unlimited-lifetime delivery is not guaranteed.
+Until these pass, keep production purchases disabled, even if static CI
+is green.
 
 ## FileShape 4.23 — enforced quota across API, Mini App and bot (merged; CI passed)
 
