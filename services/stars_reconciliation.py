@@ -26,6 +26,7 @@ _HISTORY_PAGE_SIZE = 100
 MAX_HISTORY_PAGES = 10
 HISTORY_LOOKBACK_SECONDS = 30 * 86400
 HISTORY_SCAN_SECONDS = 300
+MAX_SCAN_WALL_SECONDS = 120
 ALERT_COOLDOWN_SECONDS = 30 * 60
 _PAYLOAD = re.compile(r"fileshape:([0-9a-f]{32})\Z")
 
@@ -299,8 +300,13 @@ async def star_reconciliation_loop(bot):
     alerts = ReconciliationAlert()
     while True:
         try:
-            result = await reconcile_star_transactions(
-                bot, acknowledged_charges=acknowledged_charges,
+            # A history scan can require many network calls. Cap wall time
+            # so the bot never hangs its monitoring loop indefinitely.
+            result = await asyncio.wait_for(
+                reconcile_star_transactions(
+                    bot, acknowledged_charges=acknowledged_charges,
+                ),
+                timeout=MAX_SCAN_WALL_SECONDS,
             )
             if len(acknowledged_charges) > 2000:
                 acknowledged_charges.clear()
