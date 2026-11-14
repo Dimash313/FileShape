@@ -112,3 +112,15 @@ cluster or production asset service. It remains disconnected from the
 existing API, bot and workers until cross-component atomic job admission,
 stale-lease-fenced result publication and offline orphan cleanup have
 independent regression tests.
+
+
+## Phase E1 — safe orphan reconciliation (5.0.6b; internal only)
+
+The private local blob adapter now supports a bounded, explicit sweep of aged
+files not referenced in SQLite. It acquires the SAME BEGIN IMMEDIATE lock as
+staging before scanning, so ongoing writes cannot be mistaken for crash
+orphans, and ignores all unsupported/unsafe directory entries. This reduces
+untracked disk retention after a crash, but is not wired into startup,
+scheduling or deployment, and does not resolve durable output publishing,
+multi-host sharing or missing referenced blobs. Details and gate tests:
+[PRIVATE_BLOB_STAGING.md](PRIVATE_BLOB_STAGING.md).
