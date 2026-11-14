@@ -24,7 +24,9 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 | 4.20 | Merged | Telegram home/navigation; PR #62 |
 | 4.21 | Merged | Atomic SQLite usage ledger, Free/Pro allowances and packs **without** processing enforcement; PR #63 (PR #64 superseded) |
 | 4.22 | Merged | Owner-scoped, read-only `GET /api/v1/usage`, explicit `enforced: false` and `purchases_enabled: false`; PR #65. PR Actions passed; post-merge main Actions must also be confirmed |
-| 4.23 | **Next: not implemented** | Attach reservation/settlement to **all** bot/API/Mini App/retry/background submission paths; enforce Free first, preserve user/tenant isolation, no duplicate charges |
+| 4.23 | Merged | Atomic quota-backed processing on bot/API/Mini App paths; PR #67, verify deployed behavior separately |
+| 4.24 | Draft | Telegram Stars signed order/receipt/refund flow, PR #69; final-head CI passed but real Telegram test purchases and refunds remain blockers; checkout disabled |
+| 4.25a | PR under development | Read-only Mini App profile from signed `GET /api/v1/usage`; validate server-owned balances, UTC reset and Pro expiry, no purchases, no purchase history, no billing enablement |
 
 ### Ordered implementation plan
 
@@ -32,7 +34,7 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 
 **4.24 — Telegram Stars (P0).** Only after 4.23: implement documented Stars digital-service invoice/payment flow with server-verified successful payment, durable unique charge IDs, pending/verified/refunded states, pre-checkout validation, idempotent grants for Pro/10/30 packs, grant reversal or debt policy for refunds, reconciliation and audit tests. No payment acceptance based on untrusted callback data. Test using supported Telegram test environment; keep purchase UI disabled until verified. No additional payment processor.
 
-**4.25 — profile and plans (P1).** Show *real* authenticated remaining daily/pack operations, UTC reset, active Pro expiration and actual verified purchase records in bot and Mini App. Server-side authorization and cache-control on balances; never invent an amount/status. Clear errors and disabled purchase options when billing is unavailable.
+**4.25 — profile and plans (P1).** Stage A: render verified account allowances and Pro expiry in Mini App from the existing authenticated read-only API, with explicit billing-off and error states. Stage B (only after 4.24 is verified): bot profile, server-confirmed purchase history and purchase navigation. Show *real* authenticated remaining daily/pack operations, UTC reset, active Pro expiration and actual verified purchase records in bot and Mini App. Server-side authorization and cache-control on balances; never invent an amount/status. Clear errors and disabled purchase options when billing is unavailable.
 
 **4.26 — premium navigation and file cards (P1).** Clean black/white/graphite design, responsive mobile widths, keyboard/accessibility, concise bot messages, precise file and operation states, honest progress/status, navigable menus and usable errors. Preserve all existing conversion tools.
 
