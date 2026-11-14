@@ -31,8 +31,8 @@ class MetadataPortTests(unittest.TestCase):
                 store.get(job.job_id, 102)
             store.transition(job.job_id, 101, "processing")
             self.assertEqual(store.transition(job.job_id, 101, "completed").state, "completed")
-            with self.assertRaises(JobNotFound):
-                store.discard_queued(job.job_id, 102)
+            self.assertFalse(store.discard_queued(job.job_id, 102))
+            self.assertEqual(store.get(job.job_id, 101).state, "completed")
         finally:
             store.close()
 
