@@ -85,3 +85,16 @@ throughput or multi-server support.
 No new dependencies, external APIs, music, imagery, advertisements, payment
 providers or new user-visible file transformations are introduced. The
 repository-wide AGENTS.md halal requirements remain binding.
+
+
+## Retention safety
+
+The opt-in FencedDispatchStore now overrides terminal-job pruning so the
+normal one-hour metadata retention cannot erase unpaid loss compensation.
+Rows remain protected while a credit is pending, a result is suspect,
+operator review is required, or the result is still within its recorded
+availability window. Deletion of a job after its completed retention
+period cascades into its result-availability records *only when no such
+condition applies*. This protection is not enabled on the live
+DurableJobStore. Operators must monitor unresolved records and enforce
+bounded backlog capacity; retaining an unpaid liability is intentional.
