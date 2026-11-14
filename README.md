@@ -2,25 +2,41 @@
 
 A Telegram file editor and converter by **IhsanSoft**, written in Python with aiogram 3.
 
-## FileShape 4.24 — Telegram Stars verified order foundation (in development)
+## FileShape 4.24 — Telegram Stars verified accounting (draft)
 
-**Storage-only initial slice; payments/purchases are disabled.** The private
-API-owned SQLite database now supports immutable, owner-scoped Stars quotes
-with server-defined prices: Pro 30 days 149 XTR, 10 operations 19 XTR, and
-30 operations 49 XTR. Quotes expire after 30 minutes for checkout approval.
-Receipts have a globally unique, durable Telegram charge ID and can be
-recorded idempotently only against the matching owner, price and currency.
-A recorded receipt is **not** proof that the backend verified a Telegram
-update: only the forthcoming trusted bot-to-API bridge will be allowed to
-call it. This initial code neither sends invoices, accepts webhook payments,
-auto-renews subscriptions, nor grants paid access or operation packs.
+**PR #69 is not deployed; live Stars payments are disabled.** Live checkout
+defaults to disabled via FILESHAPE_STARS_CHECKOUT_ENABLED=false. An explicit
+true additionally requires a configured, valid FILESHAPE_SUPPORT_USERNAME
+used by /paysupport. Do not enable outside Telegram's official test
+environment until receipt/reversal audit and operational support are ready.
 
-Before enabling purchases: implement Telegram `pre_checkout_query` reply
-within 10 seconds, trusted `successful_payment` forwarding with scoped
-HMAC authorization, atomic/effectively-once fulfillment, audit/reconciliation,
-`refundStarPayment` and reversal/debt policy, support/terms, test payments
-and full CI. Reject any mismatch or duplicate charge. Keep all invoices
-and purchase buttons disabled until verified end-to-end.
+The server-only catalog is Pro 30 days for 149 XTR, +10 operations for 19
+XTR and +30 operations for 49 XTR. An order is user-scoped, immutable,
+and eligible for pre-checkout for 30 minutes. Only a signed API quote
+permits a single-price XTR invoice. The bot returns a bounded and signed
+pre-checkout approval within Telegram's ten-second window; this stage
+never grants value.
+
+On Telegram's successful_payment message, the bot forwards invoice ID,
+user ID, amount, currency and global charge ID via a short-lived,
+replay-protected signed internal API. Only a matching receipt is recorded.
+Each verified receipt is fulfilled atomically together with the Pro
+entitlement or pack grant and the fulfilled order transition. A replay
+cannot grant twice. If the API crashes after saving a verified payment,
+a bounded reconciliation pass safely retries the fulfillment.
+
+Refund accounting can only be recorded AFTER an actual Telegram refund
+success. A verified refund retracts unspent pack operations; any spent
+portion becomes non-spendable debt, paid back by later pack grants and
+failed-operation refunds. Refunded Pro time is deducted from the remaining
+entitlement (elapsed service time cannot be revoked). Refund events are
+idempotent. No card/payment or user-file content is stored in the ledger.
+
+**Unshipped safety gates:** official Telegram Stars test-environment purchase,
+refundStarPayment initiation and verification, durable recovery of
+Telegram payment events lost before delivery to the API, final audit,
+support/terms verification and current CI on the final PR head. Until
+these pass, keep purchases disabled, even if static CI is green.
 
 ## FileShape 4.23 — enforced quota across API, Mini App and bot (merged; CI passed)
 
