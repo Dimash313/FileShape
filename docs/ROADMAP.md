@@ -24,7 +24,8 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 | 4.20 | Merged | Telegram home/navigation; PR #62 |
 | 4.21 | Merged | Atomic SQLite usage ledger, Free/Pro allowances and packs **without** processing enforcement; PR #63 (PR #64 superseded) |
 | 4.22 | Merged | Owner-scoped read-only usage API foundation; PR #65. Post-merge main Actions passed |
-| 4.23 | Merged and main CI passed | Shared durable quota enforcement for bot/API/Mini App, retries, direct/background and multi-file flows; PR #67; merged main CI [#43516074402](https://github.com/Dimash313/FileShape/actions/runs/43516074402) succeeded |\n| 4.24 | Draft PR #69, not ready for live sales | Server-bound XTR orders, HMAC-authenticated pre-checkout/receipts, exactly-once Pro and pack fulfillment, debt-backed refund accounting, Telegram bot handlers and recovery tests. Live checkout defaults off; official payment-environment tests and recovery of lost bot-to-API receipts are still required |
+| 4.23 | Merged and main CI passed | Shared durable quota enforcement for bot/API/Mini App, retries, direct/background and multi-file flows; PR #67; merged main CI [#43516074402](https://github.com/Dimash313/FileShape/actions/runs/43516074402) succeeded |
+| 4.24 | Draft PR #69, live sales disabled | Owner-scoped XTR orders, signed pre-checkout and receipts, atomic Pro/pack grants, refund debt, bot invoice and service events. Bounded getStarTransactions backfill and atomic paid-plus-refunded recovery are implemented; final CI, support verification, history limits and official Telegram Stars test purchases/refunds still need validation |
 
 ### Ordered implementation plan
 
