@@ -145,6 +145,44 @@ STARS_SKUS = {
     "pack_30": ("30 операций FileShape", "Дополнительные операции без срока действия", 49),
 }
 
+# Change the version whenever purchase terms change. Old consent buttons
+# must fail closed rather than authorize a purchase under updated terms.
+STARS_TERMS_VERSION = "1"
+
+
+def stars_purchase_terms() -> str:
+    contact = support_username() or "контакт пока не настроен (продажи выключены)"
+    return (
+        "📄 Условия покупки FileShape · версия " + STARS_TERMS_VERSION + "\\n\\n"
+        "• Услуга: обработка поддерживаемых файлов в Telegram. "
+        "Доступность отдельных преобразований зависит от формата и размера файла.\\n"
+        "• Free: 10 успешных операций в сутки UTC, 1 активная задача. "
+        "Pro: 100 операций в сутки UTC, до 3 одновременных задач на 30 суток. "
+        "Новый Pro продлевает действующий. Автосписаний нет.\\n"
+        "• Пакеты: 10 операций — 19 ⭐; 30 операций — 49 ⭐; "
+        "без установленной даты окончания. Pro на 30 суток — 149 ⭐. "
+        "После оплаты лимиты обновляются в серверном профиле.\\n"
+        "• Ограничение размера загружаемого файла в боте — 20 МБ "
+        "для Free и Pro. Неудачная обработка не должна расходовать операцию.\\n"
+        "• Файлы временно обрабатываются и удаляются после задачи. "
+        "Не отправляй пароли, ключи и другие секреты.\\n"
+        "• По вопросам платежей, технических ошибок и возвратов: "
+        + contact + " или /paysupport. Возвраты рассматриваются через "
+        "официальный механизм Telegram Stars. Telegram не отвечает за "
+        "обслуживание покупок у разработчика FileShape.\\n\\n"
+        "Покупка создаётся только после явного подтверждения согласия "
+        "с этими условиями. Оплата сама по себе не начинается от нажатия кнопки."
+    )
+
+
+def stars_terms_keyboard(sku: str) -> InlineKeyboardMarkup:
+    if not checkout_enabled() or sku not in STARS_SKUS:
+        return back_keyboard()
+    return buttons([
+        [("✅ Прочитал и согласен", f"buy:agree:{STARS_TERMS_VERSION}:{sku}")],
+        [("✖️ Отмена", "nav:plans")],
+    ])
+
 
 def plans_keyboard() -> InlineKeyboardMarkup:
     if not checkout_enabled():
@@ -345,6 +383,11 @@ async def profile_message(message: Message):
     )
 
 
+@router.message(Command("terms"))
+async def terms_message(message: Message):
+    await message.answer(stars_purchase_terms(), reply_markup=back_keyboard())
+
+
 @router.message(Command("plans"))
 async def plans_message(message: Message):
     await message.answer(
@@ -382,10 +425,13 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
                 "Персональный остаток появится здесь в обновлении профиля.")
         markup = back_keyboard()
     elif section == "plans":
-        text = ("💎 Тарифы FileShape\\n\\n"
-                "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке. "
-                "Оплата Telegram Stars и покупка пакетов пока недоступны." if not checkout_enabled()
-                else "Выбери тариф ниже. Оплата проходит через Telegram Stars.")
+        text = (
+            "💎 Тарифы FileShape\\n\\n"
+            "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке.\\n"
+            + ("Выбери тариф ниже. Перед счётом прочитай /terms. Оплата через Telegram Stars."
+               if checkout_enabled()
+               else "Оплата Telegram Stars и покупка пакетов пока недоступны.")
+        )
         markup = plans_keyboard()
     elif section == "help":
         text = ("❔ Как пользоваться\\n\\n"
@@ -401,20 +447,28 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, reply_markup=markup)
 
 
-@router.callback_query(F.data.startswith("buy:"))
-async def buy_stars_product(callback: CallbackQuery, bot: Bot):
-    """Only private, explicitly enabled, server-priced Stars invoices."""
-    if (
-        not isinstance(callback.message, Message)
-        or callback.message.chat.type != "private"
-        or callback.message.chat.id != callback.from_user.id
-    ):
+def _private_stars_callback(callback: CallbackQuery) -> bool:
+    return (
+        isinstance(callback.message, Message)
+        and callback.message.chat.type == "private"
+        and callback.message.chat.id == callback.from_user.id
+    )
+
+
+@router.callback_query(F.data.startswith("buy:agree:"))
+async def buy_stars_after_terms(callback: CallbackQuery, bot: Bot):
+    """Invoice only after the user explicitly accepts the current terms."""
+    if not _private_stars_callback(callback):
         await callback.answer("Открой личный чат с ботом.", show_alert=True)
         return
-    sku = (callback.data or "").removeprefix("buy:")
-    if not checkout_enabled() or sku not in STARS_SKUS:
-        await callback.answer("Покупки временно недоступны.", show_alert=True)
+    data = (callback.data or "").split(":")
+    if (len(data) != 4 or data[:2] != ["buy", "agree"]
+            or data[2] != STARS_TERMS_VERSION
+            or not checkout_enabled() or data[3] not in STARS_SKUS):
+        await callback.answer("Счёт недоступен. Открой /plans и прочитай условия заново.",
+                              show_alert=True)
         return
+    sku = data[3]
     await callback.answer()
     try:
         quote = await create_stars_quote(callback.from_user.id, bot.token, sku)
@@ -431,10 +485,30 @@ async def buy_stars_product(callback: CallbackQuery, bot: Bot):
             title=title, description=description,
             payload="fileshape:" + quote["order_id"],
             currency="XTR", prices=[LabeledPrice(label=title, amount=price)],
+            provider_token="", start_parameter="",
         )
     except Exception:
         logger.exception("FileShape invoice delivery failed")
         await callback.message.answer("Не удалось отправить счёт. Операция не оплачена.")
+
+
+@router.callback_query(F.data.startswith("buy:"))
+async def buy_stars_product(callback: CallbackQuery, bot: Bot):
+    """Choosing a tariff opens conditions, it never creates an invoice."""
+    if not _private_stars_callback(callback):
+        await callback.answer("Открой личный чат с ботом.", show_alert=True)
+        return
+    sku = (callback.data or "").removeprefix("buy:")
+    if not checkout_enabled() or sku not in STARS_SKUS:
+        await callback.answer("Покупки временно недоступны.", show_alert=True)
+        return
+    await callback.answer()
+    name, _, price = STARS_SKUS[sku]
+    await callback.message.answer(
+        f"Выбран тариф: {name} · {price} ⭐\\n\\n"
+        + stars_purchase_terms(),
+        reply_markup=stars_terms_keyboard(sku),
+    )
 
 
 @router.pre_checkout_query()
