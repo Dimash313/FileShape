@@ -132,13 +132,24 @@ async def reconcile_star_transactions(
     # does not promise which direction pages are ordered. A refunded payment
     # must not receive a new grant if both transaction entries are present.
     invoices = {}
+    conflicting_charges = set()
+    # Even if an outgoing record is malformed or belongs to an unknown
+    # subtype, a matching charge ID makes an inbound payment ambiguous.
+    # A partial refund is never proof for adding a new paid entitlement.
+    outgoing_ids = {
+        getattr(transaction, "id", None) for transaction in events
+        if getattr(transaction, "receiver", None) is not None
+        and isinstance(getattr(transaction, "id", None), str)
+    }
     for transaction in events:
         invoice = _incoming_invoice(transaction)
         if invoice is None:
             continue
         owner, order_id, amount, charge_id, paid_at = invoice
         if start <= paid_at <= now + 120:
-            invoices.setdefault(charge_id, (owner, order_id, amount))
+            previous = invoices.setdefault(charge_id, (owner, order_id, amount))
+            if previous != (owner, order_id, amount):
+                conflicting_charges.add(charge_id)
 
     refunded_charges = set()
     for transaction in events:
@@ -152,6 +163,9 @@ async def reconcile_star_transactions(
         if acknowledged_charges is not None and "refund:" + charge_id in acknowledged_charges:
             continue
         paid = invoices.get(charge_id)
+        if charge_id in conflicting_charges:
+            refund_failed += 1
+            continue
         try:
             if paid is not None:
                 buyer, order_id, paid_amount = paid
@@ -172,6 +186,7 @@ async def reconcile_star_transactions(
             if acknowledged_charges is not None:
                 acknowledged_charges.add("refund:" + charge_id)
 
+    handled_incoming = set()
     for transaction in events:
         invoice = _incoming_invoice(transaction)
         if invoice is None:
@@ -180,6 +195,17 @@ async def reconcile_star_transactions(
         if paid_at < start or paid_at > now + 120:
             continue
         matched += 1
+        if charge_id in handled_incoming:
+            continue
+        handled_incoming.add(charge_id)
+        if charge_id in conflicting_charges:
+            failed += 1
+            continue
+        if charge_id in outgoing_ids and charge_id not in refunded_charges:
+            # An outgoing record with the same charge may be a refund whose
+            # fields could not be validated. Never credit an ambiguous sale.
+            failed += 1
+            continue
         # A truncated history may hide a refund on a later page. Never
         # create a fresh paid entitlement from incomplete evidence.
         # Refund assertions above remain safe to process independently.
