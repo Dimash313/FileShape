@@ -95,6 +95,13 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(invalid=invalid):
                 self.assertIsNone(_unix_time(invalid))
 
+    async def test_nonfinite_scan_time_fails_before_network_or_entitlements(self):
+        for invalid in (float("nan"), float("inf"), float("-inf"), 0, -1, True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    await reconcile_star_transactions(self.bot, now=invalid)
+        self.bot.get_star_transactions.assert_not_awaited()
+
     async def test_recovers_telegram_confirmed_invoice_with_verified_fields(self):
         self.bot.get_star_transactions.return_value = S(transactions=[
             transaction(charge="paid_invoice_1"),
