@@ -11,6 +11,8 @@ import sqlite3
 import time
 
 ORDER_TTL_SECONDS = 30 * 60
+MAX_ACTIVE_QUOTES_PER_OWNER = 5
+UNPAID_RETENTION_SECONDS = 14 * 86400
 STARS_CURRENCY = "XTR"
 PRODUCTS = {
     "pro_30d": {"amount": 149, "duration_seconds": 30 * 86400},
@@ -73,6 +75,7 @@ def initialize_stars_order_tables(db):
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_owner ON stars_orders(owner_id,created_at DESC)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_status ON stars_orders(status,created_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_expiry ON stars_orders(status,expires_at)")
     db.execute("""
         CREATE TABLE IF NOT EXISTS stars_pack_debts (
             owner_id INTEGER PRIMARY KEY CHECK (owner_id > 0),
@@ -101,6 +104,13 @@ class StarsOrderMixin:
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:
+                count = self._db.execute(
+                    """SELECT COUNT(*) FROM stars_orders
+                       WHERE owner_id=? AND status='pending' AND expires_at>?""",
+                    (owner_id, now),
+                ).fetchone()[0]
+                if count >= MAX_ACTIVE_QUOTES_PER_OWNER:
+                    raise ValueError("Too many active unpaid Stars orders")
                 self._db.execute(
                     """INSERT INTO stars_orders
                        (order_id,owner_id,sku,amount,currency,status,created_at,expires_at)
@@ -285,6 +295,28 @@ class StarsOrderMixin:
                     raise ValueError("Stars fulfillment state conflict")
                 self._db.execute("COMMIT")
                 return {"order_id": order_id, "sku": sku, "status": "fulfilled"}, True
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
+    def prune_expired_stars_quotes(self, *, limit: int = 100, now=None) -> int:
+        """Remove only long-expired, NEVER-paid quotes in bounded maintenance."""
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("Invalid Stars quote pruning limit")
+        now = _time(now)
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                changed = self._db.execute(
+                    """DELETE FROM stars_orders WHERE order_id IN (
+                         SELECT order_id FROM stars_orders
+                         WHERE status='pending' AND expires_at<?
+                         ORDER BY expires_at LIMIT ?
+                       )""",
+                    (now - UNPAID_RETENTION_SECONDS, limit),
+                ).rowcount
+                self._db.execute("COMMIT")
+                return changed
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
