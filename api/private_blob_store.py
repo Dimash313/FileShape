@@ -26,7 +26,8 @@ from typing import Literal
 from api.durable_jobs import DurableJobStore
 
 REF_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
-MAX_BLOB_BYTES = 20 * 1024 * 1024
+MAX_INPUT_BYTES = 20 * 1024 * 1024
+MAX_BLOB_BYTES = 45 * 1024 * 1024
 DEFAULT_MAX_BYTES = 256 * 1024 * 1024
 DEFAULT_MAX_ENTRIES = 1000
 MAX_TTL = 24 * 3600
@@ -161,6 +162,14 @@ class PrivateBlobStore:
                 stream.flush()
                 os.fsync(fd)
             os.fsync(self._dir_fd)
+        except BaseException:
+            # Writing may fail after O_EXCL created the file; never leave
+            # partially written private data behind on a caught error.
+            try:
+                os.unlink(ref, dir_fd=self._dir_fd)
+            except FileNotFoundError:
+                pass
+            raise
         finally:
             os.close(fd)
 
@@ -222,6 +231,8 @@ class PrivateBlobStore:
         now: float | None = None,
     ) -> str:
         """Stage verified-by-caller input; returns an opaque non-bearer ID."""
+        if type(data) is not bytes or len(data) > MAX_INPUT_BYTES:
+            raise ValueError("Input exceeds the existing 20 MiB upload limit")
         return self._stage(owner_id, data, kind="input", job_id=None, ttl=ttl, now=now)
 
     def stage_candidate(
