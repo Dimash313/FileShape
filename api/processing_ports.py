@@ -74,6 +74,15 @@ class ArtifactReservationPort(Protocol):
 
 
 @runtime_checkable
+class ResultLeasePort(Protocol):
+    """An open download lease keeps artifact bytes reserved until closed."""
+
+    def read(self, size: int = -1) -> bytes: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
 class ArtifactPort(Protocol):
     """Temporary, bounded artifacts; separate owner authorization is mandatory."""
 
@@ -84,6 +93,10 @@ class ArtifactPort(Protocol):
     def discard(self, job_id: str) -> None: ...
 
     def discard_unfinished(self, job_id: str) -> bool: ...
+
+    def open_result(self, job_id: str) -> tuple[ResultLeasePort, int, str, str]: ...
+
+    def reconcile(self) -> int: ...
 
     def close(self) -> None: ...
 
