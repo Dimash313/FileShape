@@ -403,6 +403,77 @@ class PrivateBlobStore:
                     pass
             return len(refs)
 
+
+    def reconcile_orphans(
+        self, *, now: float | None = None,
+        min_age_seconds: float = 300, limit: int = 100,
+    ) -> int:
+        """Reclaim old untracked blob files left after a crash.
+
+        A SQLite BEGIN IMMEDIATE transaction is held while enumerating and
+        unlinking: every cooperating stage operation also starts with that
+        lock *before* creating a file. This prevents deleting a blob that is
+        between physical creation and metadata insertion in another process.
+
+        Only recognized opaque filenames, safe service-owned regular files
+        and files older than min_age_seconds are eligible. Never touch known
+        references (even if expired) or any other directory contents. This
+        method is opt-in and has no automatic production scheduling.
+        """
+        timestamp = _now(now)
+        if (
+            isinstance(min_age_seconds, bool)
+            or not isinstance(min_age_seconds, (int, float))
+            or not math.isfinite(min_age_seconds)
+            or not 60 <= min_age_seconds <= 7 * 86400
+        ):
+            raise ValueError("Invalid orphan grace period")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("Invalid orphan cleanup limit")
+        with self._lock:
+            db = self._open()
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                removed = 0
+                with os.scandir(self._dir_fd) as entries:
+                    for entry in entries:
+                        ref = entry.name
+                        if not _valid_id(ref):
+                            continue
+                        try:
+                            info = os.stat(
+                                ref, dir_fd=self._dir_fd,
+                                follow_symlinks=False,
+                            )
+                        except FileNotFoundError:
+                            continue
+                        if (
+                            not stat.S_ISREG(info.st_mode)
+                            or info.st_uid != os.geteuid()
+                            or info.st_nlink != 1
+                            or info.st_mode & 0o077
+                            or info.st_mtime > timestamp - min_age_seconds
+                        ):
+                            continue
+                        if db.execute(
+                            "SELECT 1 FROM staged_blobs WHERE ref=?", (ref,),
+                        ).fetchone() is not None:
+                            continue
+                        try:
+                            os.unlink(ref, dir_fd=self._dir_fd)
+                        except FileNotFoundError:
+                            continue
+                        removed += 1
+                        if removed >= limit:
+                            break
+                if removed:
+                    os.fsync(self._dir_fd)
+                db.execute("COMMIT")
+                return removed
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+
     def close(self) -> None:
         with self._lock:
             if self._db is not None:
