@@ -52,6 +52,26 @@ class FencedDispatchStore(DurableDispatchStore):
                     approved_at REAL NOT NULL
                 )
             """)
+            # This ledger records the *promised* availability window at
+            # approval. Expiry alone is NOT a compensable storage failure.
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS result_delivery_state (
+                    job_id TEXT PRIMARY KEY
+                        REFERENCES approved_candidates(job_id) ON DELETE CASCADE,
+                    available_until REAL NOT NULL CHECK(available_until>0),
+                    status TEXT NOT NULL CHECK(status IN
+                        ('available','suspect','lost','expired','review')),
+                    compensation TEXT NOT NULL DEFAULT 'none'
+                        CHECK(compensation IN ('none','pending','credited')),
+                    first_missing_at REAL,
+                    confirmed_at REAL,
+                    last_checked_at REAL
+                )
+            """)
+            self._db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_result_delivery_health
+                ON result_delivery_state(status,compensation,last_checked_at)
+            """)
         except BaseException:
             self.close()
             raise
@@ -120,11 +140,20 @@ class FencedResultGate:
                 )
                 length = len(blob)
                 digest = hashlib.sha256(blob).hexdigest()
+                expiry = self._blobs.candidate_expires_at(
+                    owner_id, job_id, candidate_ref, now=timestamp,
+                )
                 dispatch._db.execute(
                     """INSERT INTO approved_candidates
                        (job_id,candidate_ref,byte_count,sha256,approved_at)
                        VALUES(?,?,?,?,?)""",
                     (job_id, candidate_ref, length, digest, timestamp),
+                )
+                dispatch._db.execute(
+                    """INSERT INTO result_delivery_state
+                       (job_id,available_until,status,compensation)
+                       VALUES (?,?,'available','none')""",
+                    (job_id, expiry),
                 )
                 changed = dispatch._db.execute(
                     """UPDATE jobs SET state='completed',updated_at=?
@@ -168,10 +197,12 @@ class FencedResultGate:
         timestamp = _now(now)
         with dispatch._lock:
             row = dispatch._db.execute(
-                """SELECT d.envelope,a.candidate_ref,a.byte_count,a.sha256
+                """SELECT d.envelope,a.candidate_ref,a.byte_count,a.sha256,
+                          l.status,l.available_until
                    FROM approved_candidates a
                    JOIN jobs j ON j.job_id=a.job_id
                    JOIN dispatch_outbox d ON d.job_id=j.job_id
+                   LEFT JOIN result_delivery_state l ON l.job_id=j.job_id
                    WHERE j.job_id=? AND j.owner_id=?
                      AND j.state='completed' AND d.state='completed'""",
                 (job_id, owner_id),
@@ -183,6 +214,12 @@ class FencedResultGate:
             envelope.result_ref, result_ref,
         ):
             raise JobNotFound()
+        # Legacy approvals without a known retention window require manual
+        # migration, rather than blindly promising their file is available.
+        if row[4] not in {"available", "suspect"} or (
+            row[5] is None or row[5] <= timestamp
+        ):
+            raise BlobUnavailable()
         content = self._blobs.read_candidate(
             owner_id, job_id, row[1], now=timestamp,
         )
