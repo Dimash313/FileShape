@@ -60,7 +60,8 @@ async def _call(user_id: int, token: str, action: str, fields: dict, *, checkout
         try:
             async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as session:
                 async with session.post(
-                    url + "/" + ("refund-confirm" if action == "refund" else action), json=fields, headers=headers,
+                    url + "/" + {"refund": "refund-confirm", "refunded": "confirm-refunded"}.get(action, action),
+                    json=fields, headers=headers,
                     allow_redirects=False,
                 ) as response:
                     if response.status != 200:
@@ -126,5 +127,23 @@ async def confirm_stars_refund(user_id: int, token: str, charge_id: str) -> dict
         user_id, token, "refund", {"charge_id": charge_id},
     )
     if result.get("status") != "refunded" or type(result.get("changed")) is not bool:
+        raise StarsBridgeUnavailable("Stars refund not reconciled")
+    return result
+
+
+async def confirm_stars_paid_and_refunded(
+    user_id: int, token: str, order_id: str, amount: int,
+    currency: str, charge_id: str,
+) -> dict:
+    """Only if Telegram transaction history has BOTH matching directions."""
+    if not isinstance(order_id, str) or _ORDER.fullmatch(order_id) is None:
+        raise StarsBridgeUnavailable("Invalid refunded invoice")
+    result = await _call(
+        user_id, token, "refunded",
+        {"order_id": order_id, "amount": amount,
+         "currency": currency, "charge_id": charge_id},
+    )
+    if (result.get("order_id") != order_id or result.get("status") != "refunded"
+            or type(result.get("changed")) is not bool):
         raise StarsBridgeUnavailable("Stars refund not reconciled")
     return result
