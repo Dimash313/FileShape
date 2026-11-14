@@ -100,3 +100,15 @@ recovery deliberately fails local interrupted jobs and would conflict with
 resuming a durable outbox. A future activation PR must redesign restart
 recovery, authenticated input staging and fenced artifact publishing, then
 prove charge consistency under process crash and duplicate delivery.
+
+
+## Phase E0 — private local blob staging (5.0.6a; not wired)
+
+The [private staging adapter](PRIVATE_BLOB_STAGING.md) stores actual bytes
+in restrictive private files, with owner/job-scoped references, bounded
+resources, integrity checks and TTL metadata. It never publishes candidate
+outputs. This is a **single-host staging prototype**, not an object-storage
+cluster or production asset service. It remains disconnected from the
+existing API, bot and workers until cross-component atomic job admission,
+stale-lease-fenced result publication and offline orphan cleanup have
+independent regression tests.
