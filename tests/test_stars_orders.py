@@ -170,6 +170,51 @@ class StarsOrdersTests(unittest.TestCase):
             OWNER, "pack_10", now=NOW + 1800 + 14 * 86400 + 2,
         )["status"], "pending")
 
+    def test_paid_and_refunded_history_transitions_without_any_paid_entitlement(self):
+        order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
+        result, created = self.store.record_paid_and_refunded_stars_order(
+            OWNER, order["order_id"], "telegram_history_refund", 49, "XTR", now=NOW + 1,
+        )
+        self.assertEqual(result["status"], "refunded")
+        self.assertTrue(created)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 2)["pack_remaining"], 0)
+        self.assertIsNone(self.store.premium_expiry(OWNER))
+        replay, created = self.store.record_paid_and_refunded_stars_order(
+            OWNER, order["order_id"], "telegram_history_refund", 49, "XTR", now=NOW + 2,
+        )
+        self.assertFalse(created)
+        self.assertEqual(replay["status"], "refunded")
+        with self.assertRaises(ValueError):
+            self.store.record_stars_payment(
+                OWNER, order["order_id"], "telegram_history_refund", 49, "XTR", now=NOW + 3,
+            )
+        with self.assertRaises(ValueError):
+            self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW + 3)
+        with DurableJobStore(self.path) as reopened:
+            self.assertEqual(reopened.stars_order(OWNER, order["order_id"])["status"], "refunded")
+            self.assertEqual(reopened.usage_snapshot(OWNER, now=NOW + 3)["pack_remaining"], 0)
+
+    def test_refunded_history_rejects_wrong_price_owner_and_charge_reuse(self):
+        first = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        second = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        with self.assertRaises(ValueError):
+            self.store.record_paid_and_refunded_stars_order(
+                OWNER, first["order_id"], "refund_history", 20, "XTR", now=NOW,
+            )
+        with self.assertRaises(ValueError):
+            self.store.record_paid_and_refunded_stars_order(
+                OWNER + 1, first["order_id"], "refund_history", 19, "XTR", now=NOW,
+            )
+        self.assertEqual(self.store.stars_order(OWNER, first["order_id"])["status"], "pending")
+        self.store.record_paid_and_refunded_stars_order(
+            OWNER, first["order_id"], "refund_history", 19, "XTR", now=NOW,
+        )
+        with self.assertRaises(ValueError):
+            self.store.record_paid_and_refunded_stars_order(
+                OWNER, second["order_id"], "refund_history", 19, "XTR", now=NOW,
+            )
+        self.assertEqual(self.store.stars_order(OWNER, second["order_id"])["status"], "pending")
+
     def test_verified_order_fulfills_once_and_survives_restart(self):
         order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
         with self.assertRaises(ValueError):
