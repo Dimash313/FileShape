@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from services.stars_bridge import StarsBridgeUnavailable
 from services.stars_reconciliation import (
-    _incoming_invoice, reconcile_star_transactions,
+    _incoming_invoice, _outgoing_invoice_refund, reconcile_star_transactions,
 )
 
 OWNER = 34567
@@ -49,7 +49,7 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, {
             "scanned": 1, "matched": 1, "confirmed": 1,
-            "failed": 0, "complete": True,
+            "failed": 0, "refunded": 0, "refund_failed": 0, "complete": True,
         })
         self.bot.get_star_transactions.assert_awaited_once_with(
             offset=0, limit=100, request_timeout=20,
@@ -79,6 +79,49 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["scanned"], len(entries))
         self.assertEqual(result["matched"], 0)
         self.assertTrue(result["complete"])
+
+    async def test_telegram_outgoing_refund_is_reconciled_without_any_new_grant(self):
+        refund = transaction(refund=True, amount=-19, charge="original_invoice_charge")
+        refund.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(transactions=[refund])
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment", new_callable=AsyncMock) as paid,
+            patch("services.stars_reconciliation.confirm_stars_refund",
+                  new_callable=AsyncMock, return_value={"status": "refunded"}) as refunded,
+        ):
+            outcome = await reconcile_star_transactions(self.bot, now=NOW)
+        paid.assert_not_awaited()
+        refunded.assert_awaited_once_with(OWNER, self.bot.token, "original_invoice_charge")
+        self.assertEqual(outcome["refunded"], 1)
+        self.assertEqual(outcome["refund_failed"], 0)
+        self.assertEqual(outcome["confirmed"], 0)
+
+    async def test_failed_refund_api_delivery_is_not_claimed_successful(self):
+        refund = transaction(refund=True, amount=-19, charge="original_invoice_charge")
+        refund.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(transactions=[refund])
+        with patch(
+            "services.stars_reconciliation.confirm_stars_refund",
+            new_callable=AsyncMock, side_effect=StarsBridgeUnavailable("API offline"),
+        ):
+            outcome = await reconcile_star_transactions(self.bot, now=NOW)
+        self.assertEqual(outcome["refund_failed"], 1)
+        self.assertEqual(outcome["refunded"], 0)
+
+    def test_only_negative_outgoing_invoice_refunds_are_considered(self):
+        refund = transaction(refund=True, amount=-19)
+        refund.receiver.transaction_type = "invoice_payment"
+        self.assertEqual(_outgoing_invoice_refund(refund), (OWNER, "telegram_charge_1", NOW - 10))
+        other = transaction(refund=True, amount=-19)
+        other.receiver.transaction_type = "paid_media_payment"
+        self.assertIsNone(_outgoing_invoice_refund(other))
+        other = transaction(refund=True, amount=19)
+        other.receiver.transaction_type = "invoice_payment"
+        self.assertIsNone(_outgoing_invoice_refund(other))
+        other = transaction(refund=True, amount=-19)
+        other.receiver.transaction_type = "invoice_payment"
+        other.receiver.invoice_payload = "other-product"
+        self.assertIsNone(_outgoing_invoice_refund(other))
 
     async def test_multi_page_recovery_uses_offset_and_no_sort_direction_guess(self):
         transactions = [
