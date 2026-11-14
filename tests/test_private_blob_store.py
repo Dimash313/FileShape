@@ -1,5 +1,7 @@
 """Contract tests for local private artifact staging (not a public API)."""
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest.mock import patch
 import os
 from pathlib import Path
 import sqlite3
@@ -197,6 +199,113 @@ class PrivateBlobStoreTests(unittest.TestCase):
         symlink.symlink_to(self.root)
         with self.assertRaises((RuntimeError, OSError)):
             PrivateBlobStore(symlink)
+
+
+    def test_orphan_recovery_keeps_known_recent_and_unsafe_entries(self):
+        with self.new_store() as store:
+            live = store.stage_input(OWNER, b"preserve live", now=self.now)
+            os.utime(self.root / live, (self.now - 7200, self.now - 7200))
+            orphan = "O" * 32
+            recent = "R" * 32
+            symlink = "S" * 32
+            hardlink = "H" * 32
+            outside = Path(self.temp.name) / "outside"
+            outside.write_bytes(b"do not touch")
+            outside.chmod(0o600)
+            (self.root / orphan).write_bytes(b"old orphan")
+            (self.root / orphan).chmod(0o600)
+            os.utime(self.root / orphan, (self.now - 7200, self.now - 7200))
+            (self.root / recent).write_bytes(b"new orphan")
+            (self.root / recent).chmod(0o600)
+            (self.root / symlink).symlink_to(outside)
+            os.link(outside, self.root / hardlink)
+            os.utime(self.root / hardlink, (self.now - 7200, self.now - 7200))
+            (self.root / "config.txt").write_bytes(b"not our blob")
+            self.assertEqual(
+                store.reconcile_orphans(now=self.now, min_age_seconds=60),
+                1,
+            )
+            self.assertFalse((self.root / orphan).exists())
+            for name in (live, recent, symlink, hardlink, "config.txt"):
+                self.assertTrue((self.root / name).exists())
+            self.assertEqual(outside.read_bytes(), b"do not touch")
+            store.bind_input(OWNER, JOB, live, now=self.now)
+            self.assertEqual(store.read_input(OWNER, JOB, live, now=self.now), b"preserve live")
+            self.assertEqual(
+                store.reconcile_orphans(now=self.now, min_age_seconds=60), 0,
+            )
+
+    def test_crash_window_orphan_and_bounded_cleanup(self):
+        with self.new_store() as store:
+            refs = [store.stage_input(OWNER, b"orphan", now=self.now) for _ in range(3)]
+            for ref in refs:
+                store._db.execute("DELETE FROM staged_blobs WHERE ref=?", (ref,))
+                os.utime(self.root / ref, (self.now - 7200, self.now - 7200))
+            self.assertEqual(
+                store.reconcile_orphans(now=self.now, min_age_seconds=60, limit=2),
+                2,
+            )
+            self.assertEqual(
+                store.reconcile_orphans(now=self.now, min_age_seconds=60, limit=2),
+                1,
+            )
+            self.assertEqual(
+                store.reconcile_orphans(now=self.now, min_age_seconds=60), 0,
+            )
+            for ref in refs:
+                self.assertFalse((self.root / ref).exists())
+
+    def test_invalid_cleanup_arguments_fail_closed(self):
+        with self.new_store() as store:
+            for grace in (0, 59, -1, True, "300", float("inf"), 9 * 86400):
+                with self.subTest(grace=grace), self.assertRaises(ValueError):
+                    store.reconcile_orphans(min_age_seconds=grace)
+            for limit in (0, -1, True, 1.0, 1001):
+                with self.subTest(limit=limit), self.assertRaises(ValueError):
+                    store.reconcile_orphans(limit=limit)
+
+    def test_reconciliation_cannot_delete_inflight_stage_from_other_connection(self):
+        with self.new_store() as writer, self.new_store() as cleaner:
+            wrote = Event()
+            entered_sweep = Event()
+            release = Event()
+            original_write = writer._write_private
+            original_open = cleaner._open
+
+            def paused_write(ref, data):
+                original_write(ref, data)
+                wrote.set()
+                if not release.wait(10):
+                    raise AssertionError("Timed out before staging could commit")
+
+            def observed_cleaner_open():
+                entered_sweep.set()
+                return original_open()
+
+            with patch.object(writer, "_write_private", side_effect=paused_write), \\
+                    patch.object(cleaner, "_open", side_effect=observed_cleaner_open):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    staged = pool.submit(
+                        writer.stage_input, OWNER, b"must survive", now=self.now,
+                    )
+                    self.assertTrue(wrote.wait(5))
+                    # An uncommitted file is older than this simulated clock.
+                    swept = pool.submit(
+                        cleaner.reconcile_orphans,
+                        now=self.now + 600, min_age_seconds=60,
+                    )
+                    self.assertTrue(entered_sweep.wait(5))
+                    try:
+                        self.assertFalse(swept.done())
+                    finally:
+                        release.set()
+                    ref = staged.result(timeout=10)
+                    self.assertEqual(swept.result(timeout=10), 0)
+            writer.bind_input(OWNER, JOB, ref, now=self.now)
+            self.assertEqual(
+                writer.read_input(OWNER, JOB, ref, now=self.now + 1),
+                b"must survive",
+            )
 
     def test_closed_store_rejects_access(self):
         store = self.new_store()
