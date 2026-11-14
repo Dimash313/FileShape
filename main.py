@@ -30,6 +30,7 @@ from services.bot_operations import (
     reserve_bot_operation, settle_bot_operation,
 )
 from services.campaign_bridge import forward_campaign_join
+from services.stars_reconciliation import star_reconciliation_loop
 from services.stars_bridge import (
     StarsBridgeUnavailable, checkout_enabled, create_stars_quote,
     approve_stars_checkout, confirm_stars_payment,
@@ -937,9 +938,18 @@ async def main():
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher()
     dp.include_router(router)
+    # Telegram's getStarTransactions ledger is independently authoritative.
+    # Recover successful_payment events lost while the API/bot was offline
+    # without accessing the API-owned SQLite from the bot container.
+    reconciliation = asyncio.create_task(star_reconciliation_loop(bot))
     try:
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member", "pre_checkout_query"])
+        await dp.start_polling(
+            bot, allowed_updates=["message", "callback_query", "chat_member", "pre_checkout_query"],
+        )
     finally:
+        reconciliation.cancel()
+        with suppress(asyncio.CancelledError):
+            await reconciliation
         await bot.session.close()
 
 
