@@ -140,3 +140,19 @@ live in separate persistence systems. Missing/expired result bytes after
 a committed charge must be reconciled before activation; cross-server
 shared storage, worker authentication, safe download leases, crash recovery
 and large-scale load tests remain outstanding. No app/API routes switched.
+
+
+## Phase E3 — result-loss reconciliation (5.0.8; opt-in)
+
+See [RESULT_RECOVERY.md](RESULT_RECOVERY.md). The new maintenance adapter
+records the candidate's authorized expiry at approval, distinguishes normal
+TTL expiry from premature missing/corrupted results, requires two separate
+failed checks before confirming loss, and uses a transactional, idempotent
+operation-credit compensation. Pack refunds preserve capacity for other
+outstanding reservations and remain durably pending if the account is full.
+
+This is **NOT live recovery**: the two databases and local file bytes are not
+one atomic persistence system. Confirmation based on repeated read errors can
+still misclassify a temporary storage outage. Charge-recovery policy,
+operator review for ambiguous loss, cross-store migration, download leases
+and multi-host storage must be verified before any route is switched.
