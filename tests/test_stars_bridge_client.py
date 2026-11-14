@@ -8,6 +8,7 @@ from api.stars_auth import stars_scope
 from services.stars_bridge import (
     StarsBridgeUnavailable, approve_stars_checkout, checkout_enabled,
     confirm_stars_payment, confirm_stars_refund, create_stars_quote,
+    confirm_stars_paid_and_refunded,
 )
 
 TOKEN = "123456:TEST"
@@ -126,6 +127,26 @@ class StarsBridgeClientTests(unittest.IsolatedAsyncioTestCase):
             await confirm_stars_refund(USER, TOKEN, "charge_001")
         self.assertEqual(refund.url, BASE + "/refund-confirm")
         self.assert_signed(refund, "refund")
+
+    async def test_atomic_refunded_history_uses_distinct_body_signed_scope(self):
+        receipt = Session(FakeResponse(data={
+            "order_id": ORDER, "sku": "pack_10",
+            "status": "refunded", "changed": True,
+        }))
+        with self.env(enabled=False), patch(
+            "services.stars_bridge.aiohttp.ClientSession",
+            return_value=AsyncScope(receipt),
+        ):
+            result = await confirm_stars_paid_and_refunded(
+                USER, TOKEN, ORDER, 19, "XTR", "charge_full_refund",
+            )
+        self.assertTrue(result["changed"])
+        self.assertEqual(receipt.url, BASE + "/confirm-refunded")
+        self.assertEqual(receipt.data, {
+            "order_id": ORDER, "amount": 19, "currency": "XTR",
+            "charge_id": "charge_full_refund",
+        })
+        self.assert_signed(receipt, "refunded")
 
     async def test_invalid_price_response_missing_gate_and_http_error_fail_closed(self):
         invalid = Session(FakeResponse(data={
