@@ -154,6 +154,9 @@ class StarsOrderMixin:
                                    currency: str, *, now=None) -> bool:
         """Approve only an exact invoice, persisting its non-prunable status.
 
+        Pack invoices reserve possible future balance before a positive
+        precheckout answer; a paid order must not be rejected solely because
+        multiple unfulfilled invoices filled available pack capacity.
         A successful Telegram pre_checkout_query may be charged even if the
         API or bot crashes before seeing successful_payment. The reservation
         against automatic quote deletion MUST commit before replying True.
@@ -166,11 +169,37 @@ class StarsOrderMixin:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 row = self._db.execute(
-                    """SELECT amount,currency,status,expires_at FROM stars_orders
-                       WHERE order_id=? AND owner_id=?""", (order_id, owner_id),
+                    """SELECT sku,amount,currency,status,expires_at,never_prechecked
+                       FROM stars_orders WHERE order_id=? AND owner_id=?""",
+                    (order_id, owner_id),
                 ).fetchone()
-                approved = bool(row and row[0] == amount and row[1] == currency
-                                and row[2] == "pending" and now <= float(row[3]))
+                approved = bool(row and row[1] == amount and row[2] == currency
+                                and row[3] == "pending" and now <= float(row[4]))
+                if approved and row[0] in ("pack_10", "pack_30") and row[5] == 1:
+                    # A previously approved invoice may settle long after
+                    # its pre-checkout expiry. Reserve enough capacity for
+                    # every such pending invoice, not just the active quote.
+                    balance_row = self._db.execute(
+                        "SELECT balance FROM operation_pack_balances WHERE owner_id=?",
+                        (owner_id,),
+                    ).fetchone()
+                    balance = int(balance_row[0]) if balance_row else 0
+                    outstanding = self._db.execute(
+                        """SELECT COUNT(*) FROM operation_usage
+                           WHERE owner_id=? AND source='pack' AND status='reserved'""",
+                        (owner_id,),
+                    ).fetchone()[0]
+                    approved_pending = self._db.execute(
+                        """SELECT COALESCE(SUM(CASE sku
+                           WHEN 'pack_10' THEN 10 WHEN 'pack_30' THEN 30
+                           ELSE 0 END),0)
+                           FROM stars_orders WHERE owner_id=? AND status='pending'
+                           AND never_prechecked=0 AND sku IN ('pack_10','pack_30')""",
+                        (owner_id,),
+                    ).fetchone()[0]
+                    incoming = PRODUCTS[row[0]]["operations"]
+                    if balance + outstanding + approved_pending + incoming > 10000:
+                        approved = False
                 if approved:
                     self._db.execute(
                         """UPDATE stars_orders SET never_prechecked=0
