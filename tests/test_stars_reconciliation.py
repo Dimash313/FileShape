@@ -143,6 +143,62 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["complete"])
         self.assertEqual(self.bot.get_star_transactions.await_args_list[1].kwargs["offset"], 100)
 
+    async def test_refund_is_processed_before_paid_receipt_regardless_of_page_order(self):
+        paid = transaction(charge="same_charge", amount=19)
+        refunded = transaction(charge="same_charge", refund=True, amount=-19)
+        refunded.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[paid, refunded],
+        )
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as confirm,
+            patch("services.stars_reconciliation.confirm_stars_refund",
+                  new_callable=AsyncMock, return_value={"status": "refunded"}) as refund,
+        ):
+            outcome = await reconcile_star_transactions(self.bot, now=NOW)
+        confirm.assert_not_awaited()
+        refund.assert_awaited_once_with(OWNER, self.bot.token, "same_charge")
+        self.assertEqual(outcome["matched"], 1)
+        self.assertEqual(outcome["refunded"], 1)
+        self.assertEqual(outcome["confirmed"], 0)
+
+    async def test_acknowledgement_cache_skips_replay_until_bot_restart(self):
+        charge = transaction(charge="cached_charge")
+        self.bot.get_star_transactions.return_value = S(transactions=[charge])
+        cache = set()
+        with patch(
+            "services.stars_reconciliation.confirm_stars_payment",
+            new_callable=AsyncMock,
+        ) as confirm:
+            first = await reconcile_star_transactions(
+                self.bot, now=NOW, acknowledged_charges=cache,
+            )
+            second = await reconcile_star_transactions(
+                self.bot, now=NOW, acknowledged_charges=cache,
+            )
+        confirm.assert_awaited_once()
+        self.assertEqual(cache, {"cached_charge"})
+        self.assertEqual(first["confirmed"], 1)
+        self.assertEqual(second["confirmed"], 0)
+
+    async def test_refund_api_failure_still_suppresses_its_paid_receipt(self):
+        paid = transaction(charge="same_charge")
+        refunded = transaction(charge="same_charge", refund=True, amount=-19)
+        refunded.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(transactions=[paid, refunded])
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as paid_confirm,
+            patch("services.stars_reconciliation.confirm_stars_refund",
+                  new_callable=AsyncMock, side_effect=StarsBridgeUnavailable()) as refund_confirm,
+        ):
+            outcome = await reconcile_star_transactions(self.bot, now=NOW)
+        paid_confirm.assert_not_awaited()
+        refund_confirm.assert_awaited_once()
+        self.assertEqual(outcome["refund_failed"], 1)
+        self.assertEqual(outcome["confirmed"], 0)
+
     async def test_failed_internal_api_does_not_claim_complete_reconciliation(self):
         self.bot.get_star_transactions.return_value = S(transactions=[
             transaction(charge="missing_delivery"),
