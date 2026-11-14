@@ -7,11 +7,14 @@ import logging
 import mimetypes
 import os
 from pathlib import Path
+from collections.abc import Awaitable, Callable
+from typing import Any
 import sqlite3
 
 from fastapi import HTTPException
 
 from api.artifacts import ArtifactCapacity, ArtifactUnavailable
+from api.architecture_ports import ArtifactStoragePort, DispatchHandlePort, JobDispatchPort, JobMetadataPort
 from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.durable_jobs import IdempotencyConflict, IdempotencyPending
 from api.worker_runner import WorkerTimeout
@@ -27,7 +30,17 @@ RESULT_NAMES = frozenset({
 
 
 class BackgroundJobs:
-    def __init__(self, store, manager, artifacts, worker, max_input, max_result, *, max_requests=None):
+    def __init__(
+        self,
+        store: JobMetadataPort,
+        manager: JobDispatchPort,
+        artifacts: ArtifactStoragePort,
+        worker: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
+        max_input: int,
+        max_result: int,
+        *,
+        max_requests: int | None = None,
+    ):
         if max_requests is None:
             max_requests = manager.capacity + 20
         if type(max_requests) is not int or not 1 <= max_requests <= 1000:
@@ -38,7 +51,7 @@ class BackgroundJobs:
         self.worker = worker
         self.max_input = max_input
         self.max_result = max_result
-        self.handles = {}
+        self.handles: dict[str, DispatchHandlePort] = {}
         self.owners = {}
         # One reservation follows a newly claimed job through preparation,
         # execution and any deferred metadata update. No accepted job loses
