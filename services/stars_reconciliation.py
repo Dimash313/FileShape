@@ -9,6 +9,7 @@ Telegram stops exposing old transactions; report truncation for operators.
 """
 import asyncio
 import logging
+import os
 import re
 import time
 
@@ -23,6 +24,7 @@ _HISTORY_PAGE_SIZE = 100
 MAX_HISTORY_PAGES = 10
 HISTORY_LOOKBACK_SECONDS = 30 * 86400
 HISTORY_SCAN_SECONDS = 300
+ALERT_COOLDOWN_SECONDS = 30 * 60
 _PAYLOAD = re.compile(r"fileshape:([0-9a-f]{32})\Z")
 
 
@@ -206,11 +208,50 @@ async def reconcile_star_transactions(
     }
 
 
+def _owner_alert_chat() -> int | None:
+    """A missing/invalid owner ID must never send billing reports to others."""
+    raw = os.getenv("FILESHAPE_OWNER_ID", "").strip()
+    if not raw.isdecimal() or len(raw) > 19:
+        return None
+    owner = int(raw)
+    return owner if 0 < owner <= 2**63 - 1 else None
+
+
+class ReconciliationAlert:
+    """Bounded owner-only notification, without charge IDs, tokens or user data."""
+
+    def __init__(self, cooldown_seconds=ALERT_COOLDOWN_SECONDS):
+        if type(cooldown_seconds) not in (int, float) or cooldown_seconds <= 0:
+            raise ValueError("Invalid billing alert cooldown")
+        self.cooldown_seconds = cooldown_seconds
+        self.last_sent = None
+
+    async def send(self, bot, message: str, *, now=None) -> bool:
+        owner = _owner_alert_chat()
+        if owner is None or not isinstance(message, str) or len(message) > 400:
+            return False
+        if now is None:
+            now = time.monotonic()
+        if (
+            self.last_sent is not None
+            and now - self.last_sent < self.cooldown_seconds
+        ):
+            return False
+        self.last_sent = now
+        try:
+            await bot.send_message(chat_id=owner, text=message)
+        except Exception:
+            logger.exception("Failed to notify the bot owner of Stars reconciliation problem")
+            return False
+        return True
+
+
 async def star_reconciliation_loop(bot):
     """Run from bot startup; a transient API outage must never stop polling."""
     # In-memory optimization only: authoritative idempotency is persisted in
     # the API. Startup replays from Telegram's ledger after every restart.
     acknowledged_charges = set()
+    alerts = ReconciliationAlert()
     while True:
         try:
             result = await reconcile_star_transactions(
@@ -223,8 +264,18 @@ async def star_reconciliation_loop(bot):
                     "Stars reconciliation incomplete: scanned=%d matching=%d paid_failed=%d refund_failed=%d",
                     result["scanned"], result["matched"], result["failed"], result["refund_failed"],
                 )
+                await alerts.send(
+                    bot, "⚠️ FileShape Stars: сверка платежей неполная. "
+                    f"Просмотрено: {result['scanned']}; не подтверждено: "
+                    f"{result['failed']}; возвраты: {result['refund_failed']}. "
+                    "Не включай продажи до устранения ошибки.",
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Stars reconciliation could not read Telegram transactions")
+            await alerts.send(
+                bot, "⚠️ FileShape Stars: история Telegram недоступна, "
+                "сверка платежей и возвратов не выполнена.",
+            )
         await asyncio.sleep(HISTORY_SCAN_SECONDS)
