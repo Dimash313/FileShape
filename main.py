@@ -1,5 +1,6 @@
 """FileShape: Telegram-based PDF and image toolbox."""
 import asyncio
+from datetime import datetime, timezone
 from contextlib import suppress, asynccontextmanager
 import logging
 import os
@@ -24,7 +25,7 @@ from config import get_settings
 from services.bot_access import check_processing_access
 from services.bot_operations import (
     BotOperationQuotaExceeded, BotOperationUnavailable,
-    reserve_bot_operation, settle_bot_operation,
+    reserve_bot_operation, settle_bot_operation, fetch_bot_usage,
 )
 from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
@@ -310,12 +311,42 @@ async def help_message(message: Message):
     )
 
 
+async def usage_profile_text(user_id: int, token: str) -> str:
+    """Display only verified server-side balances; never cache a failed lookup."""
+    try:
+        usage = await fetch_bot_usage(user_id, token)
+    except (BotOperationQuotaExceeded, BotOperationUnavailable):
+        return (
+            "👤 Профиль FileShape\n\n"
+            "Не удалось получить актуальный баланс. "
+            "Попробуй открыть профиль позже. Никакие цифры не показываются."
+        )
+    expiry = usage["pro_expires_at"]
+    pro_line = (
+        "\nPro действует до: "
+        + datetime.fromtimestamp(expiry, tz=timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+        if expiry is not None else ""
+    )
+    return (
+        "👤 Профиль FileShape\n\n"
+        f"Тариф: {'Pro' if usage['plan'] == 'pro' else 'Free'}\n"
+        f"За день UTC: {usage['daily_used']} / {usage['daily_limit']} операций\n"
+        f"Осталось сегодня: {usage['daily_remaining']}\n"
+        f"Пакетные операции: {usage['pack_remaining']}\n"
+        f"Учётный день: {usage['day_utc']} · сброс в 00:00 UTC"
+        + pro_line
+        + "\n\nОплата Telegram Stars пока недоступна."
+    )
+
+
 @router.message(Command("profile"))
-async def profile_message(message: Message):
+async def profile_message(message: Message, bot: Bot):
+    if (message.chat.type != "private" or message.from_user is None
+            or message.chat.id != message.from_user.id):
+        await message.answer("Профиль доступен только в личном чате.")
+        return
     await message.answer(
-        "👤 Профиль FileShape\\n\\n"
-        "Операции учитываются сервером: Free — 10 успешных действий за сутки UTC. "
-        "Персональный остаток и дата окончания Pro появятся здесь в обновлении профиля.",
+        await usage_profile_text(message.from_user.id, bot.token),
         reply_markup=back_keyboard(),
     )
 
@@ -333,7 +364,7 @@ async def plans_message(message: Message):
 
 
 @router.callback_query(F.data.startswith("nav:"))
-async def navigate(callback: CallbackQuery, state: FSMContext):
+async def navigate(callback: CallbackQuery, state: FSMContext, bot: Bot):
     if not isinstance(callback.message, Message):
         await callback.answer("Открой личный чат с ботом.", show_alert=True)
         return
@@ -351,10 +382,11 @@ async def navigate(callback: CallbackQuery, state: FSMContext):
         text = f"{title}\\n\\n{description}\\n\\nОтправь файл в этот чат — бот покажет доступные действия."
         markup = back_keyboard()
     elif section == "profile":
-        text = ("👤 Профиль FileShape\\n\\n"
-                "Сервер учитывает операции: Free — 10 успешных действий в сутки UTC. "
-                "Персональный остаток появится здесь в обновлении профиля.")
-        markup = back_keyboard()
+        # Answer immediately before a potentially slow internal API request.
+        await callback.answer()
+        text = await usage_profile_text(callback.from_user.id, bot.token)
+        await callback.message.edit_text(text, reply_markup=back_keyboard())
+        return
     elif section == "plans":
         text = ("💎 Тарифы FileShape\\n\\n"
                 "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке. "

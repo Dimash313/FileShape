@@ -5,6 +5,8 @@ the internal metering service is missing. The opaque request ID is retried
 unchanged so a lost response cannot create multiple quota claims.
 """
 import asyncio
+import math
+from datetime import date
 import logging
 import os
 import re
@@ -115,3 +117,43 @@ async def settle_bot_operation(user_id: int, token: str, job_id: str, success: b
     )
     if payload.get("job_id") != job_id or payload.get("state") != expected:
         raise BotOperationUnavailable("Unexpected terminal operation state")
+
+
+async def fetch_bot_usage(user_id: int, token: str) -> dict:
+    """Read trusted API usage only; never infer balances from client state."""
+    snapshot = await _call(user_id, token, "usage", {}, "usage")
+    plan = snapshot.get("plan")
+    day = snapshot.get("day_utc")
+    limit = 100 if plan == "pro" else 10 if plan == "free" else None
+    if limit is None or not isinstance(day, str) or len(day) != 10:
+        raise BotOperationUnavailable("Invalid usage profile")
+    try:
+        if date.fromisoformat(day).isoformat() != day:
+            raise ValueError("Noncanonical day")
+    except ValueError:
+        raise BotOperationUnavailable("Invalid usage date") from None
+    used, remaining = snapshot.get("daily_used"), snapshot.get("daily_remaining")
+    pack = snapshot.get("pack_remaining")
+    expiry = snapshot.get("pro_expires_at")
+    if (
+        type(snapshot.get("daily_limit")) is not int
+        or snapshot["daily_limit"] != limit
+        or type(used) is not int or not 0 <= used <= limit
+        or type(remaining) is not int or remaining != limit - used
+        or type(pack) is not int or not 0 <= pack <= 10000
+        or type(snapshot.get("enforced")) is not bool
+        or type(snapshot.get("purchases_enabled")) is not bool
+        or not snapshot["enforced"]
+    ):
+        raise BotOperationUnavailable("Usage enforcement not confirmed")
+    if plan == "pro":
+        if type(expiry) not in (int, float) or not math.isfinite(expiry) or not 0 < expiry <= 253402300799:
+            raise BotOperationUnavailable("Invalid Pro expiry")
+    elif expiry is not None:
+        raise BotOperationUnavailable("Unexpected Pro expiry")
+    return {
+        "plan": plan, "day_utc": day, "daily_limit": limit,
+        "daily_used": used, "daily_remaining": remaining,
+        "pack_remaining": pack, "pro_expires_at": expiry,
+        "purchases_enabled": snapshot["purchases_enabled"],
+    }

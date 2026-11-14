@@ -401,6 +401,23 @@ def _verify_bot_operation(user: str, timestamp: str, nonce: str,
         raise HTTPException(status_code=401, detail="Unauthorized") from None
 
 
+@api.post("/internal/v1/operations/usage")
+async def internal_bot_usage(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Read-only, owner-scoped bot profile via a signed and replay-guarded assertion."""
+    await _read_bot_operation_body(request, allowed_keys=set())
+    user_id = _verify_bot_operation(
+        user, timestamp, nonce, signature, scope="usage"
+    )
+    await enforce_rate_limit(user_id)
+    return _usage_response(user_id)
+
+
 @api.post("/internal/v1/operations/reserve")
 async def internal_bot_reserve_operation(
     request: Request,
@@ -780,10 +797,7 @@ async def conversion_job(user_id, uploads):
                 await upload.close()
 
 
-@api.get("/api/v1/usage")
-async def usage_status(user_id: int = Depends(authenticated_user)):
-    """Owner-scoped persisted allowances from the processing quota ledger."""
-    await enforce_rate_limit(user_id)
+def _usage_response(user_id: int) -> JSONResponse:
     if jobs is None or not hasattr(jobs, "usage_snapshot"):
         raise HTTPException(status_code=503, detail="Учёт операций временно недоступен")
     try:
@@ -796,6 +810,13 @@ async def usage_status(user_id: int = Depends(authenticated_user)):
         "enforced": job_runtime is not None and isinstance(jobs, DurableJobStore),
         "purchases_enabled": False,
     }, headers={"Cache-Control": "no-store"})
+
+
+@api.get("/api/v1/usage")
+async def usage_status(user_id: int = Depends(authenticated_user)):
+    """Owner-scoped persisted allowances from the processing quota ledger."""
+    await enforce_rate_limit(user_id)
+    return _usage_response(user_id)
 
 
 @api.get("/api/v1/session")
