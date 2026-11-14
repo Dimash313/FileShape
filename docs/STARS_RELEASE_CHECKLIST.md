@@ -33,6 +33,38 @@
 | Files, job IDs, user privacy | Billing database stores only owner, order, charge, timestamps and amounts; no user files |
 | Public bot support entry point | `/paysupport` reaches a real operator and supports refund investigation |
 
+## Test-session evidence record (operator, not automated)
+
+Run this on a **separate Telegram test bot and test API/SQLite volume**.
+Do not use real customers or copy production bot tokens into a test repository.
+
+1. Set the test bot and test API to the same internal signing token and
+   reachable private Stars endpoint; configure a real support username.
+   Keep the production flag `FILESHAPE_STARS_CHECKOUT_ENABLED=false`.
+2. On the isolated test environment only, enable the Stars checkout flag on
+   **both** services, then send `/start` and open the Stars purchase menu.
+3. For each product, save a redacted screenshot of the invoice's **XTR price**,
+   the Telegram payment confirmation, and the corresponding server-side
+   order state (`fulfilled`). Do not capture tokens, Telegram charge IDs,
+   customer IDs or raw private database dumps in public CI artifacts.
+4. Re-deliver the same trusted payment event, restart bot and API, and
+   confirm the balance/expiry is unchanged after reconciliation.
+5. Stop the API, complete a **test** invoice, restore the API and wait for
+   the history scanner; confirm one grant and no unacknowledged receipt.
+6. Use the official test-environment refund mechanism, including a refund
+   while the API is unreachable. Confirm a `refunded` order and correct
+   balance/debt or Pro expiry, with no subsequent re-grant.
+7. Intentionally break the internal endpoint and truncate the transaction
+   scan; verify owner-only alerts and that no new grant is made from
+   incomplete history. Restore the endpoint and repeat a complete scan.
+8. Disable checkout on both test services and verify new invoices are
+   refused. Record the test date, environment, redacted evidence location,
+   Git commit SHA, expected vs observed results, and operator sign-off.
+
+If the official Telegram test environment does not support a refund scenario,
+record it as **not tested** and keep the production release gate closed.
+A green GitHub Actions run does not prove any of these Telegram interactions.
+
 ## Production readiness decision
 
 1. Green final-head GitHub Actions: full Python tests, Mini App typecheck/build, Docker image build.
