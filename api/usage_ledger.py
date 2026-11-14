@@ -141,7 +141,13 @@ class UsageQuotaMixin:
                         "SELECT balance FROM operation_pack_balances WHERE owner_id=?",
                         (owner_id,),
                     ).fetchone()
-                    balance = (int(row[0]) if row else 0) + operations
+                    debts = self._db.execute(
+                        "SELECT debt FROM stars_pack_debts WHERE owner_id=?",
+                        (owner_id,),
+                    ).fetchone()
+                    debt = int(debts[0]) if debts else 0
+                    applied = min(operations, debt)
+                    balance = (int(row[0]) if row else 0) + operations - applied
                     # Outstanding pack-backed operations can still fail and be
                     # refunded. Reserve room for their eventual return.
                     pending = self._db.execute(
@@ -151,6 +157,11 @@ class UsageQuotaMixin:
                     ).fetchone()[0]
                     if balance + pending > MAX_PACK_BALANCE:
                         raise ValueError("Pack balance limit")
+                    if applied:
+                        self._db.execute(
+                            "UPDATE stars_pack_debts SET debt=debt-? WHERE owner_id=?",
+                            (applied, owner_id),
+                        )
                     self._db.execute(
                         """INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)
                            ON CONFLICT(owner_id) DO UPDATE SET balance=excluded.balance""",
@@ -248,10 +259,21 @@ class UsageQuotaMixin:
             (status, now, operation_key),
         )
         if row[1] == "pack" and not success:
-            self._db.execute(
-                "UPDATE operation_pack_balances SET balance=balance+1 WHERE owner_id=?",
-                (owner_id,),
-            )
+            # A refunded purchase may have left an outstanding pack debt.
+            # Recover this operation into debt before making it spendable.
+            debt = self._db.execute(
+                "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (owner_id,),
+            ).fetchone()
+            if debt and debt[0] > 0:
+                self._db.execute(
+                    "UPDATE stars_pack_debts SET debt=debt-1 WHERE owner_id=? AND debt>0",
+                    (owner_id,),
+                )
+            else:
+                self._db.execute(
+                    "UPDATE operation_pack_balances SET balance=balance+1 WHERE owner_id=?",
+                    (owner_id,),
+                )
         return True
 
     def settle_operation(self, owner_id, operation_key, *, success, now=None):
