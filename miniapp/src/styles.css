@@ -528,3 +528,20 @@ h1 {
   .campaign-toolbar { flex-direction:column; }
   .campaign-card-top { flex-wrap:wrap; }
 }
+
+/* 4.25a — real read-only usage profile, intentionally achromatic. */
+.usage-profile{display:flex;flex-direction:column;gap:12px;margin:16px 0;padding:16px;border:1px solid var(--line-strong);border-radius:15px;background:var(--surface-raised)}
+.usage-heading{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.usage-heading strong{color:var(--text-primary);font-size:14px}
+.usage-heading button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:7px 11px;border:1px solid var(--line-strong);border-radius:9px;background:var(--surface-interactive);color:var(--text-primary);font-size:12px}
+.usage-heading button:disabled{opacity:.6}
+.usage-plan{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.usage-plan span,.usage-grid span{font-size:11px;color:var(--text-secondary)}
+.usage-plan strong{border-radius:999px;border:1px solid #777;background:#272727;padding:5px 13px;color:#f5f5f5;font-size:12px}
+.usage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.usage-grid>div{min-width:0;display:flex;flex-direction:column;gap:7px;border-radius:10px;background:var(--surface-interactive);padding:13px 11px}
+.usage-grid strong{font-size:21px;font-variant-numeric:tabular-nums;color:var(--text-primary);overflow-wrap:anywhere}
+.usage-profile .usage-hint{font-size:11px;line-height:1.55;color:var(--text-secondary);margin:0}
+.usage-profile .usage-reset{display:flex;align-items:center;gap:7px;font-size:11px;line-height:1.5;color:var(--text-secondary);margin:0}
+.usage-profile .usage-error{font-size:12px;line-height:1.55;border:1px solid #777;background:#282828;color:#f1f1f1;padding:12px;margin:0;border-radius:10px}
+@media(max-width:350px){.usage-grid{grid-template-columns:1fr}.usage-heading{align-items:flex-start;flex-wrap:wrap}}

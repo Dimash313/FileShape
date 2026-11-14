@@ -233,3 +233,57 @@ test('unsafe retry IDs or keys and missing auth cannot start a control request',
   await assert.rejects(api.retryBackgroundJob(jobId, file, 'txt:docx', '', 'valid-key-request-12345'));
   assert.equal(calls, 0);
 });
+
+test('profile uses signed Telegram identity, no-store and server-confirmed numbers', async () => {
+  environment(); const api = await load(); const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return Response.json({
+      plan: 'free', day_utc: '2026-11-14', daily_limit: 10, daily_used: 3,
+      daily_remaining: 7, pack_remaining: 10, pro_expires_at: null,
+      enforced: true, purchases_enabled: false,
+    });
+  };
+  const profile = await api.getUsageSnapshot();
+  assert.equal(profile.daily_remaining, 7);
+  assert.equal(profile.pack_remaining, 10);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/usage');
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.equal(requests[0].options.headers['X-Telegram-Init-Data'], 'signed-launch-data');
+});
+
+test('untrusted/invalid profile never becomes an account balance', async () => {
+  environment(); const api = await load();
+  globalThis.fetch = async () => Response.json({
+    plan: 'pro', day_utc: '2026-11-14', daily_limit: 100, daily_used: 9,
+    daily_remaining: 91, pack_remaining: 30, pro_expires_at: null,
+    enforced: true, purchases_enabled: true,
+  });
+  await assert.rejects(api.getUsageSnapshot(), /некорректный профиль/);
+});
+
+test('profile access is denied without signed Telegram launch, no request is made', async () => {
+  environment(); window.Telegram.WebApp.initData = ''; const api = await load();
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('unexpected fetch'); };
+  await assert.rejects(api.getUsageSnapshot(), error => error.status === 401);
+  assert.equal(called, false);
+});
+
+test('profile correctly handles unauthorized and offline servers without fake balance', async () => {
+  environment(); const api = await load();
+  globalThis.fetch = async () => new Response(null, { status: 401 });
+  await assert.rejects(api.getUsageSnapshot(), error => error.status === 401);
+  globalThis.fetch = async () => new Response(null, { status: 503 });
+  await assert.rejects(api.getUsageSnapshot(), error => error.status === 503);
+});
+
+test('pre-aborted profile request never fetches data', async () => {
+  environment(); const api = await load();
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; return Response.json({}); };
+  const signal = new AbortController(); signal.abort();
+  await assert.rejects(api.getUsageSnapshot(signal.signal), error => error.name === 'AbortError');
+  assert.equal(requests, 0);
+});
