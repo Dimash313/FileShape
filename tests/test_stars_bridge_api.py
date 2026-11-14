@@ -6,7 +6,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from fastapi import HTTPException
 import httpx
@@ -100,6 +100,25 @@ class StarsApiTests(unittest.IsolatedAsyncioTestCase):
                 (await self.post("precheckout", check)).json(), {"approved": False}
             )
         self.assertEqual(paid.headers["cache-control"], "no-store")
+
+    async def test_flooded_quote_requests_are_capped_without_paid_grants(self):
+        with (
+            patch.dict(os.environ, {
+                "FILESHAPE_STARS_CHECKOUT_ENABLED": "true",
+                "FILESHAPE_SUPPORT_USERNAME": "FileShapeHelp",
+            }),
+            patch.object(server, "enforce_rate_limit", new_callable=AsyncMock),
+        ):
+            for _ in range(5):
+                item = await self.post("quote", {"sku": "pack_10"})
+                self.assertEqual(item.status_code, 200, item.text)
+            blocked = await self.post("quote", {"sku": "pack_10"})
+        self.assertEqual(blocked.status_code, 429, blocked.text)
+        self.assertEqual(self.store._db.execute(
+            "SELECT COUNT(*) FROM stars_orders WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 5)
+        self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 0)
+        self.assertIsNone(self.store.premium_expiry(OWNER))
 
     async def test_tampered_claim_replay_and_refund(self):
         order = self.store.create_stars_order(OWNER, "pack_30")
