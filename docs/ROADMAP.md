@@ -70,3 +70,8 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 - [ ] Run load tests, end-to-end real Telegram bot/Android Mini App tests, and error-flow regression matrix.
 - [ ] Validate product wording, transparent pricing/renewal/refund handling and user privacy disclosures.
 - [ ] Launch only with explicit production authorization and an incident/rollback procedure.
+
+
+## FileShape 5.0 — architecture rebuild (proposed; staged)
+
+Architecture migration design and mandatory invariants: [ARCHITECTURE_5.md](ARCHITECTURE_5.md). This is a **proposal**, not a deployed or benchmarked architecture. Implement contract-tested boundaries before replacing SQLite or in-process execution. Keep existing quotas, owner isolation, file cleanup and disabled Stars checkout intact. Proceed with measured phases A–F and separate PRs; do not claim 100,000 concurrent conversions without representative load tests. The earlier 4.26 premium UI milestone remains planned, with sequencing to be agreed after the architecture foundation review.
