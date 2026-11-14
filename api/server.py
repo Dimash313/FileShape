@@ -32,7 +32,7 @@ from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
 from api.ingress import UploadIngressGuard
 from api.internal_access import ReplayGuard
-from api.stars_auth import stars_scope
+from api.stars_auth import stars_scope, checkout_enabled as stars_checkout_enabled
 from api.stars_orders import PRODUCTS
 from api.campaign_bridge import JoinReplayGuard
 from api.campaign_owner import make_campaign_router
@@ -471,7 +471,7 @@ async def internal_bot_settle_operation(
 
 def _stars_checkout_enabled() -> bool:
     # Fail-closed until approved end-to-end Bot API testing and deployment.
-    return os.environ.get("FILESHAPE_STARS_CHECKOUT_ENABLED", "").strip().lower() == "true"
+    return stars_checkout_enabled()
 
 
 def _stars_verify_request(user: str, timestamp: str, nonce: str,
