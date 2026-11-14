@@ -1,0 +1,10 @@
+---
+description: Mandatory halal and shubuhat constraints for all FileShape development and reviews
+alwaysApply: true
+---
+
+# FileShape mandatory project rules
+
+Read and follow the full [AGENTS.md](../../AGENTS.md) before making any change.
+
+FileShape is owned by a Salafi Muslim and must stay halal in features, designs, content, audio, images, integrations, marketing, and monetization. Haram and doubtful activities are forbidden as a **general rule**, not only the examples enumerated in AGENTS.md. Ask the owner before proceeding with anything religiously uncertain; do not issue fatwas. Uphold security, user privacy, platform and legal compliance.
