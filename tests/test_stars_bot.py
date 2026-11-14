@@ -146,6 +146,55 @@ class StarsBotTests(unittest.IsolatedAsyncioTestCase):
         create.assert_not_awaited()
         invoice.assert_not_awaited()
 
+    async def test_all_catalog_prices_are_visible_before_explicit_consent(self):
+        with (
+            patch.object(main, "checkout_enabled", return_value=True),
+            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as create,
+            patch.object(Message, "answer", new_callable=AsyncMock) as answer,
+        ):
+            for sku, (title, _, amount) in main.STARS_SKUS.items():
+                callback = SimpleNamespace(
+                    data="buy:" + sku, message=self.message,
+                    from_user=self.actor, answer=AsyncMock(),
+                )
+                await main.buy_stars_product(callback, self.bot)
+                content = answer.call_args.args[0]
+                self.assertIn(title, content)
+                self.assertIn(str(amount), content)
+                self.assertIn("Условия покупки", content)
+                buttons = answer.call_args.kwargs["reply_markup"].inline_keyboard
+                self.assertEqual(
+                    buttons[0][0].callback_data,
+                    f"buy:agree:{main.STARS_TERMS_VERSION}:{sku}",
+                )
+        create.assert_not_awaited()
+
+    async def test_checkout_flag_switch_off_after_terms_prevents_invoice(self):
+        callback = SimpleNamespace(
+            data=f"buy:agree:{main.STARS_TERMS_VERSION}:pack_10",
+            message=self.message, from_user=self.actor, answer=AsyncMock(),
+        )
+        with (
+            patch.object(main, "checkout_enabled", return_value=False),
+            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as create,
+            patch.object(Message, "answer_invoice", new_callable=AsyncMock) as invoice,
+        ):
+            await main.buy_stars_after_terms(callback, self.bot)
+        self.assertTrue(callback.answer.call_args.kwargs["show_alert"])
+        create.assert_not_awaited()
+        invoice.assert_not_awaited()
+
+    async def test_terms_command_displays_current_version_without_checkout(self):
+        with (
+            patch.object(main, "checkout_enabled", return_value=False),
+            patch.object(Message, "answer", new_callable=AsyncMock) as answer,
+        ):
+            await main.terms_message(self.message)
+        answer.assert_awaited_once()
+        self.assertIn("Условия покупки", answer.call_args.args[0])
+        self.assertIn(main.STARS_TERMS_VERSION, answer.call_args.args[0])
+        self.assertIn("/paysupport", answer.call_args.args[0])
+
     async def test_precheckout_denies_when_disabled_or_unverifiable(self):
         query = SimpleNamespace(
             invoice_payload="fileshape:" + ORDER,
