@@ -8,7 +8,9 @@ Bounded scans cannot guarantee completeness beyond MAX_HISTORY_PAGES or after
 Telegram stops exposing old transactions; report truncation for operators.
 """
 import asyncio
+from datetime import datetime
 import logging
+import math
 import os
 import re
 import time
@@ -28,6 +30,21 @@ ALERT_COOLDOWN_SECONDS = 30 * 60
 _PAYLOAD = re.compile(r"fileshape:([0-9a-f]{32})\Z")
 
 
+def _unix_time(value):
+    """aiogram parses Bot API Unix date integers into aware datetime objects.
+
+    Accept both validated wire integers and the aiogram model representation,
+    never naive local datetimes, booleans or non-finite values.
+    """
+    if type(value) is int:
+        return value if 0 < value <= 253402300799 else None
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        stamp = value.timestamp()
+        if math.isfinite(stamp) and 0 < stamp <= 253402300799:
+            return int(stamp)
+    return None
+
+
 def _incoming_invoice(transaction):
     """Return strictly matched fields from Telegram's own transaction object."""
     partner = getattr(transaction, "source", None)
@@ -40,14 +57,14 @@ def _incoming_invoice(transaction):
     charge = getattr(transaction, "id", None)
     amount = getattr(transaction, "amount", None)
     nanostars = getattr(transaction, "nanostar_amount", None)
-    date = getattr(transaction, "date", None)
+    date = _unix_time(getattr(transaction, "date", None))
     if (
         type(buyer) is not int or not 0 < buyer <= 2**63 - 1
         or not isinstance(payload, str)
         or _PAYLOAD.fullmatch(payload) is None
         or type(amount) is not int or amount <= 0
         or nanostars not in (None, 0)
-        or type(date) is not int or date <= 0
+        or date is None
         or not isinstance(charge, str)
         or not 1 <= len(charge) <= 256
         or not charge.isascii()
@@ -71,13 +88,13 @@ def _outgoing_invoice_refund(transaction):
     charge = getattr(transaction, "id", None)
     amount = getattr(transaction, "amount", None)
     nanostars = getattr(transaction, "nanostar_amount", None)
-    date = getattr(transaction, "date", None)
+    date = _unix_time(getattr(transaction, "date", None))
     invoice_payload = getattr(partner, "invoice_payload", None)
     if (
         type(buyer) is not int or not 0 < buyer <= 2**63 - 1
         or type(amount) is not int or amount >= 0
         or nanostars not in (None, 0)
-        or type(date) is not int or date <= 0
+        or date is None
         or not isinstance(charge, str) or not 1 <= len(charge) <= 256
         or not charge.isascii()
         or (invoice_payload is not None and (
