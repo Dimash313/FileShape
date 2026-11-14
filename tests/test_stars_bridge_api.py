@@ -101,6 +101,42 @@ class StarsApiTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(paid.headers["cache-control"], "no-store")
 
+    async def test_precheckout_persists_protection_before_delayed_receipt(self):
+        with patch.dict(os.environ, {
+            "FILESHAPE_STARS_CHECKOUT_ENABLED": "true",
+            "FILESHAPE_SUPPORT_USERNAME": "FileShapeHelp",
+        }):
+            quote_response = await self.post("quote", {"sku": "pack_10"})
+            self.assertEqual(quote_response.status_code, 200, quote_response.text)
+            quote = quote_response.json()
+            fields = {
+                "order_id": quote["order_id"], "amount": 19, "currency": "XTR",
+            }
+            self.assertEqual(
+                self.store._db.execute(
+                    "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+                    (quote["order_id"],),
+                ).fetchone()[0], 1,
+            )
+            approved = await self.post("precheckout", fields)
+            self.assertEqual(approved.status_code, 200, approved.text)
+            self.assertEqual(approved.json(), {"approved": True})
+            self.assertEqual(
+                self.store._db.execute(
+                    "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+                    (quote["order_id"],),
+                ).fetchone()[0], 0,
+            )
+        # A successful checkout might arrive very late after API downtime.
+        self.store.prune_expired_stars_quotes(now=time.time() + 15*86400)
+        self.assertIsNotNone(self.store.stars_order(OWNER, quote["order_id"]))
+        receipt = {**fields, "charge_id": "late_telegram_receipt_001"}
+        with patch.dict(os.environ, {"FILESHAPE_STARS_CHECKOUT_ENABLED": ""}):
+            verified = await self.post("confirm", receipt)
+        self.assertEqual(verified.status_code, 200, verified.text)
+        self.assertTrue(verified.json()["created"])
+        self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 10)
+
     async def test_flooded_quote_requests_are_capped_without_paid_grants(self):
         with (
             patch.dict(os.environ, {
