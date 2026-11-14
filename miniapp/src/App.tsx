@@ -12,6 +12,7 @@ import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePd
 import type { QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
 import { OwnerCampaigns } from './OwnerCampaigns';
+import { UsageProfile } from './UsageProfile';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
 type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: string };
@@ -519,8 +520,9 @@ export default function App() {
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
           <div className="profile-avatar"><UserRound size={24}/></div>
-          <div><strong>FileShape Studio</strong><span>Версия 4.18</span></div>
+          <div><strong>FileShape Studio</strong><span>Приватное рабочее пространство</span></div>
         </div>
+        <UsageProfile />
         <OwnerCampaigns />
         <section className="queue-panel" aria-label="Нагрузка сервера">
           <div className="queue-panel-head">
