@@ -16,6 +16,7 @@ from api.jobs import JobCapacityExceeded, JobNotFound, JobStateError
 from api.durable_jobs import IdempotencyConflict, IdempotencyPending
 from api.worker_runner import WorkerTimeout
 from api.job_manager import ManagerClosed, ManagerFull
+from api.processing_ports import ArtifactPort, DispatcherPort, JobMetadataPort, WorkerPort
 
 logger = logging.getLogger(__name__)
 IDEMPOTENCY_KEY = re.compile(r'[A-Za-z0-9_-]{16,128}\Z')
@@ -27,7 +28,8 @@ RESULT_NAMES = frozenset({
 
 
 class BackgroundJobs:
-    def __init__(self, store, manager, artifacts, worker, max_input, max_result, *, max_requests=None):
+    def __init__(self, store: JobMetadataPort, manager: DispatcherPort, artifacts: ArtifactPort,
+                 worker: WorkerPort, max_input: int, max_result: int, *, max_requests=None):
         if max_requests is None:
             max_requests = manager.capacity + 20
         if type(max_requests) is not int or not 1 <= max_requests <= 1000:
