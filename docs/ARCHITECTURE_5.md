@@ -124,3 +124,19 @@ untracked disk retention after a crash, but is not wired into startup,
 scheduling or deployment, and does not resolve durable output publishing,
 multi-host sharing or missing referenced blobs. Details and gate tests:
 [PRIVATE_BLOB_STAGING.md](PRIVATE_BLOB_STAGING.md).
+
+
+## Phase E2 — fenced result approval prototype (5.0.7; not live)
+
+The opt-in [FencedResultGate](FENCED_RESULT_GATE.md) joins the private
+candidate blob reader to a trusted, lease-checked dispatch transaction.
+A valid current lease, private candidate bytes and owner/job binding are
+required before the result pointer, quota commitment and completed state
+are recorded atomically in the dispatch ledger. Old tokens, cancellations
+and wrong-owner reads are rejected in tests.
+
+**Not production-ready:** private blob bytes and the dispatch ledger still
+live in separate persistence systems. Missing/expired result bytes after
+a committed charge must be reconciled before activation; cross-server
+shared storage, worker authentication, safe download leases, crash recovery
+and large-scale load tests remain outstanding. No app/API routes switched.
