@@ -287,7 +287,7 @@ class PrivateBlobStoreTests(unittest.TestCase):
             os.link(outside, self.root / hard_name)
             (self.root / "..unsafe").write_bytes(b"control")
             report = store.sweep_orphans(
-                now=self.now + 1000, minimum_age_seconds=0,
+                now=self.now + 1000, minimum_age_seconds=60,
             )
             self.assertEqual(report.removed, 0)
             self.assertEqual(report.skipped_unsafe, 2)
@@ -313,6 +313,8 @@ class PrivateBlobStoreTests(unittest.TestCase):
             self.write_untracked(self.root / orphan, mtime=self.now - 1000)
             for kw in (
                 {"minimum_age_seconds": -1},
+                {"minimum_age_seconds": 0},
+                {"minimum_age_seconds": 59},
                 {"minimum_age_seconds": float("nan")},
                 {"minimum_age_seconds": True},
                 {"scan_limit": 0}, {"scan_limit": True},
@@ -325,32 +327,43 @@ class PrivateBlobStoreTests(unittest.TestCase):
 
     def test_sweep_does_not_delete_inflight_blob_from_other_connection(self):
         written = threading.Event()
+        entered_sweep = threading.Event()
         resume_stage = threading.Event()
         with self.new_store() as stage, self.new_store() as sweep:
-            original = stage._write_private
+            original_write = stage._write_private
+            original_sweep_open = sweep._open
 
             def paused_write(ref, payload):
-                original(ref, payload)
+                original_write(ref, payload)
                 written.set()
                 if not resume_stage.wait(timeout=10):
                     raise RuntimeError("Timed out while testing stage race")
 
+            def observed_sweep_open():
+                entered_sweep.set()
+                return original_sweep_open()
+
             with patch.object(stage, "_write_private", side_effect=paused_write):
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    future_stage = executor.submit(
-                        stage.stage_input, OWNER, b"active upload", now=self.now,
-                    )
-                    try:
-                        self.assertTrue(written.wait(timeout=10))
-                        future_sweep = executor.submit(
-                            sweep.sweep_orphans,
-                            now=self.now + 1000,
-                            minimum_age_seconds=0,
+                with patch.object(sweep, "_open", side_effect=observed_sweep_open):
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        future_stage = executor.submit(
+                            stage.stage_input, OWNER, b"active upload", now=self.now,
                         )
-                    finally:
-                        resume_stage.set()
-                    reference = future_stage.result(timeout=15)
-                    report = future_sweep.result(timeout=15)
+                        try:
+                            self.assertTrue(written.wait(timeout=10))
+                            future_sweep = executor.submit(
+                                sweep.sweep_orphans,
+                                now=self.now + 1000,
+                                minimum_age_seconds=60,
+                            )
+                            # Ensure the sweeper entered while the file is
+                            # physically present but not committed in SQLite.
+                            self.assertTrue(entered_sweep.wait(timeout=10))
+                            self.assertFalse(future_sweep.done())
+                        finally:
+                            resume_stage.set()
+                        reference = future_stage.result(timeout=15)
+                        report = future_sweep.result(timeout=15)
             self.assertEqual(report.removed, 0)
             self.assertEqual(
                 stage._db.execute(
