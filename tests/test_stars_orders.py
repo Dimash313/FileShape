@@ -1,6 +1,7 @@
 """Private Stars order registry must never grant value on an unverified quote."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -169,6 +170,100 @@ class StarsOrdersTests(unittest.TestCase):
         self.assertEqual(self.store.create_stars_order(
             OWNER, "pack_10", now=NOW + 1800 + 14 * 86400 + 2,
         )["status"], "pending")
+
+    def test_approved_invoice_retained_even_after_14_day_cleanup(self):
+        protected = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        disposable = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        self.assertEqual(self.store._db.execute(
+            "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+            (protected["order_id"],),
+        ).fetchone()[0], 1)
+        self.assertTrue(self.store.can_precheckout_stars_order(
+            OWNER, protected["order_id"], 19, "XTR", now=NOW + 1,
+        ))
+        self.assertEqual(self.store._db.execute(
+            "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+            (protected["order_id"],),
+        ).fetchone()[0], 0)
+        # The API may be offline for weeks after Telegram accepted checkout.
+        late = NOW + 1800 + 14 * 86400 + 100
+        self.assertEqual(self.store.prune_expired_stars_quotes(now=late), 1)
+        self.assertIsNone(self.store.stars_order(OWNER, disposable["order_id"]))
+        self.assertEqual(
+            self.store.stars_order(OWNER, protected["order_id"])["status"], "pending",
+        )
+        result, created = self.store.record_stars_payment(
+            OWNER, protected["order_id"], "paid_after_outage",
+            19, "XTR", now=late,
+        )
+        self.assertTrue(created)
+        self.assertEqual(result["status"], "verified")
+        _, credited = self.store.fulfill_stars_order(
+            OWNER, protected["order_id"], now=late,
+        )
+        self.assertTrue(credited)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=late)["pack_remaining"], 10)
+
+    def test_rejected_precheckout_never_changes_disposable_quote_flag(self):
+        q = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
+        self.assertFalse(self.store.can_precheckout_stars_order(
+            OWNER, q["order_id"], 30, "XTR", now=NOW + 1,
+        ))
+        self.assertFalse(self.store.can_precheckout_stars_order(
+            OWNER + 1, q["order_id"], 49, "XTR", now=NOW + 1,
+        ))
+        self.assertFalse(self.store.can_precheckout_stars_order(
+            OWNER, q["order_id"], 49, "XTR", now=NOW + 1801,
+        ))
+        self.assertEqual(self.store._db.execute(
+            "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+            (q["order_id"],),
+        ).fetchone()[0], 1)
+        self.assertEqual(
+            self.store.prune_expired_stars_quotes(now=NOW + 1800 + 14*86400 + 1),
+            1,
+        )
+
+    def test_existing_stars_database_migrates_without_dropping_pending_orders(self):
+        legacy_path = Path(self.temp.name) / "legacy_orders.sqlite3"
+        with sqlite3.connect(legacy_path) as db:
+            db.execute("""CREATE TABLE stars_orders (
+                order_id TEXT PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                sku TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                telegram_charge_id TEXT UNIQUE,
+                verified_at REAL,
+                fulfilled_at REAL,
+                refunded_at REAL
+            )""")
+            db.execute(
+                """INSERT INTO stars_orders
+                   (order_id,owner_id,sku,amount,currency,status,created_at,expires_at)
+                   VALUES(?,?,?,?,?,'pending',?,?)""",
+                ("a"*32, OWNER, "pack_10", 19, "XTR", NOW, NOW+1800),
+            )
+        with DurableJobStore(legacy_path) as migrated:
+            self.assertEqual(migrated._db.execute(
+                "SELECT never_prechecked FROM stars_orders WHERE order_id=?", ("a"*32,),
+            ).fetchone()[0], 0)
+            self.assertEqual(
+                migrated.prune_expired_stars_quotes(
+                    now=NOW + 1800 + 14 * 86400 + 100,
+                ),
+                0,
+            )
+            self.assertEqual(migrated.stars_order(OWNER, "a"*32)["status"], "pending")
+            self.assertTrue(migrated.can_precheckout_stars_order(
+                OWNER, "a"*32, 19, "XTR", now=NOW + 10,
+            ))
+            self.assertEqual(migrated._db.execute(
+                "SELECT never_prechecked FROM stars_orders WHERE order_id=?", ("a"*32,),
+            ).fetchone()[0], 0)
 
     def test_paid_and_refunded_history_transitions_without_any_paid_entitlement(self):
         order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
