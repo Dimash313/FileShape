@@ -68,3 +68,37 @@ blob expiry under concurrent downloads, and multiple-server behavior.
 
 No paid service, new dependency, new API endpoint or content changes
 are introduced in this phase.
+
+
+## Phase 5.0.6b — crash-orphan reconciliation (opt-in)
+
+The separate PrivateBlobStore now provides reconcile_orphans(), which scans
+its dedicated private directory for aged, untracked opaque-identifier files.
+It holds SQLite BEGIN IMMEDIATE for the complete scan/delete operation. All
+cooperating file stages take the same database write lock *before* creating
+an on-disk blob, so an in-progress stage is never mistaken for an orphan
+by another SQLite connection. This does not coordinate other noncooperating
+writers, so the storage root must remain reserved for this adapter.
+
+Safe deletion requires all of:
+- A 32-character opaque reference filename (never path traversal);
+- A service-owned regular file with one hardlink and no group/other access;
+- No corresponding row in the metadata table, regardless of its TTL;
+- A file modification time at least the configured grace period old
+  (60 seconds minimum, 5 minutes by default).
+
+Other files, WAL/SHM, symbolic links, hardlinks, recently created files
+and *any* metadata-tracked files are deliberately untouched. Deletion is
+bounded per call and the directory is fsynced after removals. Reconciliation
+is idempotent and must be run explicitly; there is still no production
+scheduler, no remote storage and no automatic cleanup guarantee.
+
+**Operator order for future integration:** after starting a validated
+private store with exclusive control of the root, periodically run
+purge_expired() to remove metadata-tracked expired files, then
+reconcile_orphans() to remove old untracked blobs. If storage contents are
+untrusted or the metadata DB is damaged, stop and investigate rather than
+reconstructing missing metadata or deleting arbitrary files.
+
+This is intentionally separate from dispatch leases: it **cannot publish
+a result** and does not solve atomic staging/admission or output fencing.
