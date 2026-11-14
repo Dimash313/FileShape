@@ -289,6 +289,31 @@ class StarsOrderMixin:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def reconcile_verified_stars_orders(self, *, limit: int = 20) -> int:
+        """Retry only persisted Telegram-confirmed receipts after a crash.
+
+        No grant can be created from a pending invoice. Each fulfillment uses
+        a new atomic transaction and can be safely replayed.
+        """
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("Invalid Stars reconciliation limit")
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT owner_id,order_id FROM stars_orders
+                   WHERE status='verified' ORDER BY verified_at,order_id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        fulfilled = 0
+        for owner_id, order_id in rows:
+            # A single oversized or temporarily inconsistent paid order must
+            # not prevent attempts for other buyers.
+            try:
+                _, created = self.fulfill_stars_order(owner_id, order_id)
+            except (ValueError, sqlite3.Error):
+                continue
+            fulfilled += int(created)
+        return fulfilled
+
     def mark_stars_refunded(self, owner_id: int, charge_id: str, *, now=None):
         """Apply a verified Telegram refund *after* Telegram reports success.
 
