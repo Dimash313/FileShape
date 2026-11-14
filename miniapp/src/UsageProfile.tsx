@@ -42,6 +42,8 @@ export function UsageProfile() {
     </div>
     {loading ? <p className="usage-hint" role="status">Получаем данные учёта из сервера…</p>
       : error ? <p className="usage-error" role="alert">{error} Баланс не показан.</p>
+      : snapshot && !snapshot.enforced
+      ? <p className="usage-error" role="status">Сервер не подтвердил применение лимитов. Тариф и остатки скрыты, чтобы не показывать неподтверждённые значения.</p>
       : snapshot ? <>
         <div className="usage-plan">
           <span>Текущий тариф</span>
@@ -52,9 +54,8 @@ export function UsageProfile() {
           <div><strong>{snapshot.daily_remaining} / {snapshot.daily_limit}</strong><span>Осталось на сутки</span></div>
           <div><strong>{snapshot.pack_remaining}</strong><span>Дополнительных операций</span></div>
         </div>
-        <p className="usage-hint">Учтено за сутки: {snapshot.daily_used}. Принятые, но ещё не завершённые задания временно занимают лимит.</p>
+        <p className="usage-hint">Учтено серверных операций за сутки: {snapshot.daily_used}. Принятые, но ещё не завершённые задания временно занимают лимит. Локальная обработка фото не расходует серверный лимит.</p>
         <p className="usage-reset"><Clock3 size={14} aria-hidden="true"/> Сброс дневного лимита: {nextUtcReset(snapshot.day_utc)}</p>
-        {!snapshot.enforced && <p className="usage-error" role="status">Сервер ещё не подтвердил принудительное применение лимитов.</p>}
         <p className="usage-hint">{snapshot.purchases_enabled
           ? 'Продажи включены на сервере. Покупки доступны только через подтверждённый процесс Telegram.'
           : 'Покупки Telegram Stars пока недоступны. История покупок появится после проверки платёжной системы.'}</p>
