@@ -312,6 +312,60 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["complete"])
         self.assertEqual(result["refunded"], 1)
 
+    async def test_duplicate_charge_with_conflicting_invoices_never_grants(self):
+        first = transaction(charge="collision_charge", amount=19)
+        second = transaction(charge="collision_charge", amount=19, order="b" * 32)
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[first, second],
+        )
+        with patch(
+            "services.stars_reconciliation.confirm_stars_payment",
+            new_callable=AsyncMock,
+        ) as grant:
+            result = await reconcile_star_transactions(self.bot, now=NOW)
+        grant.assert_not_awaited()
+        self.assertEqual(result["matched"], 2)
+        self.assertGreater(result["failed"], 0)
+        self.assertEqual(result["confirmed"], 0)
+
+    async def test_malformed_outgoing_record_blocks_same_charge_payment(self):
+        paid = transaction(charge="maybe_refunded")
+        # Malformed refund (positive amount) cannot be accepted as a validated
+        # reversal, but it must prevent the corresponding new grant.
+        strange_outgoing = transaction(
+            charge="maybe_refunded", refund=True, amount=19,
+        )
+        strange_outgoing.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[paid, strange_outgoing],
+        )
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as grant,
+            patch("services.stars_reconciliation.confirm_stars_refund",
+                  new_callable=AsyncMock) as refund,
+        ):
+            result = await reconcile_star_transactions(self.bot, now=NOW)
+        grant.assert_not_awaited()
+        refund.assert_not_awaited()
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(result["confirmed"], 0)
+
+    async def test_duplicate_identical_invoices_do_not_retry_same_charge_twice(self):
+        same = transaction(charge="duplicate_event")
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[same, same],
+        )
+        with patch(
+            "services.stars_reconciliation.confirm_stars_payment",
+            new_callable=AsyncMock,
+        ) as grant:
+            result = await reconcile_star_transactions(self.bot, now=NOW)
+        grant.assert_awaited_once()
+        self.assertEqual(result["matched"], 2)
+        self.assertEqual(result["confirmed"], 1)
+
     async def test_invalid_bot_api_response_fails_closed(self):
         self.bot.get_star_transactions.return_value = S(transactions=None)
         with self.assertRaises(StarsBridgeUnavailable):
