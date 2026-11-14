@@ -351,6 +351,29 @@ class PrivateBlobStore:
         """Internal verification only; a candidate is NOT a published output."""
         return self._read(owner_id, job_id, ref, "candidate", now=now)
 
+    def candidate_expires_at(
+        self, owner_id: int, job_id: str, ref: str, *,
+        now: float | None = None,
+    ) -> float:
+        """Return a trusted candidate's absolute TTL for lifecycle accounting.
+
+        Opaque refs are not credentials; only a verified internal caller may
+        pass the trusted owner and job IDs. This returns no filesystem paths.
+        """
+        if not _valid_owner(owner_id) or not _valid_id(job_id) or not _valid_id(ref):
+            raise BlobUnavailable()
+        timestamp = _now(now)
+        with self._lock:
+            row = self._open().execute(
+                """SELECT expires_at FROM staged_blobs
+                   WHERE owner_id=? AND job_id=? AND ref=?
+                     AND kind='candidate' AND expires_at>?""",
+                (owner_id, job_id, ref, timestamp),
+            ).fetchone()
+            if row is None:
+                raise BlobUnavailable()
+            return float(row[0])
+
     def delete(
         self, owner_id: int, ref: str, *, job_id: str | None = None,
     ) -> bool:
