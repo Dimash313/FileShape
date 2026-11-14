@@ -153,6 +153,23 @@ async def reconcile_star_transactions(
     # must not receive a new grant if both transaction entries are present.
     invoices = {}
     conflicting_charges = set()
+    invalid_invoice_charge_ids = set()
+    # An invoice_payment with missing/invalid payload cannot be verified
+    # from Telegram history. Surface it to the owner instead of silently
+    # reporting a successful reconciliation.
+    for transaction in events:
+        source = getattr(transaction, "source", None)
+        if (getattr(source, "type", None) != "user"
+                or getattr(source, "transaction_type", None) != "invoice_payment"):
+            continue
+        paid_at = _unix_time(getattr(transaction, "date", None))
+        if paid_at is not None and not start <= paid_at <= now + 120:
+            continue
+        if _incoming_invoice(transaction) is None:
+            failed += 1
+            charge = getattr(transaction, "id", None)
+            if isinstance(charge, str):
+                invalid_invoice_charge_ids.add(charge)
     # Even if an outgoing record is malformed or belongs to an unknown
     # subtype, a matching charge ID makes an inbound payment ambiguous.
     # A partial refund is never proof for adding a new paid entitlement.
@@ -218,7 +235,7 @@ async def reconcile_star_transactions(
         if charge_id in handled_incoming:
             continue
         handled_incoming.add(charge_id)
-        if charge_id in conflicting_charges:
+        if charge_id in conflicting_charges or charge_id in invalid_invoice_charge_ids:
             failed += 1
             continue
         if charge_id in outgoing_ids and charge_id not in refunded_charges:
