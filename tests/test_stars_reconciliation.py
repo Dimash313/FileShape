@@ -1,11 +1,14 @@
 """Authoritative Telegram transaction-history recovery for lost Stars updates."""
 from types import SimpleNamespace as S
+from datetime import datetime, timezone
 import unittest
+
+from aiogram.types import StarTransaction, TransactionPartnerUser, User
 from unittest.mock import AsyncMock, patch
 
 from services.stars_bridge import StarsBridgeUnavailable
 from services.stars_reconciliation import (
-    _incoming_invoice, _outgoing_invoice_refund, reconcile_star_transactions,
+    _incoming_invoice, _outgoing_invoice_refund, _unix_time, reconcile_star_transactions,
 )
 
 OWNER = 34567
@@ -34,6 +37,40 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 return_value=S(transactions=[]),
             ),
         )
+
+    def test_actual_aiogram_model_datetime_is_parsed_for_paid_invoice(self):
+        date = datetime.fromtimestamp(NOW - 10, tz=timezone.utc)
+        partner = TransactionPartnerUser(
+            transaction_type="invoice_payment",
+            user=User(id=OWNER, is_bot=False, first_name="Test buyer"),
+            invoice_payload="fileshape:" + ORDER,
+        )
+        entry = StarTransaction(
+            id="real_aiogram_charge", amount=19, date=date, source=partner,
+        )
+        self.assertIsInstance(entry.date, datetime)
+        self.assertEqual(_incoming_invoice(entry),
+                         (OWNER, ORDER, 19, "real_aiogram_charge", NOW - 10))
+
+    def test_actual_aiogram_model_datetime_is_parsed_for_refund(self):
+        date = datetime.fromtimestamp(NOW - 10, tz=timezone.utc)
+        partner = TransactionPartnerUser(
+            transaction_type="invoice_payment",
+            user=User(id=OWNER, is_bot=False, first_name="Test buyer"),
+            invoice_payload="fileshape:" + ORDER,
+        )
+        entry = StarTransaction(
+            id="real_aiogram_charge", amount=-19, date=date, receiver=partner,
+        )
+        self.assertEqual(_outgoing_invoice_refund(entry),
+                         (OWNER, "real_aiogram_charge", 19, NOW - 10))
+
+    def test_unix_time_rejects_invalid_or_naive_datetimes(self):
+        self.assertEqual(_unix_time(datetime.fromtimestamp(NOW, tz=timezone.utc)), NOW)
+        self.assertEqual(_unix_time(NOW), NOW)
+        for invalid in (True, 0, float("nan"), "1800000000", datetime(2026, 11, 14)):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(_unix_time(invalid))
 
     async def test_recovers_telegram_confirmed_invoice_with_verified_fields(self):
         self.bot.get_star_transactions.return_value = S(transactions=[
