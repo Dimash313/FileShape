@@ -67,12 +67,23 @@ def initialize_stars_order_tables(db):
             verified_at REAL,
             fulfilled_at REAL,
             refunded_at REAL,
+            -- Legacy rows are conservatively treated as potentially checked out.
+            -- New, never-approved quotes may be pruned after retention.
+            never_prechecked INTEGER NOT NULL DEFAULT 0 CHECK (never_prechecked IN (0,1)),
             CHECK (
               (status = 'pending' AND telegram_charge_id IS NULL AND verified_at IS NULL)
               OR (status != 'pending' AND telegram_charge_id IS NOT NULL AND verified_at IS NOT NULL)
             )
         )
     """)
+    # Existing installations may have approved invoices before this column
+    # existed. DEFAULT 0 protects all such legacy quotes from deletion.
+    columns = {row[1] for row in db.execute("PRAGMA table_info(stars_orders)")}
+    if "never_prechecked" not in columns:
+        db.execute(
+            "ALTER TABLE stars_orders ADD COLUMN never_prechecked INTEGER "
+            "NOT NULL DEFAULT 0 CHECK (never_prechecked IN (0,1))"
+        )
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_owner ON stars_orders(owner_id,created_at DESC)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_status ON stars_orders(status,created_at)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_stars_orders_expiry ON stars_orders(status,expires_at)")
@@ -113,8 +124,8 @@ class StarsOrderMixin:
                     raise ValueError("Too many active unpaid Stars orders")
                 self._db.execute(
                     """INSERT INTO stars_orders
-                       (order_id,owner_id,sku,amount,currency,status,created_at,expires_at)
-                       VALUES(?,?,?,?,?,'pending',?,?)""",
+                       (order_id,owner_id,sku,amount,currency,status,created_at,expires_at,never_prechecked)
+                       VALUES(?,?,?,?,?,'pending',?,?,1)""",
                     (order_id, owner_id, sku, amount, STARS_CURRENCY, now, now + ORDER_TTL_SECONDS),
                 )
                 self._db.execute("COMMIT")
@@ -141,18 +152,36 @@ class StarsOrderMixin:
 
     def can_precheckout_stars_order(self, owner_id: int, order_id: str, amount: int,
                                    currency: str, *, now=None) -> bool:
-        """Deny unknown/expired/paid quotes before approving a Telegram checkout."""
+        """Approve only an exact invoice, persisting its non-prunable status.
+
+        A successful Telegram pre_checkout_query may be charged even if the
+        API or bot crashes before seeing successful_payment. The reservation
+        against automatic quote deletion MUST commit before replying True.
+        """
         self._validate_owner(owner_id)
         _order_id(order_id)
         _payment_amount(amount, currency)
         now = _time(now)
         with self._lock:
-            row = self._db.execute(
-                """SELECT amount,currency,status,expires_at FROM stars_orders
-                   WHERE order_id=? AND owner_id=?""", (order_id, owner_id),
-            ).fetchone()
-        return bool(row and row[0] == amount and row[1] == currency
-                    and row[2] == "pending" and now <= float(row[3]))
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    """SELECT amount,currency,status,expires_at FROM stars_orders
+                       WHERE order_id=? AND owner_id=?""", (order_id, owner_id),
+                ).fetchone()
+                approved = bool(row and row[0] == amount and row[1] == currency
+                                and row[2] == "pending" and now <= float(row[3]))
+                if approved:
+                    self._db.execute(
+                        """UPDATE stars_orders SET never_prechecked=0
+                           WHERE order_id=? AND owner_id=?""",
+                        (order_id, owner_id),
+                    )
+                self._db.execute("COMMIT")
+                return approved
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
 
     def record_stars_payment(self, owner_id: int, order_id: str, charge_id: str,
                              amount: int, currency: str, *, now=None):
@@ -355,7 +384,11 @@ class StarsOrderMixin:
                 raise
 
     def prune_expired_stars_quotes(self, *, limit: int = 100, now=None) -> int:
-        """Remove only long-expired, NEVER-paid quotes in bounded maintenance."""
+        """Remove only provably never-approved, long-expired quotes.
+
+        A pending invoice can be paid even if Telegram's success event has not
+        reached our API. Such orders and all legacy orders are retained.
+        """
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("Invalid Stars quote pruning limit")
         now = _time(now)
@@ -365,7 +398,8 @@ class StarsOrderMixin:
                 changed = self._db.execute(
                     """DELETE FROM stars_orders WHERE order_id IN (
                          SELECT order_id FROM stars_orders
-                         WHERE status='pending' AND expires_at<?
+                         WHERE status='pending' AND never_prechecked=1
+                           AND expires_at<?
                          ORDER BY expires_at LIMIT ?
                        )""",
                     (now - UNPAID_RETENTION_SECONDS, limit),
