@@ -8,7 +8,7 @@ import json
 import os
 import re
 
-ACTIONS = frozenset({"quote", "precheckout", "confirm", "refund"})
+ACTIONS = frozenset({"quote", "precheckout", "confirm", "refund", "refunded"})
 
 
 def stars_scope(action: str, fields: dict) -> str:
