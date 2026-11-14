@@ -15,7 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import hmac
+import math
+import time
 
+from api.durable_jobs import serialized
 from api.durable_dispatch import (
     DispatchLeaseConflict, DurableDispatchStore, _now,
 )
@@ -75,6 +78,40 @@ class FencedDispatchStore(DurableDispatchStore):
         except BaseException:
             self.close()
             raise
+
+    @serialized
+    def prune_terminal(self, retention_seconds: float = 3600) -> int:
+        """Keep unresolved result credits and still-promised output metadata.
+
+        The base store prunes terminal jobs purely by age. In the fenced
+        adapter that would silently discard pending compensation records
+        via ON DELETE CASCADE, or remove a result before its recorded TTL.
+        Fail closed until recovery resolves ambiguous/pending states.
+        """
+        if (
+            isinstance(retention_seconds, bool)
+            or not isinstance(retention_seconds, (int, float))
+            or not math.isfinite(retention_seconds)
+            or retention_seconds <= 0
+        ):
+            raise ValueError("Invalid retention")
+        now = time.time()
+        with self._transaction():
+            return self._db.execute(
+                """DELETE FROM jobs
+                   WHERE state IN ('completed','failed','cancelled')
+                     AND updated_at<=?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM result_delivery_state l
+                         WHERE l.job_id=jobs.job_id
+                           AND (
+                             l.compensation='pending'
+                             OR l.status IN ('suspect','review')
+                             OR (l.status='available' AND l.available_until>?)
+                           )
+                     )""",
+                (now - retention_seconds, now),
+            ).rowcount
 
     def settle_lease(self, job_id, owner_id, token, *, success, now=None):
         """Successful ACKs MUST use the verified, fenced candidate gate."""
