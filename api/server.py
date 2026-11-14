@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from api.artifacts import ArtifactStore, ArtifactUnavailable
+from api.conversion_catalog import IMAGE_EXTENSIONS, SUPPORTED, file_kind
 from api.background_jobs import BackgroundJobs
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
@@ -61,15 +62,6 @@ MAX_RESULT_BYTES = 45 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_INPUT_BYTES + 1024 * 1024
 RATE_LIMIT_PER_MINUTE = 12
 
-SUPPORTED: dict[str, set[str]] = {
-    "image": {"img:JPEG", "img:PNG", "img:WEBP", "img:PDF", "img:compress"},
-    "pdf": {"pdf:rotate", "pdf:first", "pdf:extract", "pdf:remove", "pdf:info"},
-    "audio": {"audio:mp3", "audio:ogg", "audio:wav", "audio:info"},
-    "docx": {"docx:txt", "docx:info"},
-    "txt": {"txt:docx", "txt:info"},
-    "archive": {"zip:list"},
-}
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 api = FastAPI(title="FileShape Mini App API", docs_url=None, redoc_url=None, openapi_url=None)
 allowed_origin = os.environ.get("MINIAPP_ORIGIN", "").strip().rstrip("/")
 if allowed_origin:
@@ -111,21 +103,6 @@ recent_membership_checks: dict[int, deque[float]] = defaultdict(deque)
 internal_access_replay = ReplayGuard()
 internal_bot_operation_replay = ReplayGuard()
 join_replay = JoinReplayGuard()
-
-
-def file_kind(filename: str) -> tuple[str, str]:
-    suffix = Path(filename.replace("\\", "/")).suffix.lower()
-    if suffix in IMAGE_EXTENSIONS:
-        return "image", suffix
-    if suffix == ".pdf":
-        return "pdf", suffix
-    if suffix in AUDIO_EXTENSIONS:
-        return "audio", suffix
-    if suffix in {".docx", ".txt"}:
-        return suffix[1:], suffix
-    if suffix == ".zip":
-        return "archive", suffix
-    return "other", suffix
 
 
 api.add_middleware(
