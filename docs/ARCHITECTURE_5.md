@@ -72,3 +72,14 @@ resource limits and worker-side content validation. Extension classification
 is only routing metadata, **not** a trusted file type check or a dynamic plugin
 registry. Changes to supported transformations require their own reviewed
 operation-level tests.
+
+## Phase B3 — serializable job description (contract only)
+
+[Job envelope v1](JOB_ENVELOPE_V1.md) defines a deterministic, validated,
+path-free description of **single-file** work. It references opaque private
+artifact IDs and the existing fixed conversion catalog. The envelope is not
+wired into the local worker or queue; `api.worker` still runs only with
+trusted local paths. Do not advertise distributed worker support until
+storage authorization, durable admission, lease fencing and transactional
+settlement have been implemented and tested. Multi-file jobs require an
+explicit separate contract.
