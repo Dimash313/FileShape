@@ -3,12 +3,23 @@ import fcntl
 import os
 from pathlib import Path
 import stat
+from collections.abc import Callable
+from typing import Protocol
 
 from api.durable_jobs import DurableJobStore
 
 
+class RuntimeStore(Protocol):
+    """Minimal lifecycle contract; data operations remain on the existing store."""
+
+    def discard_pending_admissions(self) -> int: ...
+    def mark_interrupted_failed(self) -> int: ...
+    def prune_terminal(self) -> int: ...
+    def close(self) -> None: ...
+
+
 class JobRuntime:
-    def __init__(self, directory: str | Path):
+    def __init__(self, directory: str | Path, *, store_factory: Callable[[Path], RuntimeStore] = DurableJobStore):
         self.store = None
         self._fd = None
         root = Path(directory).absolute()
@@ -28,7 +39,7 @@ class JobRuntime:
             except BlockingIOError:
                 raise RuntimeError("Another API process owns this job store; use one worker") from None
             self._fd = fd
-            self.store = DurableJobStore(root / "jobs.sqlite3")
+            self.store = store_factory(root / "jobs.sqlite3")
             self.store.discard_pending_admissions()
             self.store.mark_interrupted_failed()
             self.store.prune_terminal()
