@@ -174,3 +174,42 @@ class DurableDispatchTests(unittest.TestCase):
             self.assertNotIn(lease.token.encode("ascii"), row[0])
             self.assertNotEqual(row[1], lease.token)
             self.assertEqual(len(row[1]), 64)
+
+    def test_duplicate_admission_race_is_metered_once(self):
+        with DurableDispatchStore(self.db_path) as first, DurableDispatchStore(self.db_path) as second:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(
+                    lambda store: admit(store, now=self.start), (first, second),
+                ))
+            self.assertEqual(sorted(created for _, created in results), [False, True])
+            self.assertEqual(results[0][0], results[1][0])
+            self.assertEqual(first.usage_snapshot(101, now=self.start)["daily_used"], 1)
+            self.assertEqual(first._db.execute(
+                "SELECT COUNT(*) FROM dispatch_outbox"
+            ).fetchone()[0], 1)
+
+    def test_pack_quota_refunded_on_outbox_cancellation(self):
+        with DurableDispatchStore(self.db_path) as store:
+            store.grant_operation_pack(
+                101, 10, "trusted:pack:dispatch-test", now=self.start,
+            )
+            for i in range(10):
+                envelope, created = admit(
+                    store, key=f"{i:064x}", fingerprint="b" * 64,
+                    action="pdf:info", pages="", now=self.start + i,
+                )
+                self.assertTrue(created)
+                lease = store.claim_next(now=self.start + i + 0.1)
+                self.assertEqual(lease.envelope.job_id, envelope.job_id)
+                store.settle_lease(
+                    envelope.job_id, 101, lease.token,
+                    success=True, now=self.start + i + 0.2,
+                )
+            self.assertEqual(store.usage_snapshot(101, now=self.start + 11)["daily_used"], 10)
+            packed, _ = admit(
+                store, key="c" * 64, action="pdf:info", pages="", now=self.start + 12,
+            )
+            self.assertEqual(store.usage_snapshot(101, now=self.start + 12)["pack_remaining"], 9)
+            self.assertTrue(store.cancel_dispatch(packed.job_id, 101, now=self.start + 13))
+            self.assertEqual(store.usage_snapshot(101, now=self.start + 13)["pack_remaining"], 10)
+            self.assertEqual(store.usage_snapshot(101, now=self.start + 13)["daily_used"], 10)
