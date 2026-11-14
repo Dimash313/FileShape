@@ -1,5 +1,7 @@
 import { telegramInitData } from './telegram.js';
 import { createIdempotencyKey } from './jobSubmission.js';
+import { validateUsageSnapshot } from './usage.js';
+import type { UsageSnapshot } from './usage.js';
 
 export type QueueStatus = {
   capacity: number;
@@ -95,6 +97,25 @@ export async function getVerifiedOwner(signal?: AbortSignal): Promise<number> {
     const data = await response.json() as { user_id?: number; ok?: boolean };
     if (data.ok !== true || !Number.isSafeInteger(data.user_id) || (data.user_id ?? 0) <= 0) throw new Error('Некорректная сессия сервера.');
     return data.user_id!;
+  } finally { request.cleanup(); }
+}
+
+/** Authenticated, uncached server snapshot. Never use prior balances after an error. */
+export async function getUsageSnapshot(signal?: AbortSignal): Promise<UsageSnapshot> {
+  const signed = telegramInitData();
+  if (!signed) throw new JobApiError(401, 'Открой профиль внутри Telegram.');
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  reserveRequest();
+  const request = requestController(signal);
+  try {
+    const response = await fetch('/api/v1/usage', {
+      headers: { 'X-Telegram-Init-Data': signed },
+      cache: 'no-store', signal: request.controller.signal,
+    });
+    if (response.status === 401) throw new JobApiError(401, 'Сессия Telegram устарела. Открой Mini App заново.');
+    if (response.status === 429) throw new JobApiError(429, 'Слишком много запросов. Попробуй позже.');
+    if (!response.ok) throw new JobApiError(response.status, 'Учёт операций временно недоступен. Попробуй позже.');
+    return validateUsageSnapshot(await response.json());
   } finally { request.cleanup(); }
 }
 
