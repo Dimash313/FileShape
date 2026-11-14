@@ -227,6 +227,8 @@ async def maintain_metadata(store):
             operations.append(store.expire_bot_operations)
         if hasattr(store, "reconcile_verified_stars_orders"):
             operations.append(store.reconcile_verified_stars_orders)
+        if hasattr(store, "prune_expired_stars_quotes"):
+            operations.append(store.prune_expired_stars_quotes)
         operations.append(store.prune_terminal)
         if hasattr(store, "expire_campaigns"):
             operations.append(store.expire_campaigns)
@@ -510,8 +512,14 @@ async def internal_stars_quote(
         raise HTTPException(status_code=403, detail="Stars purchases are disabled")
     if not isinstance(data["sku"], str) or data["sku"] not in PRODUCTS:
         raise HTTPException(status_code=422, detail="Unknown Stars product")
+    await enforce_rate_limit(owner)
     try:
         quote = jobs.create_stars_order(owner, data["sku"])
+    except ValueError:
+        raise HTTPException(
+            status_code=429, detail="Слишком много активных неоплаченных счетов",
+            headers={"Retry-After": "60"},
+        ) from None
     except (sqlite3.Error, OSError):
         raise HTTPException(status_code=503, detail="Order storage unavailable") from None
     return _stars_response(quote)
