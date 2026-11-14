@@ -178,6 +178,12 @@ async def reconcile_star_transactions(
         if paid_at < start or paid_at > now + 120:
             continue
         matched += 1
+        # A truncated history may hide a refund on a later page. Never
+        # create a fresh paid entitlement from incomplete evidence.
+        # Refund assertions above remain safe to process independently.
+        if not complete:
+            failed += 1
+            continue
         if charge_id in refunded_charges:
             continue
         if acknowledged_charges is not None and "paid:" + charge_id in acknowledged_charges:
