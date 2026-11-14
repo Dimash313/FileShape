@@ -144,5 +144,151 @@ class StarsOrdersTests(unittest.TestCase):
         self.assertEqual(self.store.stars_order(OWNER, order["order_id"])["status"], "pending")
 
 
+    def test_verified_order_fulfills_once_and_survives_restart(self):
+        order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
+        with self.assertRaises(ValueError):
+            self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)
+        self.store.record_stars_payment(OWNER, order["order_id"], "txn_300", 49, "XTR", now=NOW)
+        result, new = self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)
+        self.assertTrue(new)
+        self.assertEqual(result["status"], "fulfilled")
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 30)
+        self.assertFalse(self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW + 2)[1])
+        with self.assertRaises(ValueError):
+            self.store.fulfill_stars_order(OWNER + 1, order["order_id"], now=NOW)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 30)
+        with DurableJobStore(self.path) as reopened:
+            self.assertEqual(reopened.stars_order(OWNER, order["order_id"])["status"], "fulfilled")
+            self.assertFalse(reopened.fulfill_stars_order(OWNER, order["order_id"], now=NOW + 3)[1])
+            self.assertEqual(reopened.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 30)
+
+    def test_pro_payments_extend_entitlement_and_refund_retracts_remaining_time(self):
+        for i in range(2):
+            order = self.store.create_stars_order(OWNER, "pro_30d", now=NOW)
+            self.store.record_stars_payment(
+                OWNER, order["order_id"], f"charge_premium_{i}", 149, "XTR", now=NOW,
+            )
+            self.assertTrue(self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)[1])
+            if i == 0:
+                first = order
+        self.assertEqual(self.store.premium_expiry(OWNER), NOW + 60 * 86400)
+        self.assertTrue(self.store.mark_stars_refunded(
+            OWNER, "charge_premium_0", now=NOW + 1,
+        )[1])
+        self.assertEqual(self.store.premium_expiry(OWNER), NOW + 30 * 86400)
+        self.assertFalse(self.store.mark_stars_refunded(
+            OWNER, "charge_premium_0", now=NOW + 2,
+        )[1])
+        self.assertEqual(self.store.stars_order(OWNER, first["order_id"])["status"], "refunded")
+        with self.assertRaises(ValueError):
+            self.store.fulfill_stars_order(OWNER, first["order_id"], now=NOW + 3)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 5)["plan"], "pro")
+        self.assertTrue(self.store.mark_stars_refunded(
+            OWNER, "charge_premium_1", now=NOW + 10,
+        )[1])
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 10)["plan"], "free")
+
+    def test_refund_pack_revokes_unused_balance_and_blocks_replay(self):
+        order = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        self.store.record_stars_payment(OWNER, order["order_id"], "charge_refund", 19, "XTR", now=NOW)
+        self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 10)
+        self.assertTrue(self.store.mark_stars_refunded(
+            OWNER, "charge_refund", now=NOW + 1,
+        )[1])
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 0)
+        self.assertEqual(self.store._db.execute(
+            "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 0)
+        self.assertFalse(self.store.mark_stars_refunded(
+            OWNER, "charge_refund", now=NOW + 2,
+        )[1])
+        with self.assertRaises(ValueError):
+            self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW + 3)
+        with self.assertRaises(ValueError):
+            self.store.record_stars_payment(
+                OWNER, order["order_id"], "charge_refund", 19, "XTR", now=NOW + 4,
+            )
+
+    def test_refunded_spent_pack_creates_debt_repaid_by_future_grants(self):
+        order = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        self.store.record_stars_payment(OWNER, order["order_id"], "charge_spent", 19, "XTR", now=NOW)
+        self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)
+        for i in range(10):
+            op = f"test:daily:{i:012d}"
+            self.store.reserve_operation(OWNER, op, now=NOW)
+            self.store.settle_operation(OWNER, op, success=True, now=NOW)
+        for i in range(4):
+            op = f"test:pack:{i:012d}"
+            self.assertEqual(self.store.reserve_operation(OWNER, op, now=NOW)["source"], "pack")
+            self.store.settle_operation(OWNER, op, success=True, now=NOW)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 6)
+        self.store.mark_stars_refunded(OWNER, "charge_spent", now=NOW + 1)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 0)
+        self.assertEqual(self.store._db.execute(
+            "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 4)
+        self.assertEqual(self.store.grant_operation_pack(
+            OWNER, 10, "trusted:new:pack:001", now=NOW + 2,
+        ), (6, True))
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 6)
+        self.assertEqual(self.store._db.execute(
+            "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 0)
+
+    def test_refunded_reserved_pack_failure_offsets_debt(self):
+        order = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        self.store.record_stars_payment(OWNER, order["order_id"], "charge_pending", 19, "XTR", now=NOW)
+        self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)
+        for i in range(10):
+            op = f"test:all_daily:{i:08d}"
+            self.store.reserve_operation(OWNER, op, now=NOW)
+        op = "test:pending_pack:0001"
+        self.assertEqual(self.store.reserve_operation(OWNER, op, now=NOW)["source"], "pack")
+        self.store.mark_stars_refunded(OWNER, "charge_pending", now=NOW + 1)
+        self.assertEqual(self.store._db.execute(
+            "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 1)
+        self.store.settle_operation(OWNER, op, success=False, now=NOW + 2)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 0)
+        self.assertEqual(self.store._db.execute(
+            "SELECT debt FROM stars_pack_debts WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 0)
+
+    def test_fulfillment_rolls_back_when_pack_capacity_full_then_retries(self):
+        order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
+        self.store.record_stars_payment(OWNER, order["order_id"], "charge_capacity", 49, "XTR", now=NOW)
+        self.store._db.execute(
+            "INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)", (OWNER, 9990),
+        )
+        with self.assertRaises(ValueError):
+            self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)
+        self.assertEqual(self.store.stars_order(OWNER, order["order_id"])["status"], "verified")
+        self.assertEqual(self.store._db.execute(
+            "SELECT COUNT(*) FROM operation_pack_grants WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 0)
+        self.store._db.execute(
+            "UPDATE operation_pack_balances SET balance=100 WHERE owner_id=?", (OWNER,),
+        )
+        self.assertTrue(self.store.fulfill_stars_order(OWNER, order["order_id"], now=NOW + 1)[1])
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 1)["pack_remaining"], 130)
+
+    def test_concurrent_duplicate_fulfillment_debits_once(self):
+        order = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        self.store.record_stars_payment(OWNER, order["order_id"], "charge_race", 19, "XTR", now=NOW)
+        with DurableJobStore(self.path) as second:
+            gate = threading.Barrier(2)
+            def fulfill(store):
+                gate.wait(timeout=5)
+                return store.fulfill_stars_order(OWNER, order["order_id"], now=NOW)[1]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(fulfill, (self.store, second)))
+        self.assertCountEqual(outcomes, [True, False])
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 10)
+        self.assertEqual(self.store._db.execute(
+            "SELECT COUNT(*) FROM operation_pack_grants WHERE owner_id=?", (OWNER,),
+        ).fetchone()[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
