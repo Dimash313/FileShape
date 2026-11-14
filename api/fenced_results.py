@@ -19,7 +19,6 @@ import hmac
 from api.durable_dispatch import (
     DispatchLeaseConflict, DurableDispatchStore, _now,
 )
-from api.durable_jobs import serialized
 from api.job_envelope import SingleFileJobV1
 from api.jobs import JobNotFound, JobStateError
 from api.private_blob_store import (
@@ -83,11 +82,6 @@ class FencedResultGate:
             raise TypeError("PrivateBlobStore is required")
         self._dispatch = dispatch
         self._blobs = blobs
-
-    @serialized
-    def _not_used(self):
-        # The gate deliberately does not inherit SQL primitives.
-        raise NotImplementedError
 
     def approve(
         self, owner_id: int, job_id: str, lease_token: str, candidate_ref: str,
