@@ -61,3 +61,14 @@ Measure **registered users, daily active users, simultaneous uploads, accepted j
 ## Deferred features
 
 Multi-tenant white-label bot creation is a future product. Do **not** build tenant billing, owner payouts or arbitrary bot creation now. Preserve module boundaries that would allow later evaluation without increasing present scope.
+
+## Phase B2 — conversion catalog boundary
+
+Move the fixed API `SUPPORTED` action allowlists and extension-based
+`file_kind` dispatch into `api/conversion_catalog.py`. Existing API exports
+remain aliases for backward compatibility. Keep supported operation strings
+stable and verify every exposed route keeps its authorization, quota admission,
+resource limits and worker-side content validation. Extension classification
+is only routing metadata, **not** a trusted file type check or a dynamic plugin
+registry. Changes to supported transformations require their own reviewed
+operation-level tests.
