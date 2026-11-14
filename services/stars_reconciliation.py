@@ -86,7 +86,7 @@ def _outgoing_invoice_refund(transaction):
 
 async def reconcile_star_transactions(
     bot, *, now=None, lookback_seconds=HISTORY_LOOKBACK_SECONDS,
-    max_pages=MAX_HISTORY_PAGES,
+    max_pages=MAX_HISTORY_PAGES, acknowledged_charges=None,
 ):
     """Page Telegram's real transaction ledger and idempotently fulfill receipts.
 
@@ -101,9 +101,12 @@ async def reconcile_star_transactions(
     if (type(lookback_seconds) is not int or not 60 <= lookback_seconds <= 365 * 86400
             or type(max_pages) is not int or not 1 <= max_pages <= 20):
         raise ValueError("Invalid reconciliation bounds")
+    if acknowledged_charges is not None and not isinstance(acknowledged_charges, set):
+        raise ValueError("Invalid confirmation cache")
     start = now - lookback_seconds
     scanned = matched = delivered = failed = refunded = refund_failed = 0
     complete = False
+    events = []
     # Iterate all pages even when data appears old: Telegram documents
     # chronological order, but we cannot assume sort direction.
     for page in range(max_pages):
@@ -118,36 +121,55 @@ async def reconcile_star_transactions(
         if len(transactions) > _HISTORY_PAGE_SIZE:
             raise StarsBridgeUnavailable("Unexpected Telegram transaction page size")
         scanned += len(transactions)
-        for transaction in transactions:
-            invoice = _incoming_invoice(transaction)
-            if invoice is not None:
-                owner, order_id, amount, charge_id, paid_at = invoice
-                if paid_at < start or paid_at > now + 120:
-                    continue
-                matched += 1
-                try:
-                    await confirm_stars_payment(owner, bot.token, order_id,
-                                                amount, "XTR", charge_id)
-                except StarsBridgeUnavailable:
-                    failed += 1
-                    # API grants are replay-safe even when the bot lost the reply.
-                else:
-                    delivered += 1
-                continue
-            refund = _outgoing_invoice_refund(transaction)
-            if refund is not None:
-                owner, charge_id, refunded_at = refund
-                if refunded_at < start or refunded_at > now + 120:
-                    continue
-                try:
-                    await confirm_stars_refund(owner, bot.token, charge_id)
-                except StarsBridgeUnavailable:
-                    refund_failed += 1
-                else:
-                    refunded += 1
+        events.extend(transactions)
         if len(transactions) < _HISTORY_PAGE_SIZE:
             complete = True
             break
+    # First process Telegram-confirmed refunds, *then* payments. The Bot API
+    # does not promise which direction pages are ordered. A refunded payment
+    # must not receive a new grant if both transaction entries are present.
+    refunded_charges = set()
+    for transaction in events:
+        refund = _outgoing_invoice_refund(transaction)
+        if refund is None:
+            continue
+        owner, charge_id, refunded_at = refund
+        if refunded_at < start or refunded_at > now + 120:
+            continue
+        refunded_charges.add(charge_id)
+        if acknowledged_charges is not None and charge_id in acknowledged_charges:
+            continue
+        try:
+            await confirm_stars_refund(owner, bot.token, charge_id)
+        except StarsBridgeUnavailable:
+            refund_failed += 1
+        else:
+            refunded += 1
+            if acknowledged_charges is not None:
+                acknowledged_charges.add(charge_id)
+
+    for transaction in events:
+        invoice = _incoming_invoice(transaction)
+        if invoice is None:
+            continue
+        owner, order_id, amount, charge_id, paid_at = invoice
+        if paid_at < start or paid_at > now + 120:
+            continue
+        matched += 1
+        if charge_id in refunded_charges:
+            continue
+        if acknowledged_charges is not None and charge_id in acknowledged_charges:
+            continue
+        try:
+            await confirm_stars_payment(owner, bot.token, order_id,
+                                        amount, "XTR", charge_id)
+        except StarsBridgeUnavailable:
+            failed += 1
+        else:
+            delivered += 1
+            if acknowledged_charges is not None:
+                acknowledged_charges.add(charge_id)
+
     return {
         "scanned": scanned, "matched": matched,
         "confirmed": delivered, "failed": failed,
@@ -158,9 +180,16 @@ async def reconcile_star_transactions(
 
 async def star_reconciliation_loop(bot):
     """Run from bot startup; a transient API outage must never stop polling."""
+    # In-memory optimization only: authoritative idempotency is persisted in
+    # the API. Startup replays from Telegram's ledger after every restart.
+    acknowledged_charges = set()
     while True:
         try:
-            result = await reconcile_star_transactions(bot)
+            result = await reconcile_star_transactions(
+                bot, acknowledged_charges=acknowledged_charges,
+            )
+            if len(acknowledged_charges) > 2000:
+                acknowledged_charges.clear()
             if not result["complete"] or result["failed"] or result["refund_failed"]:
                 logger.error(
                     "Stars reconciliation incomplete: scanned=%d matching=%d paid_failed=%d refund_failed=%d",
