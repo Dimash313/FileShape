@@ -1,5 +1,6 @@
 """Validate handler import and basic user-facing menus without a bot token."""
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import tempfile
 from pathlib import Path
@@ -50,15 +51,15 @@ class BotMenuTests(unittest.TestCase):
                     "message": actual, "from_user": type("User", (), {"id": 123})(),
                     "data": "nav:plans", "answer": AsyncMock(),
                 })()
-                await navigate(callback, state)
+                await navigate(callback, state, SimpleNamespace(token='test-token'))
                 self.assertIn("пока недоступны", edit.call_args.args[0])
                 self.assertIn("Free: 10", edit.call_args.args[0])
                 callback.answer.assert_awaited_once()
                 callback.data = "nav:home"
-                await navigate(callback, state)
+                await navigate(callback, state, SimpleNamespace(token='test-token'))
                 self.assertEqual(state.clear.await_count, 2)
                 callback.data = "nav:unknown"
-                await navigate(callback, state)
+                await navigate(callback, state, SimpleNamespace(token='test-token'))
                 self.assertEqual(edit.await_count, 2)
         asyncio.run(check())
 
