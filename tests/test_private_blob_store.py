@@ -282,7 +282,7 @@ class PrivateBlobStoreTests(unittest.TestCase):
                 entered_sweep.set()
                 return original_open()
 
-            with patch.object(writer, "_write_private", side_effect=paused_write), \\
+            with patch.object(writer, "_write_private", side_effect=paused_write), \
                     patch.object(cleaner, "_open", side_effect=observed_cleaner_open):
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     staged = pool.submit(
