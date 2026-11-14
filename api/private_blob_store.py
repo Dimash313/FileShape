@@ -437,7 +437,7 @@ class PrivateBlobStore:
             isinstance(minimum_age_seconds, bool)
             or not isinstance(minimum_age_seconds, (int, float))
             or not math.isfinite(minimum_age_seconds)
-            or not 0 <= minimum_age_seconds <= MAX_TTL
+            or not 60 <= minimum_age_seconds <= MAX_TTL
         ):
             raise ValueError("Invalid minimum orphan age")
         if type(scan_limit) is not int or not 1 <= scan_limit <= 10000:
