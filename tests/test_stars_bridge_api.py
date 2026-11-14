@@ -54,7 +54,7 @@ class StarsApiTests(unittest.IsolatedAsyncioTestCase):
         }
 
     async def post(self, action, data, *, owner=OWNER, token=TOKEN, nonce=None):
-        path = "refund-confirm" if action == "refund" else action
+        path = {"refund": "refund-confirm", "refunded": "confirm-refunded"}.get(action, action)
         return await self.client.post(
             "/internal/v1/stars/" + path,
             json=data, headers=self.headers(action, data, owner=owner, token=token, nonce=nonce),
@@ -119,6 +119,49 @@ class StarsApiTests(unittest.IsolatedAsyncioTestCase):
         ).fetchone()[0], 5)
         self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 0)
         self.assertIsNone(self.store.premium_expiry(OWNER))
+
+    async def test_atomic_paid_refunded_history_never_temporarily_grants_credit(self):
+        order = self.store.create_stars_order(OWNER, "pack_10")
+        data = {
+            "order_id": order["order_id"], "amount": 19,
+            "currency": "XTR", "charge_id": "same_telegram_charge_refunded",
+        }
+        denied = await self.post("refunded", data, token="wrong-token")
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(self.store.stars_order(OWNER, order["order_id"])["status"], "pending")
+        refunded = await self.post("refunded", data)
+        self.assertEqual(refunded.status_code, 200, refunded.text)
+        self.assertEqual(refunded.json()["status"], "refunded")
+        self.assertTrue(refunded.json()["changed"])
+        self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 0)
+        replay = await self.post("refunded", data)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertFalse(replay.json()["changed"])
+        self.assertEqual((await self.post("confirm", data)).status_code, 409)
+        self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 0)
+        self.assertEqual((await self.post(
+            "refunded", {**data, "amount": 30},
+        )).status_code, 409)
+        self.assertEqual((await self.post(
+            "refunded", data, owner=OWNER+1,
+        )).status_code, 409)
+
+    async def test_refunded_history_reverses_existing_fulfilled_order(self):
+        order = self.store.create_stars_order(OWNER, "pack_30")
+        data = {
+            "order_id": order["order_id"], "amount": 49,
+            "currency": "XTR", "charge_id": "past_paid_telegram_charge",
+        }
+        paid = await self.post("confirm", data)
+        self.assertEqual(paid.status_code, 200, paid.text)
+        self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 30)
+        result = await self.post("refunded", data)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertTrue(result.json()["changed"])
+        self.assertEqual(self.store.usage_snapshot(OWNER)["pack_remaining"], 0)
+        second = await self.post("refunded", data)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertFalse(second.json()["changed"])
 
     async def test_tampered_claim_replay_and_refund(self):
         order = self.store.create_stars_order(OWNER, "pack_30")
