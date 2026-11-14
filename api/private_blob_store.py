@@ -15,6 +15,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
+from dataclasses import dataclass
 import secrets
 import shutil
 import sqlite3
@@ -39,6 +40,16 @@ class BlobUnavailable(Exception):
 
 class BlobCapacity(Exception):
     """The bounded local store cannot admit more bytes or entries."""
+
+@dataclass(frozen=True, slots=True)
+class OrphanSweepReport:
+    """Bounded reconciliation outcome, without leaking filenames."""
+    scanned: int
+    removed: int
+    preserved_live: int
+    skipped_young: int
+    skipped_unsafe: int
+
 
 
 def _valid_id(value: object) -> bool:
@@ -402,6 +413,124 @@ class PrivateBlobStore:
                 except FileNotFoundError:
                     pass
             return len(refs)
+
+    def sweep_orphans(
+        self, *, now: float | None = None,
+        minimum_age_seconds: float = 300, scan_limit: int = 1000,
+        delete_limit: int = 100,
+    ) -> OrphanSweepReport:
+        """Remove only aged, unreferenced private blob files.
+
+        This is an explicit INTERNAL maintenance operation, never a public
+        endpoint or automatic background thread. BEGIN IMMEDIATE serializes
+        scans against file creation and metadata admission in *other* store
+        instances. Every stage operation holds the same SQLite write
+        transaction until both its file and metadata are committed, so a
+        concurrent scan cannot mistake an in-progress write for an orphan.
+
+        Never touch unknown filenames, SQLite/WAL files, live metadata refs,
+        directories, symlinks, hardlinks or permissive/foreign-owned files.
+        Unexpected IO failures abort the sweep for later safe retry.
+        """
+        timestamp = _now(now)
+        if (
+            isinstance(minimum_age_seconds, bool)
+            or not isinstance(minimum_age_seconds, (int, float))
+            or not math.isfinite(minimum_age_seconds)
+            or not 0 <= minimum_age_seconds <= MAX_TTL
+        ):
+            raise ValueError("Invalid minimum orphan age")
+        if type(scan_limit) is not int or not 1 <= scan_limit <= 10000:
+            raise ValueError("Invalid sweep scan limit")
+        if type(delete_limit) is not int or not 1 <= delete_limit <= 1000:
+            raise ValueError("Invalid sweep delete limit")
+        with self._lock:
+            db = self._open()
+            # Detect directory replacement. Do not scan a new path or an
+            # accidentally moved directory even though its old fd is open.
+            try:
+                fd_info = os.fstat(self._dir_fd)
+                path_info = self.root.lstat()
+            except OSError as exc:
+                raise RuntimeError("Private blob root is unavailable") from exc
+            if (
+                not stat.S_ISDIR(fd_info.st_mode)
+                or not stat.S_ISDIR(path_info.st_mode)
+                or fd_info.st_ino != path_info.st_ino
+                or fd_info.st_dev != path_info.st_dev
+                or fd_info.st_uid != os.geteuid()
+                or path_info.st_uid != os.geteuid()
+                or fd_info.st_mode & 0o077
+                or path_info.st_mode & 0o077
+            ):
+                raise RuntimeError("Private blob root changed or is unsafe")
+
+            scanned = removed = preserved = young = unsafe = 0
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                with os.scandir(self._dir_fd) as entries:
+                    for item in entries:
+                        ref = item.name
+                        # Strictly exclude SQLite and all other service
+                        # control files; only opaque reference names qualify.
+                        if not _valid_id(ref):
+                            continue
+                        if scanned >= scan_limit or removed >= delete_limit:
+                            break
+                        scanned += 1
+                        if db.execute(
+                            "SELECT 1 FROM staged_blobs WHERE ref=?", (ref,),
+                        ).fetchone() is not None:
+                            preserved += 1
+                            continue
+                        try:
+                            info = os.stat(
+                                ref, dir_fd=self._dir_fd, follow_symlinks=False,
+                            )
+                        except FileNotFoundError:
+                            continue
+                        if (
+                            not stat.S_ISREG(info.st_mode)
+                            or info.st_uid != os.geteuid()
+                            or info.st_nlink != 1
+                            or info.st_mode & 0o077
+                        ):
+                            unsafe += 1
+                            continue
+                        if timestamp - info.st_mtime < minimum_age_seconds:
+                            young += 1
+                            continue
+                        # A private directory is controlled exclusively by
+                        # the service; this stat recheck is an extra safeguard,
+                        # not protection against an untrusted directory writer.
+                        latest = os.stat(
+                            ref, dir_fd=self._dir_fd, follow_symlinks=False,
+                        )
+                        if (
+                            latest.st_ino != info.st_ino
+                            or latest.st_dev != info.st_dev
+                            or not stat.S_ISREG(latest.st_mode)
+                            or latest.st_nlink != 1
+                            or latest.st_uid != os.geteuid()
+                            or latest.st_mode & 0o077
+                        ):
+                            unsafe += 1
+                            continue
+                        try:
+                            os.unlink(ref, dir_fd=self._dir_fd)
+                        except FileNotFoundError:
+                            continue
+                        removed += 1
+                if removed:
+                    os.fsync(self._dir_fd)
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+            return OrphanSweepReport(
+                scanned=scanned, removed=removed, preserved_live=preserved,
+                skipped_young=young, skipped_unsafe=unsafe,
+            )
 
     def close(self) -> None:
         with self._lock:
