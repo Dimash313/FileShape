@@ -67,10 +67,17 @@ class ResultRecovery:
         if row is None or row[0] != owner_id or row[2] != "committed":
             raise JobStateError("Inconsistent usage record for lost result")
         if row[1] == "pack":
+            # Preserve headroom for *other* in-flight pack reservations
+            # which may still fail and require their original unit back.
+            pending_returns = dispatch._db.execute(
+                """SELECT COUNT(*) FROM operation_usage
+                   WHERE owner_id=? AND source='pack' AND status='reserved'""",
+                (owner_id,),
+            ).fetchone()[0]
             changed = dispatch._db.execute(
                 """UPDATE operation_pack_balances SET balance=balance+1
-                   WHERE owner_id=? AND balance<?""",
-                (owner_id, MAX_PACK_BALANCE),
+                   WHERE owner_id=? AND balance + ? < ?""",
+                (owner_id, pending_returns, MAX_PACK_BALANCE),
             ).rowcount
             if changed != 1:
                 return False
