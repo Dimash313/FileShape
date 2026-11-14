@@ -299,6 +299,61 @@ class StarsOrderMixin:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def record_paid_and_refunded_stars_order(
+        self, owner_id: int, order_id: str, charge_id: str,
+        amount: int, currency: str, *, now=None,
+    ):
+        """Record BOTH authoritative Telegram transactions without a temporary grant.
+
+        This is for transaction-history recovery only, when Telegram reports
+        an incoming invoice and its matching outgoing refund for the same
+        buyer, charge ID and full XTR amount. Pending -> refunded is one
+        SQLite write and cannot be raced by automatic fulfillment.
+        """
+        self._validate_owner(owner_id)
+        _order_id(order_id)
+        _charge(charge_id)
+        _payment_amount(amount, currency)
+        now = _time(now)
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    """SELECT sku,amount,currency,status,telegram_charge_id
+                       FROM stars_orders WHERE owner_id=? AND order_id=?""",
+                    (owner_id, order_id),
+                ).fetchone()
+                if row is None or row[1] != amount or row[2] != currency:
+                    raise ValueError("Invoice, buyer or refunded Stars amount mismatch")
+                sku, _, _, status, prior_charge = row
+                if status == "pending":
+                    try:
+                        updated = self._db.execute(
+                            """UPDATE stars_orders SET
+                               status='refunded', telegram_charge_id=?,
+                               verified_at=?,refunded_at=?
+                               WHERE owner_id=? AND order_id=? AND status='pending'""",
+                            (charge_id, now, now, owner_id, order_id),
+                        ).rowcount
+                    except sqlite3.IntegrityError:
+                        raise ValueError("Telegram charge ID used by another order") from None
+                    if updated != 1:
+                        raise ValueError("Stars refund transition conflict")
+                    result = {"order_id": order_id, "sku": sku, "status": "refunded"}
+                    created = True
+                elif prior_charge != charge_id:
+                    raise ValueError("Conflicting charge ID for refunded order")
+                else:
+                    # Existing verified/fulfilled orders still require
+                    # entitlement reversal by mark_stars_refunded().
+                    result = {"order_id": order_id, "sku": sku, "status": status}
+                    created = False
+                self._db.execute("COMMIT")
+                return result, created
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+
     def prune_expired_stars_quotes(self, *, limit: int = 100, now=None) -> int:
         """Remove only long-expired, NEVER-paid quotes in bounded maintenance."""
         if type(limit) is not int or not 1 <= limit <= 1000:
