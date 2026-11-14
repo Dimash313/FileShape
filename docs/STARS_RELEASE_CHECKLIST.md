@@ -21,6 +21,7 @@
 | Duplicate update; bot retry; API timeout after writing | Replayed event causes **no** second grant |
 | Concurrent paid receipt delivery across API connections | Single ledger transition, no double value |
 | Bot or API restart between receipt and fulfillment | API reconciles a verified receipt; no loss or duplication |
+| API offline for weeks after successful pre-checkout | Approved quote is retained, delayed successful payment can still be recorded and fulfilled; legacy invoices are also retained |
 | Bot offline during successful_payment | Bot's getStarTransactions backfill identifies correct buyer/charge/payload; confirms exactly once |
 | Partial/invalid/unrelated outgoing Star transaction | Never treated as proof of a full refund; ambiguous input never grants |
 | Full refund immediately after payment | Exactly one refund; packs revoked or recorded as debt; Pro remaining time corrected |
