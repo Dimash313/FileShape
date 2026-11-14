@@ -16,7 +16,7 @@ from api.job_manager import JobManager, ManagerClosed
 from api.jobs import JobNotFound
 from api.processing_ports import (
     ArtifactPort, ArtifactReservationPort, DispatcherPort,
-    JobHandlePort, JobMetadataPort,
+    JobHandlePort, JobMetadataPort, ResultLeasePort,
 )
 
 
@@ -66,6 +66,7 @@ class ArtifactPortTests(unittest.TestCase):
                 (reservation.path / "result.json").write_bytes(b'{"ok":true}')
                 store.complete(job_id, "result.json", "application/json")
                 lease, size, mime, filename = store.open_result(job_id)
+                self.assertIsInstance(lease, ResultLeasePort)
                 try:
                     self.assertEqual(lease.read(), b'{"ok":true}')
                     self.assertEqual(size, 11)
@@ -73,6 +74,7 @@ class ArtifactPortTests(unittest.TestCase):
                     self.assertEqual(filename, "result.json")
                 finally:
                     lease.close()
+                self.assertEqual(store.reconcile(), 0)
                 store.discard(job_id)
                 self.assertFalse(reservation.path.exists())
             finally:
