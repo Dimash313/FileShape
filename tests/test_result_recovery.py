@@ -205,6 +205,64 @@ class ResultRecoveryTests(unittest.TestCase):
                                  ("lost", "credited"))
                 self.assertEqual(recovery.reconcile(now=self.now + 38).credited, 0)
 
+    def test_pack_credit_preserves_other_active_reservation_headroom(self):
+        with FencedDispatchStore(self.jobs_path) as dispatch:
+            with PrivateBlobStore(self.blobs_path) as blobs:
+                dispatch.grant_operation_pack(
+                    OWNER, 10, "trusted:pack:headroom-test", now=self.now,
+                )
+                for i in range(10):
+                    self.approve(dispatch, blobs, key=f"{i:064x}")
+                lost, lost_candidate = self.approve(
+                    dispatch, blobs, key="e" * 64,
+                )
+                # Another accepted pack-funded job may still fail and have
+                # its *own* reserved operation returned to the pack.
+                input_ref = blobs.stage_input(
+                    OWNER, b"next upload", now=self.now + 4,
+                )
+                waiting, created = dispatch.admit_staged_single(
+                    OWNER, "d" * 64, "c" * 64, input_ref=input_ref,
+                    result_ref=secrets.token_urlsafe(24),
+                    action="pdf:extract", suffix=".pdf", pages="1",
+                    now=self.now + 4,
+                )
+                self.assertTrue(created)
+                blobs.bind_input(
+                    OWNER, waiting.job_id, input_ref, now=self.now + 4,
+                )
+                dispatch._db.execute(
+                    "UPDATE operation_pack_balances SET balance=? WHERE owner_id=?",
+                    (MAX_PACK_BALANCE - 1, OWNER),
+                )
+                recovery = ResultRecovery(dispatch, blobs)
+                blobs.delete(OWNER, lost_candidate, job_id=lost.job_id)
+                recovery.reconcile(now=self.now + 5)
+                report = recovery.reconcile(now=self.now + 36)
+                self.assertEqual((report.confirmed_lost, report.pending_credit),
+                                 (1, 1))
+                self.assertEqual(dispatch.usage_snapshot(
+                    OWNER, now=self.now + 36,
+                )["pack_remaining"], MAX_PACK_BALANCE - 1)
+                # Settle the other reservation successfully. Its failure
+                # headroom is no longer needed, allowing exactly one credit.
+                lease = dispatch.claim_next(now=self.now + 37)
+                self.assertEqual(lease.envelope.job_id, waiting.job_id)
+                candidate = blobs.stage_candidate(
+                    OWNER, waiting.job_id, b"other successful result",
+                    now=self.now + 38,
+                )
+                FencedResultGate(dispatch, blobs).approve(
+                    OWNER, waiting.job_id, lease.token, candidate,
+                    now=self.now + 39,
+                )
+                credited = recovery.reconcile(now=self.now + 40)
+                self.assertEqual(credited.credited, 1)
+                self.assertEqual(dispatch.usage_snapshot(
+                    OWNER, now=self.now + 40,
+                )["pack_remaining"], MAX_PACK_BALANCE)
+                self.assertEqual(recovery.reconcile(now=self.now + 41).credited, 0)
+
     def test_two_connections_do_not_double_credit_a_lost_job(self):
         with FencedDispatchStore(self.jobs_path) as first:
             with FencedDispatchStore(self.jobs_path) as second:
