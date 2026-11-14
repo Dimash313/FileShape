@@ -23,6 +23,7 @@ from aiogram.types import (
 )
 
 from config import get_settings
+from api.stars_auth import support_username
 from services.bot_access import check_processing_access
 from services.bot_operations import (
     BotOperationQuotaExceeded, BotOperationUnavailable,
@@ -349,8 +350,9 @@ async def plans_message(message: Message):
         "💎 Тарифы FileShape\\n\\n"
         "Free: 10 успешных операций в сутки UTC, один активный запрос.\\n"
         "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\\n"
-        "Покупка Pro и пакетов через Telegram Stars пока недоступна. "
-        "Лимит размера файла сейчас — 20 МБ.",
+        ("Покупка Pro и пакетов через Telegram Stars доступна ниже. " if checkout_enabled()
+         else "Покупка Pro и пакетов через Telegram Stars пока недоступна. ")
+        + "Лимит размера файла сейчас — 20 МБ.",
         reply_markup=plans_keyboard(),
     )
 
@@ -485,10 +487,12 @@ async def stars_payment_received(message: Message, bot: Bot):
 
 @router.message(Command("paysupport"))
 async def stars_payment_support(message: Message):
+    contact = support_username()
     await message.answer(
-        "Поддержка платежей FileShape. Если есть проблема с Stars, "
-        "сохрани чек Telegram и напиши владельцу бота через указанный "
-        "в профиле контакт поддержки. Не отправляй пароли или коды."
+        ("Поддержка платежей FileShape: " + contact + ". Сохрани чек Telegram. "
+         if contact is not None else
+         "Контакт платёжной поддержки пока не настроен. Покупки отключены. ")
+        + "Никому не сообщай пароли или коды."
     )
 
 
