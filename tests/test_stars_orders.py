@@ -265,6 +265,85 @@ class StarsOrdersTests(unittest.TestCase):
                 "SELECT never_prechecked FROM stars_orders WHERE order_id=?", ("a"*32,),
             ).fetchone()[0], 0)
 
+    def test_pack_precheckout_rejects_capacity_overflow_before_charging(self):
+        self.store._db.execute(
+            "INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)",
+            (OWNER, 9995),
+        )
+        order = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        self.assertFalse(self.store.can_precheckout_stars_order(
+            OWNER, order["order_id"], 19, "XTR", now=NOW + 1,
+        ))
+        self.assertEqual(
+            self.store._db.execute(
+                "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+                (order["order_id"],),
+            ).fetchone()[0], 1,
+        )
+        self.assertEqual(self.store.stars_order(OWNER, order["order_id"])["status"], "pending")
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW)["pack_remaining"], 9995)
+        self.store._db.execute(
+            "UPDATE operation_pack_balances SET balance=9980 WHERE owner_id=?", (OWNER,),
+        )
+        self.assertTrue(self.store.can_precheckout_stars_order(
+            OWNER, order["order_id"], 19, "XTR", now=NOW + 2,
+        ))
+        self.assertEqual(
+            self.store._db.execute(
+                "SELECT never_prechecked FROM stars_orders WHERE order_id=?",
+                (order["order_id"],),
+            ).fetchone()[0], 0,
+        )
+
+    def test_two_approved_pack_invoices_cannot_overreserve_same_headroom(self):
+        self.store._db.execute(
+            "INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)",
+            (OWNER, 9975),
+        )
+        first = self.store.create_stars_order(OWNER, "pack_10", now=NOW)
+        second = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
+        self.assertTrue(self.store.can_precheckout_stars_order(
+            OWNER, first["order_id"], 19, "XTR", now=NOW + 1,
+        ))
+        self.assertFalse(self.store.can_precheckout_stars_order(
+            OWNER, second["order_id"], 49, "XTR", now=NOW + 1,
+        ))
+        self.store.record_stars_payment(
+            OWNER, first["order_id"], "cap_first", 19, "XTR", now=NOW + 2,
+        )
+        self.store.fulfill_stars_order(OWNER, first["order_id"], now=NOW + 2)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 2)["pack_remaining"], 9985)
+        self.assertFalse(self.store.can_precheckout_stars_order(
+            OWNER, second["order_id"], 49, "XTR", now=NOW + 3,
+        ))
+
+    def test_trusted_pack_grant_respects_unfulfilled_approved_invoice_capacity(self):
+        self.store._db.execute(
+            "INSERT INTO operation_pack_balances(owner_id,balance) VALUES(?,?)",
+            (OWNER, 9960),
+        )
+        order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
+        self.assertTrue(self.store.can_precheckout_stars_order(
+            OWNER, order["order_id"], 49, "XTR", now=NOW + 1,
+        ))
+        with self.assertRaisesRegex(ValueError, "approved Stars invoices"):
+            self.store.grant_operation_pack(
+                OWNER, 30, "trusted:high:000001", now=NOW + 2,
+            )
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 2)["pack_remaining"], 9960)
+        self.assertEqual(self.store.grant_operation_pack(
+            OWNER, 10, "trusted:lower:00001", now=NOW + 3,
+        ), (9970, True))
+        self.store.record_stars_payment(
+            OWNER, order["order_id"], "cap_reserved", 49, "XTR", now=NOW + 4,
+        )
+        result, created = self.store.fulfill_stars_order(
+            OWNER, order["order_id"], now=NOW + 4,
+        )
+        self.assertEqual(result["status"], "fulfilled")
+        self.assertTrue(created)
+        self.assertEqual(self.store.usage_snapshot(OWNER, now=NOW + 4)["pack_remaining"], 10000)
+
     def test_paid_and_refunded_history_transitions_without_any_paid_entitlement(self):
         order = self.store.create_stars_order(OWNER, "pack_30", now=NOW)
         result, created = self.store.record_paid_and_refunded_stars_order(
