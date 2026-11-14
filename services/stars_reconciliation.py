@@ -14,6 +14,7 @@ import time
 
 from services.stars_bridge import (
     StarsBridgeUnavailable, confirm_stars_payment, confirm_stars_refund,
+    confirm_stars_paid_and_refunded,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ def _outgoing_invoice_refund(transaction):
         ))
     ):
         return None
-    return buyer, charge, date
+    return buyer, charge, -amount, date
 
 
 async def reconcile_star_transactions(
@@ -128,25 +129,46 @@ async def reconcile_star_transactions(
     # First process Telegram-confirmed refunds, *then* payments. The Bot API
     # does not promise which direction pages are ordered. A refunded payment
     # must not receive a new grant if both transaction entries are present.
+    invoices = {}
+    for transaction in events:
+        invoice = _incoming_invoice(transaction)
+        if invoice is None:
+            continue
+        owner, order_id, amount, charge_id, paid_at = invoice
+        if start <= paid_at <= now + 120:
+            invoices.setdefault(charge_id, (owner, order_id, amount))
+
     refunded_charges = set()
     for transaction in events:
         refund = _outgoing_invoice_refund(transaction)
         if refund is None:
             continue
-        owner, charge_id, refunded_at = refund
+        owner, charge_id, refund_amount, refunded_at = refund
         if refunded_at < start or refunded_at > now + 120:
             continue
         refunded_charges.add(charge_id)
-        if acknowledged_charges is not None and charge_id in acknowledged_charges:
+        if acknowledged_charges is not None and "refund:" + charge_id in acknowledged_charges:
             continue
+        paid = invoices.get(charge_id)
         try:
-            await confirm_stars_refund(owner, bot.token, charge_id)
+            if paid is not None:
+                buyer, order_id, paid_amount = paid
+                if buyer != owner or paid_amount != refund_amount:
+                    # A different buyer, amount or charge must never be
+                    # treated as proof of a fully refunded FileShape order.
+                    refund_failed += 1
+                    continue
+                await confirm_stars_paid_and_refunded(
+                    owner, bot.token, order_id, paid_amount, "XTR", charge_id,
+                )
+            else:
+                await confirm_stars_refund(owner, bot.token, charge_id)
         except StarsBridgeUnavailable:
             refund_failed += 1
         else:
             refunded += 1
             if acknowledged_charges is not None:
-                acknowledged_charges.add(charge_id)
+                acknowledged_charges.add("refund:" + charge_id)
 
     for transaction in events:
         invoice = _incoming_invoice(transaction)
@@ -158,7 +180,7 @@ async def reconcile_star_transactions(
         matched += 1
         if charge_id in refunded_charges:
             continue
-        if acknowledged_charges is not None and charge_id in acknowledged_charges:
+        if acknowledged_charges is not None and "paid:" + charge_id in acknowledged_charges:
             continue
         try:
             await confirm_stars_payment(owner, bot.token, order_id,
@@ -168,7 +190,7 @@ async def reconcile_star_transactions(
         else:
             delivered += 1
             if acknowledged_charges is not None:
-                acknowledged_charges.add(charge_id)
+                acknowledged_charges.add("paid:" + charge_id)
 
     return {
         "scanned": scanned, "matched": matched,
