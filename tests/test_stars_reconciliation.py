@@ -189,6 +189,36 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         negative_fraction.receiver.transaction_type = "invoice_payment"
         self.assertIsNone(_outgoing_invoice_refund(negative_fraction))
 
+    async def test_invoice_without_optional_payload_is_reported_not_silently_skipped(self):
+        invoice = transaction(charge="no_payload")
+        invoice.source.invoice_payload = None
+        self.bot.get_star_transactions.return_value = S(transactions=[invoice])
+        with patch(
+            "services.stars_reconciliation.confirm_stars_payment",
+            new_callable=AsyncMock,
+        ) as confirm:
+            result = await reconcile_star_transactions(self.bot, now=NOW)
+        confirm.assert_not_awaited()
+        self.assertEqual(result["confirmed"], 0)
+        self.assertEqual(result["failed"], 1)
+        self.assertTrue(result["complete"])
+
+    async def test_valid_invoice_with_same_charge_as_malformed_record_fails_closed(self):
+        valid = transaction(charge="ambiguous_charge")
+        malformed = transaction(charge="ambiguous_charge")
+        malformed.source.invoice_payload = None
+        self.bot.get_star_transactions.return_value = S(
+            transactions=[valid, malformed],
+        )
+        with patch(
+            "services.stars_reconciliation.confirm_stars_payment",
+            new_callable=AsyncMock,
+        ) as confirm:
+            result = await reconcile_star_transactions(self.bot, now=NOW)
+        confirm.assert_not_awaited()
+        self.assertEqual(result["confirmed"], 0)
+        self.assertGreaterEqual(result["failed"], 1)
+
     async def test_multi_page_recovery_uses_offset_and_no_sort_direction_guess(self):
         transactions = [
             transaction(charge=f"wrong_{i}", kind="paid_media_payment")
