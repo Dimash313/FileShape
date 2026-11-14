@@ -155,8 +155,18 @@ class UsageQuotaMixin:
                            WHERE owner_id=? AND source='pack' AND status='reserved'""",
                         (owner_id,),
                     ).fetchone()[0]
-                    if balance + pending > MAX_PACK_BALANCE:
-                        raise ValueError("Pack balance limit")
+                    # Trusted/manual grants must not consume capacity already
+                    # reserved for Telegram-approved invoices awaiting payment.
+                    unpaid_approved = self._db.execute(
+                        """SELECT COALESCE(SUM(CASE sku
+                           WHEN 'pack_10' THEN 10 WHEN 'pack_30' THEN 30
+                           ELSE 0 END),0)
+                           FROM stars_orders WHERE owner_id=? AND status='pending'
+                           AND never_prechecked=0 AND sku IN ('pack_10','pack_30')""",
+                        (owner_id,),
+                    ).fetchone()[0]
+                    if balance + pending + unpaid_approved > MAX_PACK_BALANCE:
+                        raise ValueError("Pack balance limit including approved Stars invoices")
                     if applied:
                         self._db.execute(
                             "UPDATE stars_pack_debts SET debt=debt-? WHERE owner_id=?",
