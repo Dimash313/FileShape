@@ -350,7 +350,7 @@ async def plans_message(message: Message):
         "💎 Тарифы FileShape\\n\\n"
         "Free: 10 успешных операций в сутки UTC, один активный запрос.\\n"
         "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\\n"
-        ("Покупка Pro и пакетов через Telegram Stars доступна ниже. " if checkout_enabled()
+        + ("Покупка Pro и пакетов через Telegram Stars доступна ниже. " if checkout_enabled()
          else "Покупка Pro и пакетов через Telegram Stars пока недоступна. ")
         + "Лимит размера файла сейчас — 20 МБ.",
         reply_markup=plans_keyboard(),
