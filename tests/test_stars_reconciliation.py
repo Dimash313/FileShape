@@ -111,7 +111,7 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def test_only_negative_outgoing_invoice_refunds_are_considered(self):
         refund = transaction(refund=True, amount=-19)
         refund.receiver.transaction_type = "invoice_payment"
-        self.assertEqual(_outgoing_invoice_refund(refund), (OWNER, "telegram_charge_1", NOW - 10))
+        self.assertEqual(_outgoing_invoice_refund(refund), (OWNER, "telegram_charge_1", 19, NOW - 10))
         other = transaction(refund=True, amount=-19)
         other.receiver.transaction_type = "paid_media_payment"
         self.assertIsNone(_outgoing_invoice_refund(other))
@@ -153,12 +153,12 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("services.stars_reconciliation.confirm_stars_payment",
                   new_callable=AsyncMock) as confirm,
-            patch("services.stars_reconciliation.confirm_stars_refund",
+            patch("services.stars_reconciliation.confirm_stars_paid_and_refunded",
                   new_callable=AsyncMock, return_value={"status": "refunded"}) as refund,
         ):
             outcome = await reconcile_star_transactions(self.bot, now=NOW)
         confirm.assert_not_awaited()
-        refund.assert_awaited_once_with(OWNER, self.bot.token, "same_charge")
+        refund.assert_awaited_once_with(OWNER, self.bot.token, ORDER, 19, "XTR", "same_charge")
         self.assertEqual(outcome["matched"], 1)
         self.assertEqual(outcome["refunded"], 1)
         self.assertEqual(outcome["confirmed"], 0)
@@ -178,7 +178,7 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 self.bot, now=NOW, acknowledged_charges=cache,
             )
         confirm.assert_awaited_once()
-        self.assertEqual(cache, {"cached_charge"})
+        self.assertEqual(cache, {"paid:cached_charge"})
         self.assertEqual(first["confirmed"], 1)
         self.assertEqual(second["confirmed"], 0)
 
@@ -190,7 +190,7 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("services.stars_reconciliation.confirm_stars_payment",
                   new_callable=AsyncMock) as paid_confirm,
-            patch("services.stars_reconciliation.confirm_stars_refund",
+            patch("services.stars_reconciliation.confirm_stars_paid_and_refunded",
                   new_callable=AsyncMock, side_effect=StarsBridgeUnavailable()) as refund_confirm,
         ):
             outcome = await reconcile_star_transactions(self.bot, now=NOW)
@@ -198,6 +198,42 @@ class TransactionRecoveryTests(unittest.IsolatedAsyncioTestCase):
         refund_confirm.assert_awaited_once()
         self.assertEqual(outcome["refund_failed"], 1)
         self.assertEqual(outcome["confirmed"], 0)
+
+    async def test_refund_processed_even_when_payment_is_previously_cached(self):
+        paid = transaction(charge="later_refund")
+        returned = transaction(charge="later_refund", refund=True, amount=-19)
+        returned.receiver.transaction_type = "invoice_payment"
+        cache = {"paid:later_refund"}
+        self.bot.get_star_transactions.return_value = S(transactions=[paid, returned])
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as grant,
+            patch("services.stars_reconciliation.confirm_stars_paid_and_refunded",
+                  new_callable=AsyncMock, return_value={"status": "refunded"}) as refund,
+        ):
+            result = await reconcile_star_transactions(
+                self.bot, now=NOW, acknowledged_charges=cache,
+            )
+        grant.assert_not_awaited()
+        refund.assert_awaited_once()
+        self.assertIn("refund:later_refund", cache)
+        self.assertEqual(result["refunded"], 1)
+
+    async def test_mismatched_refund_amount_never_grants_or_marks_order(self):
+        paid = transaction(charge="mismatch_amount", amount=19)
+        returned = transaction(charge="mismatch_amount", refund=True, amount=-10)
+        returned.receiver.transaction_type = "invoice_payment"
+        self.bot.get_star_transactions.return_value = S(transactions=[paid, returned])
+        with (
+            patch("services.stars_reconciliation.confirm_stars_payment",
+                  new_callable=AsyncMock) as grant,
+            patch("services.stars_reconciliation.confirm_stars_paid_and_refunded",
+                  new_callable=AsyncMock) as refund,
+        ):
+            outcome = await reconcile_star_transactions(self.bot, now=NOW)
+        grant.assert_not_awaited()
+        refund.assert_not_awaited()
+        self.assertEqual(outcome["refund_failed"], 1)
 
     async def test_failed_internal_api_does_not_claim_complete_reconciliation(self):
         self.bot.get_star_transactions.return_value = S(transactions=[
