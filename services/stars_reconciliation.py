@@ -70,11 +70,13 @@ def _outgoing_invoice_refund(transaction):
     buyer = getattr(getattr(partner, "user", None), "id", None)
     charge = getattr(transaction, "id", None)
     amount = getattr(transaction, "amount", None)
+    nanostars = getattr(transaction, "nanostar_amount", None)
     date = getattr(transaction, "date", None)
     invoice_payload = getattr(partner, "invoice_payload", None)
     if (
         type(buyer) is not int or not 0 < buyer <= 2**63 - 1
         or type(amount) is not int or amount >= 0
+        or nanostars not in (None, 0)
         or type(date) is not int or date <= 0
         or not isinstance(charge, str) or not 1 <= len(charge) <= 256
         or not charge.isascii()
