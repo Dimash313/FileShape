@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 import aiohttp
 
 from api.internal_access import sign_access_request
-from api.stars_auth import stars_scope
+from api.stars_auth import stars_scope, checkout_enabled
 
 
 _ORDER = re.compile(r"[0-9a-f]{32}\Z")
@@ -17,10 +17,6 @@ _ORDER = re.compile(r"[0-9a-f]{32}\Z")
 
 class StarsBridgeUnavailable(Exception):
     """No verified server decision can be obtained."""
-
-
-def checkout_enabled() -> bool:
-    return os.getenv("FILESHAPE_STARS_CHECKOUT_ENABLED", "").strip().lower() == "true"
 
 
 def _base_url() -> str:
