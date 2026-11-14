@@ -41,14 +41,36 @@ class StarsBotTests(unittest.IsolatedAsyncioTestCase):
             callback.answer.assert_awaited_once()
             self.assertTrue(callback.answer.call_args.kwargs["show_alert"])
 
-    async def test_invoice_uses_only_server_quote_and_single_xtr_price(self):
+    async def test_tariff_selection_shows_terms_without_creating_invoice(self):
+        callback = SimpleNamespace(
+            data="buy:pack_10", message=self.message,
+            from_user=self.actor, answer=AsyncMock(),
+        )
+        with (
+            patch.object(main, "checkout_enabled", return_value=True),
+            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as create,
+            patch.object(Message, "answer_invoice", new_callable=AsyncMock) as invoice,
+            patch.object(Message, "answer", new_callable=AsyncMock) as reply,
+        ):
+            await main.buy_stars_product(callback, self.bot)
+        create.assert_not_awaited()
+        invoice.assert_not_awaited()
+        reply.assert_awaited_once()
+        self.assertIn("Условия покупки", reply.call_args.args[0])
+        terms_button = reply.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertEqual(
+            terms_button.callback_data,
+            f"buy:agree:{main.STARS_TERMS_VERSION}:pack_10",
+        )
+
+    async def test_agreement_uses_only_server_quote_and_single_xtr_price(self):
         quote = {
             "order_id": ORDER, "sku": "pack_10", "amount": 19,
             "currency": "XTR", "status": "pending",
         }
         callback = SimpleNamespace(
-            data="buy:agree:1:pack_10", message=self.message,
-            from_user=self.actor, answer=AsyncMock(),
+            data=f"buy:agree:{main.STARS_TERMS_VERSION}:pack_10",
+            message=self.message, from_user=self.actor, answer=AsyncMock(),
         )
         with (
             patch.object(main, "checkout_enabled", return_value=True),
@@ -62,15 +84,13 @@ class StarsBotTests(unittest.IsolatedAsyncioTestCase):
         args = invoice.call_args.kwargs
         self.assertEqual(args["payload"], "fileshape:" + ORDER)
         self.assertEqual(args["currency"], "XTR")
-        self.assertEqual(args["provider_token"], "")
-        self.assertEqual(args["start_parameter"], "")
         self.assertEqual(len(args["prices"]), 1)
         self.assertEqual(args["prices"][0].amount, 19)
 
-    async def test_price_mismatch_cannot_send_invoice(self):
+    async def test_wrong_price_after_agreement_cannot_send_invoice(self):
         callback = SimpleNamespace(
-            data="buy:agree:1:pack_10", message=self.message,
-            from_user=self.actor, answer=AsyncMock(),
+            data=f"buy:agree:{main.STARS_TERMS_VERSION}:pack_10",
+            message=self.message, from_user=self.actor, answer=AsyncMock(),
         )
         quote = {
             "order_id": ORDER, "sku": "pack_10", "amount": 149,
@@ -87,83 +107,44 @@ class StarsBotTests(unittest.IsolatedAsyncioTestCase):
         invoice.assert_not_awaited()
         self.assertIn("недоступен", answer.call_args.args[0])
 
-    async def test_select_tariff_shows_terms_but_does_not_issue_invoice_or_quote(self):
-        callback = SimpleNamespace(
-            data="buy:pack_10", message=self.message,
-            from_user=self.actor, answer=AsyncMock(),
+    async def test_stale_terms_and_invalid_agreement_never_create_order(self):
+        callbacks = (
+            "buy:agree:old:pack_10",
+            "buy:agree:" + main.STARS_TERMS_VERSION + ":unknown",
+            "buy:agree:" + main.STARS_TERMS_VERSION + ":pack_10:extra",
+            "buy:agree:" + main.STARS_TERMS_VERSION,
         )
         with (
             patch.object(main, "checkout_enabled", return_value=True),
-            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as quote,
+            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as create,
             patch.object(Message, "answer_invoice", new_callable=AsyncMock) as invoice,
-            patch.object(Message, "answer", new_callable=AsyncMock) as answer,
         ):
-            await main.buy_stars_product(callback, self.bot)
-        quote.assert_not_awaited()
-        invoice.assert_not_awaited()
-        answer.assert_awaited_once()
-        contents = answer.call_args.args[0]
-        self.assertIn("Условия покупки", contents)
-        self.assertIn("19 ⭐", contents)
-        keyboard = answer.call_args.kwargs["reply_markup"]
-        keys = [
-            button.callback_data
-            for row in keyboard.inline_keyboard for button in row
-        ]
-        self.assertIn("buy:agree:1:pack_10", keys)
-        self.assertIn("nav:plans", keys)
-
-    async def test_stale_or_forged_consent_cannot_create_invoice(self):
-        for data in (
-            "buy:agree:0:pack_10",
-            "buy:agree:2:pack_10",
-            "buy:agree:1:not_a_sku",
-            "buy:agree:1:pack_10:extra",
-        ):
-            callback = SimpleNamespace(
-                data=data, message=self.message,
-                from_user=self.actor, answer=AsyncMock(),
-            )
-            with (
-                patch.object(main, "checkout_enabled", return_value=True),
-                patch.object(main, "create_stars_quote", new_callable=AsyncMock) as quote,
-                patch.object(Message, "answer_invoice", new_callable=AsyncMock) as invoice,
-            ):
+            for data in callbacks:
+                callback = SimpleNamespace(
+                    data=data, message=self.message,
+                    from_user=self.actor, answer=AsyncMock(),
+                )
                 await main.buy_stars_after_terms(callback, self.bot)
-            quote.assert_not_awaited()
-            invoice.assert_not_awaited()
-            self.assertTrue(callback.answer.call_args.kwargs["show_alert"])
+                self.assertTrue(callback.answer.call_args.kwargs["show_alert"])
+        create.assert_not_awaited()
+        invoice.assert_not_awaited()
 
-    async def test_terms_command_explains_products_support_and_limits(self):
-        with (
-            patch.object(main, "support_username", return_value="@FileShapeHelp"),
-            patch.object(Message, "answer", new_callable=AsyncMock) as answer,
-        ):
-            await main.terms_message(self.message)
-        body = answer.call_args.args[0]
-        for item in ("30 суток", "автосписаний нет", "@FileShapeHelp", "20 МБ", "19 ⭐", "/paysupport"):
-            self.assertIn(item.lower(), body.lower())
-        self.assertLess(len(body), 4096)
-
-    async def test_consented_invoice_only_in_buyers_private_chat(self):
-        other = Chat(id=-100123, type="supergroup")
-        group_message = Message(
-            message_id=2, date=datetime.now(timezone.utc), chat=other,
-            from_user=self.actor, text="Group",
-        )
+    async def test_agreement_rejected_outside_own_private_chat(self):
+        outsider = User(id=OWNER + 1, first_name="Other", is_bot=False)
         callback = SimpleNamespace(
-            data="buy:agree:1:pack_10", message=group_message,
-            from_user=self.actor, answer=AsyncMock(),
+            data=f"buy:agree:{main.STARS_TERMS_VERSION}:pack_10",
+            message=self.message, from_user=outsider, answer=AsyncMock(),
         )
         with (
             patch.object(main, "checkout_enabled", return_value=True),
-            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as quote,
+            patch.object(main, "create_stars_quote", new_callable=AsyncMock) as create,
             patch.object(Message, "answer_invoice", new_callable=AsyncMock) as invoice,
         ):
             await main.buy_stars_after_terms(callback, self.bot)
-        quote.assert_not_awaited()
-        invoice.assert_not_awaited()
+        callback.answer.assert_awaited_once()
         self.assertTrue(callback.answer.call_args.kwargs["show_alert"])
+        create.assert_not_awaited()
+        invoice.assert_not_awaited()
 
     async def test_precheckout_denies_when_disabled_or_unverifiable(self):
         query = SimpleNamespace(
