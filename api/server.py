@@ -577,6 +577,45 @@ async def internal_stars_confirm(
     return _stars_response({**result, "created": created})
 
 
+@api.post("/internal/v1/stars/confirm-refunded")
+async def internal_stars_paid_and_refunded(
+    request: Request,
+    user: str = Header(default="", alias="X-FileShape-User"),
+    timestamp: str = Header(default="", alias="X-FileShape-Time"),
+    nonce: str = Header(default="", alias="X-FileShape-Nonce"),
+    signature: str = Header(default="", alias="X-FileShape-Signature"),
+):
+    """Atomic recovery when Telegram history proves both payment and refund.
+
+    A pending order becomes refunded *without* ever receiving Pro or credit.
+    An already fulfilled order is reversed via the existing idempotent
+    refund transaction. Never accept this route from the Mini App.
+    """
+    data = await _read_bot_operation_body(
+        request, allowed_keys={"order_id", "amount", "currency", "charge_id"},
+    )
+    owner = _stars_verify_request(
+        user, timestamp, nonce, signature, action="refunded", data=data,
+    )
+    _stars_check_order_fields(data)
+    if not isinstance(data["charge_id"], str) or not 1 <= len(data["charge_id"]) <= 256:
+        raise HTTPException(status_code=422, detail="Invalid charge ID")
+    try:
+        result, created = jobs.record_paid_and_refunded_stars_order(
+            owner, data["order_id"], data["charge_id"],
+            data["amount"], data["currency"],
+        )
+        if result["status"] != "refunded":
+            result, changed = jobs.mark_stars_refunded(owner, data["charge_id"])
+        else:
+            changed = created
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Telegram refund/order mismatch") from None
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail="Refund storage unavailable") from None
+    return _stars_response({**result, "changed": changed})
+
+
 @api.post("/internal/v1/stars/refund-confirm")
 async def internal_stars_refund_confirm(
     request: Request,
