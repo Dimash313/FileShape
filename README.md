@@ -13,9 +13,12 @@ environment until receipt/reversal audit and operational support are ready.
 The server-only catalog is Pro 30 days for 149 XTR, +10 operations for 19
 XTR and +30 operations for 49 XTR. An order is user-scoped, immutable,
 and eligible for pre-checkout for 30 minutes. Only a signed API quote
-permits a single-price XTR invoice. The bot returns a bounded and signed
-pre-checkout approval within Telegram's ten-second window; this stage
-never grants value. Before any positive pre-checkout reply, SQLite durably
+permits a single-price XTR invoice **only after the buyer opens and
+accepts the current /terms**. The terms screen states prices, 30-day Pro
+duration without automatic renewal, processing limits, and support/refund
+contacts; stale consent buttons cannot issue invoices. The bot returns
+a bounded and signed pre-checkout approval within Telegram's ten-second
+window; this stage never grants value. Before any positive pre-checkout reply, SQLite durably
 marks the invoice as **not safe to prune**. The quote cleanup process deletes
 only invoices that were never approved for checkout, while all legacy orders
 are protected by migration. This preserves invoices paid during a prolonged
