@@ -40,7 +40,10 @@ def _unix_time(value):
     if type(value) is int:
         return value if 0 < value <= 253402300799 else None
     if isinstance(value, datetime) and value.tzinfo is not None:
-        stamp = value.timestamp()
+        try:
+            stamp = value.timestamp()
+        except (OverflowError, OSError, ValueError):
+            return None
         if math.isfinite(stamp) and 0 < stamp <= 253402300799:
             return int(stamp)
     return None
@@ -119,7 +122,7 @@ async def reconcile_star_transactions(
     """
     if now is None:
         now = time.time()
-    if not isinstance(now, (int, float)) or isinstance(now, bool) or now <= 0:
+    if not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now) or not 0 < now <= 253402300799:
         raise ValueError("Invalid reconciliation time")
     if (type(lookback_seconds) is not int or not 60 <= lookback_seconds <= 365 * 86400
             or type(max_pages) is not int or not 1 <= max_pages <= 20):
