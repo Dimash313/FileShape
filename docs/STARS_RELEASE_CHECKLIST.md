@@ -16,6 +16,7 @@
 | --- | --- |
 | Disabled flag, missing support, bad gate URL | No invoice; pre-checkout denied; no grant |
 | Invoice for each of the three server products | Owner-bound order, one correct XTR price, payload matching the order |
+| Buyer terms and confirmation | /terms explains prices, limits, non-recurring Pro, refund contact and support; selecting a tariff only shows terms; only a current-version explicit agreement can produce an invoice; stale consent does not |
 | Expired/wrong-user/wrong-price quote | Pre-checkout denied within Telegram's 10-second limit |
 | Valid successful_payment event | Durable unique Telegram charge ID; exactly one entitlement/pack grant |
 | Duplicate update; bot retry; API timeout after writing | Replayed event causes **no** second grant |
