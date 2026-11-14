@@ -35,7 +35,9 @@ signed assertions; it never touches the API-owned SQLite. A bounded 30-day,
 up-to-1000-transaction scan and in-memory duplicate suppression reduce
 repeated processing. The full history may be larger or older than this
 window: truncated scans and failed API confirmations are **logged as
-incomplete**, never advertised as fully reconciled. The bot service needs a
+incomplete**, never advertised as fully reconciled. A truncated scan
+**cannot create any new paid grant**, because a matching refund might be
+outside the scanned pages; already-visible refunds are still processed. The bot service needs a
 healthy API gateway to deliver already paid orders, even with checkout off.
 Telegram's refund service message is also handled directly.
 
