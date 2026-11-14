@@ -4,7 +4,7 @@ These instructions apply to **all work in this repository**: code, dependencies,
 
 ## Project owner's religious and ethical requirements
 
-The project owner follows **Salafi Islam** and requires FileShape to be developed and operated within **halal** boundaries. Do not knowingly introduce haram (religiously prohibited) or doubtful/shubuhat features, content, revenue models, or partnerships.
+The project owner follows **Salafi Islam** and requires FileShape to be developed and operated within **halal** boundaries. Do not knowingly introduce haram (religiously prohibited) or doubtful/shubuhat features, content, revenue models, or partnerships. **This is a general, project-wide prohibition: the examples below are NOT an exhaustive list. An unlisted haram or doubtful activity is equally excluded.**
 
 - **No music or musical soundtracks** in the app, bot, previews, promotional materials, or notification sounds. Audio-file tools may process user-provided files as general-purpose utilities; do not supply or promote prohibited content.
 - **Do not add depictions of living beings** (people, animals, characters, mascots, illustrations, avatars) to the product branding, generated UI assets, or marketing. Prefer typography, geometric forms, abstract icons, and neutral interface elements.
