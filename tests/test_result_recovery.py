@@ -6,6 +6,7 @@ import secrets
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from api.fenced_results import FencedDispatchStore, FencedResultGate
 from api.private_blob_store import BlobUnavailable, PrivateBlobStore
@@ -189,6 +190,12 @@ class ResultRecoveryTests(unittest.TestCase):
                 self.assertEqual((blocked.confirmed_lost, blocked.pending_credit), (1, 1))
                 self.assertEqual(self.snapshot(dispatch, envelope.job_id)[0:2],
                                  ("lost", "pending"))
+                # Terminal job pruning must NOT erase a pending credit.
+                with patch("api.fenced_results.time.time",
+                           return_value=self.now + 7200):
+                    dispatch.prune_terminal(1)
+                self.assertEqual(self.snapshot(dispatch, envelope.job_id)[0:2],
+                                 ("lost", "pending"))
                 self.assertEqual(dispatch.usage_snapshot(
                     OWNER, now=self.now + 36,
                 )["pack_remaining"], MAX_PACK_BALANCE)
@@ -282,6 +289,60 @@ class ResultRecoveryTests(unittest.TestCase):
                     self.assertEqual(first._db.execute(
                         "SELECT count(*) FROM operation_usage WHERE status='released'",
                     ).fetchone()[0], 1)
+
+    def test_pruning_keeps_result_until_promised_deadline(self):
+        with FencedDispatchStore(self.jobs_path) as dispatch:
+            with PrivateBlobStore(self.blobs_path) as blobs:
+                envelope, candidate = self.approve(
+                    dispatch, blobs, blob_ttl=10000,
+                )
+                with patch(
+                    "api.fenced_results.time.time",
+                    return_value=self.now + 7200,
+                ):
+                    self.assertEqual(dispatch.prune_terminal(1), 0)
+                self.assertEqual(
+                    FencedResultGate(dispatch, blobs).read_approved(
+                        OWNER, envelope.job_id, envelope.result_ref,
+                        now=self.now + 7201,
+                    ),
+                    b"private result bytes",
+                )
+                with patch(
+                    "api.fenced_results.time.time",
+                    return_value=self.now + 11000,
+                ):
+                    self.assertEqual(dispatch.prune_terminal(1), 1)
+                self.assertIsNone(dispatch._db.execute(
+                    "SELECT 1 FROM result_delivery_state WHERE job_id=?",
+                    (envelope.job_id,),
+                ).fetchone())
+
+    def test_pruning_keeps_suspect_and_manual_review_evidence(self):
+        with FencedDispatchStore(self.jobs_path) as dispatch:
+            with PrivateBlobStore(self.blobs_path) as blobs:
+                envelope, candidate = self.approve(
+                    dispatch, blobs, blob_ttl=50,
+                )
+                blobs.delete(OWNER, candidate, job_id=envelope.job_id)
+                recovery = ResultRecovery(dispatch, blobs)
+                recovery.reconcile(now=self.now + 5)
+                with patch(
+                    "api.fenced_results.time.time",
+                    return_value=self.now + 7200,
+                ):
+                    self.assertEqual(dispatch.prune_terminal(1), 0)
+                recovery.reconcile(now=self.now + 55)
+                self.assertEqual(
+                    self.snapshot(dispatch, envelope.job_id)[0], "review",
+                )
+                with patch(
+                    "api.fenced_results.time.time",
+                    return_value=self.now + 7200,
+                ):
+                    self.assertEqual(dispatch.prune_terminal(1), 0)
+                self.assertEqual(dispatch.get(envelope.job_id, OWNER).state,
+                                 "completed")
 
     def test_invalid_recovery_configuration_fails_closed(self):
         with FencedDispatchStore(self.jobs_path) as dispatch:
