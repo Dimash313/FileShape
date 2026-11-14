@@ -1,5 +1,8 @@
 """Contract tests for local private artifact staging (not a public API)."""
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
+import secrets
+import threading
 import os
 from pathlib import Path
 import sqlite3
@@ -203,3 +206,160 @@ class PrivateBlobStoreTests(unittest.TestCase):
         store.close()
         with self.assertRaises(RuntimeError):
             store.stage_input(OWNER, b"x")
+
+
+    @staticmethod
+    def write_untracked(path, data=b"orphan", *, mtime):
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.utime(path, (mtime, mtime))
+
+    def test_orphan_sweep_recovers_untracked_crash_files_only(self):
+        with self.new_store() as store:
+            live = store.stage_input(OWNER, b"live, private", now=self.now)
+            store.bind_input(OWNER, JOB, live, now=self.now)
+            staged_candidate = store.stage_candidate(
+                OWNER, JOB, b"candidate", now=self.now,
+            )
+            orphan = secrets.token_urlsafe(24)
+            self.write_untracked(
+                self.root / orphan, mtime=self.now - 700,
+            )
+            (self.root / "README").write_text("not a blob")
+            report = store.sweep_orphans(
+                now=self.now, minimum_age_seconds=300,
+            )
+            self.assertEqual(report.removed, 1)
+            self.assertGreaterEqual(report.preserved_live, 2)
+            self.assertFalse((self.root / orphan).exists())
+            self.assertEqual(
+                store.read_input(OWNER, JOB, live, now=self.now + 1),
+                b"live, private",
+            )
+            self.assertEqual(
+                store.read_candidate(
+                    OWNER, JOB, staged_candidate, now=self.now + 1,
+                ), b"candidate",
+            )
+            self.assertTrue((self.root / "README").exists())
+            self.assertTrue((self.root / "blobs.sqlite3").exists())
+            self.assertEqual(store.sweep_orphans(now=self.now).removed, 0)
+
+    def test_orphan_sweep_respects_age_and_bounded_batches(self):
+        with self.new_store() as store:
+            recent = secrets.token_urlsafe(24)
+            self.write_untracked(self.root / recent, mtime=self.now)
+            old_refs = [secrets.token_urlsafe(24) for _ in range(3)]
+            for ref in old_refs:
+                self.write_untracked(
+                    self.root / ref, mtime=self.now - 1000,
+                )
+            first = store.sweep_orphans(
+                now=self.now, minimum_age_seconds=300, delete_limit=1,
+            )
+            self.assertEqual(first.removed, 1)
+            self.assertTrue((self.root / recent).exists())
+            self.assertEqual(sum((self.root / ref).exists() for ref in old_refs), 2)
+            second = store.sweep_orphans(
+                now=self.now, minimum_age_seconds=300,
+            )
+            self.assertEqual(second.removed, 2)
+            self.assertGreaterEqual(second.skipped_young, 1)
+            self.assertTrue((self.root / recent).exists())
+            self.assertEqual(
+                store.sweep_orphans(now=self.now + 310).removed, 1,
+            )
+            self.assertFalse((self.root / recent).exists())
+
+    def test_symlinks_hardlinks_and_unknown_files_survive_sweep(self):
+        with self.new_store() as store:
+            outside = Path(self.temp.name) / "outside"
+            outside.write_bytes(b"external")
+            os.chmod(outside, 0o600)
+            link_name = secrets.token_urlsafe(24)
+            hard_name = secrets.token_urlsafe(24)
+            (self.root / link_name).symlink_to(outside)
+            os.link(outside, self.root / hard_name)
+            (self.root / "..unsafe").write_bytes(b"control")
+            report = store.sweep_orphans(
+                now=self.now + 1000, minimum_age_seconds=0,
+            )
+            self.assertEqual(report.removed, 0)
+            self.assertEqual(report.skipped_unsafe, 2)
+            self.assertTrue((self.root / link_name).is_symlink())
+            self.assertTrue((self.root / hard_name).exists())
+            self.assertEqual(outside.read_bytes(), b"external")
+            self.assertTrue((self.root / "..unsafe").exists())
+
+    def test_sweep_fails_closed_if_root_path_is_replaced(self):
+        with self.new_store() as store:
+            replacement = Path(self.temp.name) / "renamed"
+            self.root.rename(replacement)
+            self.root.mkdir(mode=0o700)
+            orphan = secrets.token_urlsafe(24)
+            self.write_untracked(self.root / orphan, mtime=self.now - 1000)
+            with self.assertRaises(RuntimeError):
+                store.sweep_orphans(now=self.now)
+            self.assertTrue((self.root / orphan).exists())
+
+    def test_sweep_invalid_limits_do_not_delete_files(self):
+        with self.new_store() as store:
+            orphan = secrets.token_urlsafe(24)
+            self.write_untracked(self.root / orphan, mtime=self.now - 1000)
+            for kw in (
+                {"minimum_age_seconds": -1},
+                {"minimum_age_seconds": float("nan")},
+                {"minimum_age_seconds": True},
+                {"scan_limit": 0}, {"scan_limit": True},
+                {"delete_limit": 1001}, {"delete_limit": "20"},
+                {"now": True},
+            ):
+                with self.subTest(kwargs=kw), self.assertRaises(ValueError):
+                    store.sweep_orphans(**kw)
+                self.assertTrue((self.root / orphan).exists())
+
+    def test_sweep_does_not_delete_inflight_blob_from_other_connection(self):
+        written = threading.Event()
+        resume_stage = threading.Event()
+        with self.new_store() as stage, self.new_store() as sweep:
+            original = stage._write_private
+
+            def paused_write(ref, payload):
+                original(ref, payload)
+                written.set()
+                if not resume_stage.wait(timeout=10):
+                    raise RuntimeError("Timed out while testing stage race")
+
+            with patch.object(stage, "_write_private", side_effect=paused_write):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    future_stage = executor.submit(
+                        stage.stage_input, OWNER, b"active upload", now=self.now,
+                    )
+                    try:
+                        self.assertTrue(written.wait(timeout=10))
+                        future_sweep = executor.submit(
+                            sweep.sweep_orphans,
+                            now=self.now + 1000,
+                            minimum_age_seconds=0,
+                        )
+                    finally:
+                        resume_stage.set()
+                    reference = future_stage.result(timeout=15)
+                    report = future_sweep.result(timeout=15)
+            self.assertEqual(report.removed, 0)
+            self.assertEqual(
+                stage._db.execute(
+                    "SELECT count(*) FROM staged_blobs WHERE ref=?",
+                    (reference,),
+                ).fetchone()[0], 1,
+            )
+            stage.bind_input(OWNER, JOB, reference, now=self.now + 1)
+            self.assertEqual(
+                stage.read_input(OWNER, JOB, reference, now=self.now + 1),
+                b"active upload",
+            )
