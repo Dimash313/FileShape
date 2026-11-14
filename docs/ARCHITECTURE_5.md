@@ -61,3 +61,19 @@ Measure **registered users, daily active users, simultaneous uploads, accepted j
 ## Deferred features
 
 Multi-tenant white-label bot creation is a future product. Do **not** build tenant billing, owner payouts or arbitrary bot creation now. Preserve module boundaries that would allow later evaluation without increasing present scope.
+
+## Phase B1 — initial executable ports (PR after #74)
+
+The first code boundary is `api/architecture_ports.py`: `JobMetadataPort`,
+`JobDispatchPort`, `DispatchHandlePort` and `ArtifactStoragePort`.
+`BackgroundJobs` now declares these dependencies explicitly and existing
+SQLite, `JobManager` and local artifact implementations are exercised by
+contract tests. This changes **typing and dependency boundaries, not runtime
+wiring**. The dispatcher still takes Python closures, the executor still uses
+local work directories, and the storage is still process-local. It is **not**
+a distributed worker protocol.
+
+The next migration boundary must introduce a **serializable, versioned job
+request** and an atomic, durable queue/ledger admission protocol before an
+independent worker can safely be launched. No adapter may weaken owner-scoped
+reads, idempotent replays, atomic quota settlement or temporary file expiry.
