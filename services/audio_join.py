@@ -4,6 +4,7 @@ Domain-only utility: no Telegram, HTTP, database or quota decisions live here.
 The caller owns the private workspace and removes final outputs after delivery.
 """
 
+import math
 import os
 import stat
 import subprocess
@@ -17,6 +18,32 @@ MAX_JOIN_INPUTS = 5
 MAX_JOIN_FILE_BYTES = 20 * 1024 * 1024
 MAX_JOIN_TOTAL_BYTES = 50 * 1024 * 1024
 JOIN_TIMEOUT_SECONDS = 65
+
+
+def _exact_audio_duration(source: Path) -> float:
+    """Recheck borderline duration without rounded display metadata.
+
+    The existing public audio-info contract rounds to tenths for users. A
+    concatenation cannot rely on that representation at its strict 600s cap.
+    """
+    try:
+        checked = subprocess.run(
+            [_program("ffprobe"), "-v", "error", "-protocol_whitelist", "file,pipe",
+             "-show_entries", "format=duration", "-of",
+             "default=noprint_wrappers=1:nokey=1", str(source)],
+            capture_output=True, text=True, check=False, timeout=12,
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError("Не удалось проверить аудио за отведённое время") from None
+    if checked.returncode != 0:
+        raise ValueError("Не удалось прочитать аудиофайл")
+    try:
+        duration = float(checked.stdout.strip())
+    except (ValueError, TypeError):
+        raise ValueError("Не удалось определить длительность аудио") from None
+    if not math.isfinite(duration) or not 0 < duration <= MAX_DURATION_SECONDS:
+        raise ValueError("Общая длительность аудио должна быть не более 10 минут")
+    return duration
 
 
 def _regular_file(path: Path) -> Path:
@@ -58,9 +85,18 @@ def join_audio(sources: Sequence[Path], target: Path) -> dict:
             raise ValueError("Суммарный размер аудиофайлов превышает 50 МиБ")
         info = probe_audio(safe_path)
         total_seconds += float(info["seconds"])
+        resolved.append(safe_path)
+
+    # probe_audio() intentionally rounds display durations to 0.1 s. Each
+    # input may therefore hide up to 0.05 s. Use exact FFprobe durations only
+    # near the boundary, avoiding a silent FFmpeg -t 600 truncation.
+    tolerance = 0.05 * len(resolved) + 0.000001
+    if total_seconds > MAX_DURATION_SECONDS + tolerance:
+        raise ValueError("Общая длительность аудио должна быть не более 10 минут")
+    if total_seconds >= MAX_DURATION_SECONDS - tolerance:
+        total_seconds = sum(_exact_audio_duration(source) for source in resolved)
         if total_seconds > MAX_DURATION_SECONDS:
             raise ValueError("Общая длительность аудио должна быть не более 10 минут")
-        resolved.append(safe_path)
 
     fd, scratch = tempfile.mkstemp(prefix=".fileshape-audio-join-", suffix=".mp3", dir=target.parent)
     os.close(fd)
