@@ -72,3 +72,64 @@ not an optional preference or a single MP3-editor exception.
 button/navigation path, any unavoidable typed input, and how the user
 goes back or cancels. Do not merge new text-heavy wizard flows without
 the owner's explicit approval.
+
+## Mandatory product-quality standard — 10/10 target in every dimension
+
+**Owner's non-negotiable ambition:** FileShape must strive for **10/10 quality
+in every aspect**, not merely an acceptable average. If any aspect falls
+short of the defined release bar, improve it before declaring that release
+ready. This applies to the Telegram bot, Mini App, backend, web, Android,
+iOS, documentation, support, and every new feature.
+
+**Do not pretend perfection has been proven.** A score of 10/10 is a target,
+not a factual certification or substitute for evidence. Never assign
+self-congratulatory scores without reproducible tests and independent
+user feedback. Record defects, limitations, risks and missing evidence
+openly. Zero known release-blocking defects is mandatory; unknown defects
+can still exist.
+
+### Mandatory quality dimensions
+
+Evaluate each applicable dimension separately, with evidence and acceptance
+criteria in [QUALITY_STANDARD.md](docs/QUALITY_STANDARD.md):
+
+1. Functional correctness and feature completeness within promised scope
+2. Button-first UX, visual consistency, mobile responsiveness and accessibility
+3. Security, authorization, user isolation and abuse prevention
+4. Privacy, data minimization, retention and safe deletion
+5. Reliability, crash/restart recovery, idempotency and error handling
+6. Performance, resource limits and verified capacity
+7. File fidelity, format validation, output quality and metadata integrity
+8. Payment/quotas transparency, accounting and refund safety (when enabled)
+9. Automated tests, CI, reproducible builds, release/rollback and observability
+10. Documentation, maintainability, localization, user trust and support
+11. Compliance with the owner's project-wide halal and doubtful-content policy
+
+### Hard release and PR gates
+
+- **No averaging away a failure:** one failing critical dimension blocks
+  release, regardless of how strong the other dimensions are.
+- Each user-facing PR must document scope, before/after UX, failure paths,
+  automated tests, security/privacy impact, resource limits, and remaining
+  risks. Provide screenshots or reproducible manual evidence for UI changes
+  where possible.
+- No merge while required CI is red, skipped unexpectedly, or unrun. Tests
+  must cover realistic successful and failed cases; mock-only tests do not
+  prove live Telegram, real FFmpeg, payment or production behavior.
+- No release with known critical/high severity vulnerabilities, cross-user
+  data leaks, silent data loss, false charges, broken core flows, misleading
+  functionality, or inaccessible essential actions.
+- Treat medium/low defects and enhancements as tracked work with severity,
+  owner and decision. Do not claim a dimension is perfect while significant
+  gaps remain. For any unmet quality criterion, open or update a task,
+  implement the fix, test it, and re-evaluate before claiming readiness.
+- New features may remain experimental behind disabled controls or feature
+  flags, but must not be advertised as ready or block a stable core release
+  merely because they are planned.
+- Never trade away security, privacy, truthfulness, religious constraints or
+  basic usability to achieve an aesthetic score, performance benchmark or
+  release deadline.
+
+**Quality is continuous:** after release, measure real failures and user
+experience, fix regressions, and raise the bar. A claimed 10/10 without
+evidence is a violation of this standard.
