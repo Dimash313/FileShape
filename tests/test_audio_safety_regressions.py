@@ -78,7 +78,7 @@ class ProbeFailureTests(unittest.TestCase):
             writer.setnchannels(1)
             writer.setsampwidth(2)
             writer.setframerate(16000)
-            writer.writeframes(b"\\x00\\x00" * 160)
+            writer.writeframes(b"\x00\x00" * 160)
 
     def test_overlong_duration_is_rejected(self):
         payload = {"format": {"format_name": "wav", "duration": "601"}, "streams": [
