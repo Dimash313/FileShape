@@ -6,6 +6,7 @@ import zipfile
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.exceptions import InvalidXmlError
+from docx.oxml.ns import qn
 from docx.table import Table
 from lxml.etree import XMLSyntaxError
 
@@ -19,6 +20,9 @@ MAX_DOCX_TABLE_CELLS = 20_000
 MAX_DOCX_ROW_CELLS = 64
 # python-docx follows w:vMerge continuations recursively through prior rows.
 MAX_DOCX_VERTICAL_MERGE_ROWS = 128
+# Cumulative across top-level and nested body tables.
+MAX_DOCX_TABLES = 200
+MAX_DOCX_NESTING_DEPTH = 8
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 MAX_TEXT_CHARS = 700_000
 MAX_TEXT_LINES = 5_000
@@ -63,6 +67,69 @@ def validate_docx(source: Path) -> None:
         raise ValueError("Повреждённый DOCX") from None
 
 
+
+def _preflight_docx_tables(document) -> None:
+    """Count all body tables, including nested ones, before cell expansion.
+
+    This OOXML-only pass avoids calling python-docx's row.cells on nested
+    tables. Accepted files retain the existing plain-text export semantics.
+    """
+    table_count = 0
+    total_rows = 0
+    total_cells = 0
+    w_tbl = qn("w:tbl")
+    w_grid = qn("w:tblGrid")
+    w_grid_col = qn("w:gridCol")
+    w_tr = qn("w:tr")
+    w_tc = qn("w:tc")
+
+    for tbl in document.element.body.iter(w_tbl):
+        table_count += 1
+        if table_count > MAX_DOCX_TABLES:
+            raise ValueError("Слишком много таблиц DOCX")
+
+        depth = 1
+        for _ in tbl.iterancestors(w_tbl):
+            depth += 1
+            if depth > MAX_DOCX_NESTING_DEPTH:
+                raise ValueError("Слишком глубокая вложенность таблиц DOCX")
+
+        grid = tbl.find(w_grid)
+        if grid is None:
+            raise ValueError("Повреждённая таблица DOCX")
+        width = 0
+        for column in grid:
+            if column.tag == w_grid_col:
+                width += 1
+                if width > MAX_DOCX_ROW_CELLS:
+                    raise ValueError("Слишком сложная таблица DOCX")
+        if not width:
+            raise ValueError("Повреждённая таблица DOCX")
+
+        for row in tbl:
+            if row.tag != w_tr:
+                continue
+            total_rows += 1
+            if total_rows > MAX_DOCX_TABLE_ROWS:
+                raise ValueError("Слишком сложная таблица DOCX")
+            row_cells = 0
+            for tc in row:
+                if tc.tag != w_tc:
+                    continue
+                try:
+                    span = tc.grid_span
+                except (TypeError, ValueError, OverflowError):
+                    raise ValueError("Повреждённая таблица DOCX") from None
+                if span < 1 or span > MAX_DOCX_ROW_CELLS - row_cells:
+                    raise ValueError("Слишком сложная таблица DOCX")
+                row_cells += span
+                total_cells += span
+                if total_cells > MAX_DOCX_TABLE_CELLS:
+                    raise ValueError("Слишком сложная таблица DOCX")
+            if row_cells > width:
+                raise ValueError("Повреждённая таблица DOCX")
+
+
 def read_docx_text(source: Path) -> tuple[str, dict]:
     validate_docx(source)
     try:
@@ -73,6 +140,7 @@ def read_docx_text(source: Path) -> tuple[str, dict]:
         # The archive passed size/path checks but its OOXML is malformed.
         # Do not expose parser output or private input paths to callers.
         raise ValueError("Повреждённый DOCX") from None
+    _preflight_docx_tables(document)
     parts = []
     paragraphs = 0
     tables = 0
