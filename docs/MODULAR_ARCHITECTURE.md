@@ -370,3 +370,57 @@ capability alignment can proceed in separate PRs. No public endpoints,
 auth mechanism, subscription product, dependency, or size limit was added.
 All required exact-head CI and manual bot checks must pass before merge.
 
+
+## Phase D1 — typed DOCX/TXT boundary for the API (draft, not released)
+
+The `services/document_module.py` in-process domain port defines
+`DocumentModulePort`, with four operations:
+
+| Existing API action | Port operation | Existing output |
+| --- | --- | --- |
+| `docx:info` | `inspect_docx(source)` | `{"info": {"paragraphs", "tables", "characters"}}` |
+| `txt:info` | `inspect_text(source)` | `{"info": {"lines", "characters"}}` |
+| `docx:txt` | `to_text(source,target)` | `converted.txt` |
+| `txt:docx` | `to_docx(source,target)` | `converted.docx` |
+
+The port delegates to the **unchanged** `services.document_tools`
+implementation. `api/server.py` now dispatches its DOCX/TXT actions via
+this port. The worker uses the same API dispatch functions as before.
+Telegram bot document handlers retain their legacy direct calls until
+their own separate regression-tested migration.
+
+**Existing semantics are deliberate:** DOCX -> TXT exports textual
+paragraphs and tables, not original styles or page layout. TXT is UTF-8
+only. Limits on DOCX package entries, uncompressed content, suspicious
+compression and text length remain in `services.document_tools`.
+No new document formats or editable Word layout are claimed.
+
+**Boundary ownership:** the document adapter must never import API,
+Telegram, billing, queue, auth, workspace or client-UI modules. API/bot
+ingress continue to own authorization, per-user quotas, temporary-file
+staging, upload size, worker sandboxing, result publication and cleanup.
+The adapter preserves processing exceptions, return shapes, format
+strings and output names; it does not invent success responses.
+
+**Tests added:** document port conformance/delegation; temporary real
+DOCX and UTF-8 text roundtrip; table-to-text export; invalid/oversized
+input; API response shapes, conversions and error propagation; no
+cross-format dispatch; format import boundary checks. These supplement,
+not replace, existing `test_document_tools.py`, conversion-matrix and
+malformed-upload tests.
+
+**Follow-up D2:** migrate the Telegram bot DOCX/TXT callbacks through
+the same port with private-chat, quota/refund and delivery tests. Keep
+the existing parser implementation and no unverified performance claims.
+
+### CI status and release blocking
+
+The previous architecture PR stack has **not** passed exact-head CI:
+GitHub Actions currently fails both jobs without a runner and without
+executing steps. Investigation and owner-side recovery are tracked by
+[issue #101](https://github.com/Dimash313/FileShape/issues/101) and
+independent [CI PR #102](https://github.com/Dimash313/FileShape/pull/102).
+Neither this phase nor the CI configuration PR may be merged solely
+because a static review looks sound. No paid runner or GitHub billing
+change is authorized by this architecture task.
+
