@@ -1,8 +1,29 @@
 # API & security — handoff
 
-Updated: 2026-11-15 UTC (initial snapshot; verify live GitHub).
-**P0 blocker:** issue #101 — GitHub Actions tests/miniapp jobs fail before runner allocation (zero steps); root cause not confirmed. CI improvement PR #102 exists separately.
-Current state: stacked architecture drafts include #107 HTTP capabilities, #108 PDF merge, #109 ZIP creation, #111 ZIP compatibility. Do not treat draft code as merged. Earlier PR #87 overlaps capability manifest design; reconcile rather than blindly merge both.
-Verified: no exact-head green CI for these stacked PRs; no deployment readiness.
-Next: inspect actual GitHub Actions job failure banners/settings with owner, unblock runners, then audit PR dependency graph and coordinate ZIP extract HTTP contract.
-Shared-file coordination: this track owns API/auth/worker contract review, but changes affecting domain behavior need domain-track signoff.
+Updated: 2026-11-15 UTC.
+Track: `api-security`.
+Current Issue: [#120](https://github.com/Dimash313/FileShape/issues/120).
+Active PR: [#124](https://github.com/Dimash313/FileShape/pull/124) (**Draft**; base `docs/independent-development-tracks`, itself unmerged PR #112).
+Branch: `api-security/120-upload-framing`.
+Latest code/test commit: `b3806776b63258ff069ae931feaefcd00cf9c478` (this STATUS commit advances branch HEAD; inspect PR #124 for the exact latest SHA).
+
+## P0 — CI blocker #101 (unresolved)
+
+GitHub Actions hosted runner allocation remains broken before any test execution. Run [43709270266](https://github.com/Dimash313/FileShape/actions/runs/43709270266) for Draft PR #102 and later runs [43720058288](https://github.com/Dimash313/FileShape/actions/runs/43720058288) and [43720144330](https://github.com/Dimash313/FileShape/actions/runs/43720144330) show **both jobs failed with `runner_id=0` and zero steps**. The initial PR #124 run [43720813909](https://github.com/Dimash313/FileShape/actions/runs/43720813909) also failed with `runner_id=0` and zero steps for both jobs. The diagnostic evidence was recorded as a comment on [Issue #101](https://github.com/Dimash313/FileShape/issues/101). The exact check-run annotation/account billing policy is not visible through the connector. **Root cause not confirmed, not resolved; no PR may merge on these results.**
+
+Owner action: inspect the workflow failure banner/annotation in GitHub UI, the account Actions usage/budgets, and repository Settings → Actions → General. Do not enable paid overages or relax spending protection without explicit owner consent. If all account settings are normal, contact GitHub Support with the failing run IDs and exact banner text.
+
+## Work performed in this branch
+
+- `api/ingress.py`: reject duplicate `Content-Length` fields, incompatible `Content-Length` and `Transfer-Encoding`, and noncanonical lengths at the HTTP upload guard; preserve cap on actual streamed bytes and 413 behavior.
+- `tests/test_ingress.py`: adversarial framing regressions, mixed-case header names, valid transfer-only chunked upload and overlimit rejection.
+- No shared `api/server.py`, domain formats, database, payments or third-party services changed.
+
+**Verified:** GitHub commits created; code and regressions inspected, but **tests NOT EXECUTED on the exact PR head**, Docker build NOT EXECUTED and Mini App checks NOT EXECUTED. A Draft PR is not a completed/released milestone.
+
+## Dependency and next actions
+
+1. Resolve #101 with the owner; require a real runner, executed Python/Mini App/Docker jobs, exact-head success and review before merging #124.
+2. Integrate parent [PR #112](https://github.com/Dimash313/FileShape/pull/112) and its architecture stack in dependency order; never merge this stacked PR independently into main.
+3. Audit PR #87 vs #107 capability discovery duplication, #108 PDF merge and #109 ZIP create route ownership, and plan a secure ZIP extract result contract with images/archives.
+4. Preserve Telegram-signed auth, tenant isolation, file lifecycle, atomic quota ledger and checked resource limits for every public ingress.

@@ -55,6 +55,46 @@ class IngressTests(unittest.TestCase):
                 status, _ = call_guard([b"x"], [(b"content-length", length)])
                 self.assertEqual(status, 400)
 
+    def test_reject_duplicate_content_length_even_when_identical(self):
+        cases = (
+            [(b"content-length", b"5"), (b"content-length", b"5")],
+            [(b"content-length", b"5"), (b"content-length", b"6")],
+            [(b"Content-Length", b"5"), (b"content-length", b"5")],
+        )
+        for headers in cases:
+            with self.subTest(headers=headers):
+                status, body = call_guard([b"hello"], headers)
+                self.assertEqual(status, 400)
+                self.assertIn("detail", json.loads(body))
+
+    def test_reject_length_combined_with_transfer_encoding(self):
+        cases = (
+            [(b"content-length", b"5"), (b"transfer-encoding", b"chunked")],
+            [(b"Transfer-Encoding", b"chunked"), (b"Content-Length", b"5")],
+        )
+        for headers in cases:
+            with self.subTest(headers=headers):
+                status, _ = call_guard([b"hello"], headers)
+                self.assertEqual(status, 400)
+
+    def test_reject_noncanonical_decimal_length(self):
+        for length in (b"+1", b" 1", b"1 ", b"1, 1", bytes([0xB2]), b""):
+            with self.subTest(length=length):
+                status, _ = call_guard([b"x"], [(b"content-length", length)])
+                self.assertEqual(status, 400)
+
+    def test_valid_chunked_body_without_declared_length_is_still_bounded(self):
+        headers = [(b"Transfer-Encoding", b"chunked")]
+        self.assertEqual(call_guard([b"1234", b"56"], headers, limit=6), (200, b"123456"))
+        status, _ = call_guard([b"1234", b"567"], headers, limit=6)
+        self.assertEqual(status, 413)
+
+    def test_case_insensitive_single_length_is_accepted(self):
+        self.assertEqual(
+            call_guard([b"abc"], [(b"Content-Length", b"3")]),
+            (200, b"abc"),
+        )
+
     def test_unrelated_route_is_not_guarded(self):
         status, body = call_guard([b"12345678901"], path="/health")
         self.assertEqual((status, body), (200, b"12345678901"))
