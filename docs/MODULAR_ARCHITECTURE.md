@@ -181,3 +181,43 @@ old public imports while the bot and existing tests depend on them.
   throughput or guaranteed absence of regressions until CI and
   production-like checks provide evidence.
 
+
+## Phase C2 — Telegram PDF operations use the same domain port (draft)
+
+All current bot PDF processing entry points in `main.py` now delegate to
+`services.pdf_module.pdf_module` rather than importing the individual PDF
+functions from `services.file_tools`:
+
+| Bot flow | Port method | Existing result file |
+| --- | --- | --- |
+| PDF page information | `count_pages(source)` | Bot text response |
+| Extract first page | `extract(source, target, "1")` | `first_page.pdf` |
+| Rotate 90 degrees | `rotate(source, target, 90)` | `rotated.pdf` |
+| Extract selected pages | `extract(source, target, pages)` | `pages.pdf` |
+| Remove selected pages | `remove(source, target, pages)` | `without_pages.pdf` |
+| Merge 2–5 PDFs | `merge(sources, target)` | `merged.pdf` |
+
+The API and bot now share the *logical* PDF boundary but intentionally
+retain their distinct user-facing response filenames and existing UI state
+machines. `services.file_tools` still contains the original PDF implementation
+and image tools; only imports/delegation changed in this phase.
+
+**Existing ownership remains unchanged:** bot private-chat and callback owner
+checks, FSM, upload/download restrictions, server-side entitlement and quota
+reservations, active-operation cap, temporary directory lifecycle, result
+size limit and Telegram delivery are outside the PDF port. The port does
+not import Telegram, FastAPI, database, billing or infrastructure.
+
+New `tests/test_bot_pdf_module.py` checks dispatch and output names, ordered
+merge, selected-page behavior, access denial, unsupported callbacks,
+conversion failures, download isolation and quota release on failed delivery.
+It uses mock transport/adapter; real-PDF parsing and limits remain covered
+by `test_pdf_module_contract.py`, `test_file_tools.py` and existing API
+conversion tests.
+
+**Next safe step:** introduce a separate PDF implementation module while
+retaining `services.file_tools` compatibility re-exports, then add analogous
+image module boundaries. Do not rewrite the whole project or enable
+unshipped video operations. No completed CI, real Telegram validation or
+zero-overhead benchmark is claimed until independently verified.
+
