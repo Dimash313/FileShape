@@ -1,31 +1,32 @@
 # Images & Archives — handoff
 
-Updated: 2026-11-15 UTC.
-Track: `images-archives`.
-Active Issue: [#161 — pin input descriptor across image batch preflight/decode](https://github.com/Dimash313/FileShape/issues/161).
-Branch: `fix/image-pinned-inputs-h6`.
-Draft PR: [#162](https://github.com/Dimash313/FileShape/pull/162), stacked on `fix/image-input-format-preflight-h5` (PR #159).
-Initial code/test head before STATUS update: `ee65f5e1b0664752b649d2938273abe6fa2c87c0`. Inspect **live PR #162 head SHA** for exact final commit/status.
+Updated: 2026-11-15 UTC
+Track: `images-archives`
+Claimed Issue: [#166 — isolated image resource benchmark](https://github.com/Dimash313/FileShape/issues/166)
+Current branch: `test/image-resource-benchmarks-h7`
+Active PR: [#168](https://github.com/Dimash313/FileShape/pull/168), **Draft** based on PR #162 (`fix/image-pinned-inputs-h6`).
+Implementation/test snapshot before status update: `a9b7bceac87c33291cf5e7aefe0b5144eb7773ce`; inspect PR #168 **live** for latest exact head.
 
-## Current implementation (Draft; NOT merged)
-- `services/image_tools.py`: context-managed regular-source descriptor with `O_NOFOLLOW` / `O_NONBLOCK` where available and `fstat` regular-file validation. Reject symlink/FIFO input. Extend internal `_open_image` to decode an already-open binary stream without closing caller-owned descriptor; existing Path-based call signature stays compatible.
-- `services/image_bundle.py`: pin up to 8 descriptors through whole-batch header preflight and subsequent decode (same inode even if pathname replaced by a different regular file). Rewind stream between phases, use `fstat` for aggregate byte budget and retain pixel/format/frame checks and atomic output.
-- `tests/test_image_pinned_inputs.py`: 6 tests for malicious regular-path replacement after approval, original PDF image geometry, header/decoder pinned stream, FIFO/symlink refusal, failure cleanup and Linux file descriptor leakage.
-- `tests/test_image_bundle_preflight.py`: one existing mock expectation updated from Path to binary stream, no relaxation of validation.
-- No new HTTP endpoints, auth/quotas/worker changes, dependencies, billing, UI or media assets; only generated solid-color test images. AGENTS.md remains applicable.
+## Current Draft work (#168, not merged)
+- `benchmarks/image_resources.py`: opt-in deterministic Linux benchmark of real image-domain `image_module.bundle_as_pdf` using generated geometric JPEG/PNG/WebP. Three profiles: `smoke`, `typical` and `near-cap` (6 × 1800 × 1800 = 19.44m pixels, within 22m batch cap).
+- Parent makes fixtures in a private temp directory; isolated child measures wall time, process CPU, and its **absolute total peak RSS** (including imports), with 1024 MiB address-space limit by default and 90-second timeout. Reports actual runtime JSON, versions, input and result sizes; cleans temp directory. Peak RSS figures are platform/hardware-dependent.
+- `tests/test_image_resource_benchmark.py`: 3 regression checks for profile budgets, real smoke child/report on Linux, and invalid-timeout rejection. Full near-cap benchmark is opt-in only and **not run in default CI**.
+- `benchmarks/__init__.py` marks diagnostic package.
+- No modifications to actual image algorithms, API contracts, bot, Mini App, shared quota/worker, auth, billing or marketing. Only abstract solid-color fixtures, complying with AGENTS.md.
 
-## Actual verification / blockers
-- **Executed locally** on manually reconstructed image-domain modules, not full repo exact head: Linux Python 3.13, Pillow 12.3.0, pypdf 5.9.0; `python -m unittest -v tests.test_image_pinned_inputs tests.test_image_bundle tests.test_image_bundle_atomic tests.test_image_bundle_preflight tests.test_image_input_preflight` → **35/35 passed** (6 new + 29 existing).
-- **NOT EXECUTED / NOT VERIFIED**: full exact-head Python suite, bot/API real upload integration, Mini App tests/typecheck/build, Docker, deployed filesystem/Windows behavior, worker peak-memory benchmark, and GitHub CI for this PR. The parent PR #159 GitHub Actions run 43724487247 concluded failure with tests/miniapp jobs failed before steps could be verified.
-- Release blocker [#101 — GitHub Actions pre-runner failure](https://github.com/Dimash313/FileShape/issues/101) remains unresolved. Missing commit statuses or zero-step jobs are not passing tests.
-- Limitations: `O_NOFOLLOW` is unavailable on some platforms; descriptor pinning protects against path replacement on supporting systems but does not stop mutation *within the same inode*. Private per-owner temp workspace isolation and runtime resource bounds remain required.
+## Verification status (distinguish tested from untested)
+- Files/benchmarks committed, but **NO measured benchmark numbers claimed** in this handoff. Need actual smoke and near-cap measurements on representative host/OS and repeat for credible variance.
+- Owner reported GitHub Actions quota fixed by making repository public. I invoked GitHub rerun of failed workflow **#43725314168** for parent PR #162. GitHub then showed actual runner execution: Mini App job `success`, including install, tests, typecheck and build; Python job was `in_progress` on `Run tests` at last inspection. Unlike old zero-step jobs this is **real progress**, but **not a green combined CI** yet.
+- All exact-head Python regression, Mini App, Docker, real bot/API interactions, high-load worker resource benchmarks, and post-merge main CI required before merge. Check the latest #168 GitHub Actions after this docs update; no stale SHA evidence.
+- PR #162 had previously 35/35 passing local reconstructed-domain tests, not full exact-head suite.
+- No draft merged. Do not infer closure of [issue #101](https://github.com/Dimash313/FileShape/issues/101) until actual required jobs pass.
 
-## Integration chain
-- [#162](https://github.com/Dimash313/FileShape/pull/162) (Issue #161) → [#159](https://github.com/Dimash313/FileShape/pull/159) (Issue #158) → [#153](https://github.com/Dimash313/FileShape/pull/153) (Issue #148) → [#144](https://github.com/Dimash313/FileShape/pull/144) (Issue #138) → [#137](https://github.com/Dimash313/FileShape/pull/137) (Issue #133).
-- [#128](https://github.com/Dimash313/FileShape/pull/128) (Issue #121) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) (Issue #110) → [#109](https://github.com/Dimash313/FileShape/pull/109) → earlier architecture parents.
-- All are Draft/unmerged at last inspection. Merge in parent order **only after** real exact-head green CI/review; verify main after integration.
+## Dependency chain
+[#168](https://github.com/Dimash313/FileShape/pull/168) → [#162](https://github.com/Dimash313/FileShape/pull/162) → [#159](https://github.com/Dimash313/FileShape/pull/159) → [#153](https://github.com/Dimash313/FileShape/pull/153) → [#144](https://github.com/Dimash313/FileShape/pull/144) → [#137](https://github.com/Dimash313/FileShape/pull/137) → [#128](https://github.com/Dimash313/FileShape/pull/128) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) → [#109](https://github.com/Dimash313/FileShape/pull/109) → architecture ancestor PRs.
 
-## Next work
-- First review code and security tests for #162 / #159 and actual head GitHub workflow evidence.
-- Independent next task: constrained **peak memory/CPU benchmark** for typical and near-cap solid-color image workloads (measure, do not invent results). No changes to shared API without `api-security` coordination.
-- HTTP ZIP extraction is only a proposed owner-scoped contract, API/security Issue [#132](https://github.com/Dimash313/FileShape/issues/132) / Draft PR [#135](https://github.com/Dimash313/FileShape/pull/135); no HTTP extraction execution in this track.
+All remain stacked Draft/unmerged as verified earlier; do not merge out of order, or without actual final-head green checks and independent review.
+
+## Next unblocked action
+- Verify #168 Python test/CI and the rerun of #162; fix any concrete failures rather than opening unrelated new feature work.
+- Execute opt-in smoke/typical/near-cap benchmarks in representative, bounded worker container and record **actual** measured times/RSS/CPU with hardware/versions. Never change limits from estimated performance.
+- Maintain owner-scoped ZIP HTTP extraction API contract coordination with api-security; PR #135 is a proposal, not enabled.
