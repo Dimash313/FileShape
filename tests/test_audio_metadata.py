@@ -136,7 +136,7 @@ async def fake_meter(*_args, **_kwargs):
 
 
 class MP3TagBotTests(unittest.IsolatedAsyncioTestCase):
-    def make(self, *, owner=111, text="Урок | - | - | - | -"):
+    def make(self, *, owner=111, text="Урок"):
         message = SimpleNamespace(
             chat=SimpleNamespace(type="private", id=111),
             from_user=SimpleNamespace(id=111),
@@ -146,6 +146,7 @@ class MP3TagBotTests(unittest.IsolatedAsyncioTestCase):
         state = SimpleNamespace(
             get_data=AsyncMock(return_value={
                 "owner_id": owner, "file_id": "opaque-telegram-file", "suffix": ".mp3",
+                "tag_field": "title",
             }),
             clear=AsyncMock(),
         )
@@ -161,6 +162,40 @@ class MP3TagBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("audio:tags", ids("audio", ".ogg"))
         self.assertIn("audio:trim", ids("audio", ".wav"))
 
+    async def test_field_selection_menu_and_cover_not_yet_active(self):
+        from main import tag_editor_keyboard, choose_audio_tag, TagState
+        menu = [button.callback_data for row in tag_editor_keyboard().inline_keyboard
+                for button in row]
+        self.assertEqual(set(menu), {
+            "tags:title", "tags:artist", "tags:album", "tags:date",
+            "tags:genre", "tags:cover", "tags:cancel",
+        })
+        message = SimpleNamespace(
+            chat=SimpleNamespace(type="private", id=111),
+            answer=AsyncMock(),
+        )
+        state = SimpleNamespace(
+            get_data=AsyncMock(return_value={
+                "owner_id": 111, "file_id": "opaque", "suffix": ".mp3",
+            }),
+            get_state=AsyncMock(return_value=TagState.choosing_field.state),
+            set_state=AsyncMock(),
+            update_data=AsyncMock(),
+            clear=AsyncMock(),
+        )
+        callback = SimpleNamespace(
+            message=message, from_user=SimpleNamespace(id=111),
+            data="tags:artist", answer=AsyncMock(),
+        )
+        await choose_audio_tag(callback, state)
+        state.update_data.assert_awaited_once_with(tag_field="artist")
+        state.set_state.assert_awaited_once_with(TagState.waiting_for_fields)
+        message.answer.assert_awaited_once()
+        callback.data = "tags:cover"
+        state.update_data.reset_mock()
+        await choose_audio_tag(callback, state)
+        state.update_data.assert_not_awaited()
+
     async def test_wrong_owner_cannot_download_or_use_quota(self):
         from main import audio_tag_fields
         message, state, bot = self.make(owner=222)
@@ -172,7 +207,7 @@ class MP3TagBotTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_metadata_rejected_before_reservation(self):
         from main import audio_tag_fields
-        message, state, bot = self.make(text="Name | Artist | Album | 2026\n-y | Genre")
+        message, state, bot = self.make(text="Name\n-y")
         with patch("main.allow_processing", new_callable=AsyncMock) as access:
             await audio_tag_fields(message, bot, state)
         access.assert_not_awaited()
