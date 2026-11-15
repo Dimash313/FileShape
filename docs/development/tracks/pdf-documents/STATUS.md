@@ -1,28 +1,29 @@
 # PDF & Documents — GitHub-first handoff
 
 Updated: 2026-11-16 UTC. Track: `pdf-documents`.
-Current Issue: [#196 — bound actual TXT input bytes](https://github.com/Dimash313/FileShape/issues/196).
-Current branch: `pdf-documents/196-bounded-txt-read`, stacked on `pdf-documents/193-validate-row-grid` / Draft [#194](https://github.com/Dimash313/FileShape/pull/194).
-Code and test commit preceding status update: `be38fcab36305ea5397db6904710c276b0c496ed`. This STATUS commit advances the branch head; confirm actual SHA via GitHub.
+Active Issue: [#203 — pin DOCX source during validation and parsing](https://github.com/Dimash313/FileShape/issues/203).
+Active branch: `pdf-documents/203-pinned-docx-source` (base `pdf-documents/196-bounded-txt-read`; Draft [#199](https://github.com/Dimash313/FileShape/pull/199)).
+Source and new tests commit before status: `2b146d0d28a974e983f6b46f0f372874cc1071d4`. This STATUS edit advances the branch head; always verify final SHA through GitHub.
 
-## Current focused issue
-- Reproduced a real TXT byte-limit time-of-check/time-of-use gap: a 3-byte TXT grows to 700,000 multibyte UTF-8 characters (2,100,000 bytes) after the initial `stat()` reports three bytes. Previous `read_plain_text` used unbounded `source.read_bytes()` then enforced only char/line limits; the enlarged file was **accepted** despite exceeding `MAX_TEXT_BYTES=2,097,152`. The reproduction used a test Path subclass that changes the actual file between the two operations, without relying on a production race timing.
-- New `read_plain_text` opens a single binary stream and reads at most `MAX_TEXT_BYTES + 1` bytes. It enforces the byte bound on the actual data returned before decoding, avoiding unlimited read and stale stat.
-- `tests/test_txt_read_boundaries.py` adds eight real-file regressions: exact 2 MiB Unicode content, one-byte excess, growth race, no `stat`/`read_bytes` dependency, rejected conversion without output, Unicode BOM round-trip, invalid UTF-8/NUL, and existing char/line limits.
-- Domain-only change. No API, auth, worker, quotas, payment, media, advertising, UX or new dependency.
+## Reproduced bug and new implementation
+- Old `read_docx_text` uses `validate_docx(source)` (opens ZIP at pathname), then `Document(str(source))` (reopens pathname). A file replaced between these two opens can pass preflight as one package and be parsed as a different package. Reproduced on two generated real DOCX files: after validating an opened original stream, replace the pathname; `Document(stream)` still yields the original text, whereas `Document(path)` loads replacement.
+- Current branch `services/document_tools.py`: `read_docx_text` opens DOCX once as `source.open("rb")`, passes that stream to `validate_docx`, seeks to start, parses with `Document(stream)`, and closes on all exceptions. Existing `validate_docx(Path)` remains supported; it additionally accepts an already-open binary stream for this internal path. Error normalization and output semantics preserved.
+- New `tests/test_docx_pinned_input.py`: seven real generated DOCX regressions covering accepted valid file, public validator path/stream compatibility, atomic replacement and rename after validation, invalid original package even if pathname later changes, parser exception redaction, and fd cleanup on OS errors.
+- No new dependencies, API/Telegram/Mini App/billing/worker/quotas changes, user content, imagery, audio, marketing or third-party providers.
 
-## Related unmerged, green exact-head PRs
-- PDF: [#114](https://github.com/Dimash313/FileShape/pull/114) malformed/encrypted/large regressions → [#183](https://github.com/Dimash313/FileShape/pull/183) atomic PDF publication (GitHub Actions success).
-- DOCX: [#125](https://github.com/Dimash313/FileShape/pull/125) ZIP part safety → [#130](https://github.com/Dimash313/FileShape/pull/130) malformed OOXML → [#146](https://github.com/Dimash313/FileShape/pull/146) table/text quotas → [#154](https://github.com/Dimash313/FileShape/pull/154) vertical-merge limits → [#160](https://github.com/Dimash313/FileShape/pull/160) nested-table quotas → [#187](https://github.com/Dimash313/FileShape/pull/187) atomic DOCX/TXT outputs → **[#194](https://github.com/Dimash313/FileShape/pull/194) / Issue #193** malformed row grid offsets / merge-state checks.
-- #194 current unchanged HEAD `a44c8c0271bb452a27a260ec8aed236250174551`: exact-head [GitHub Actions run #43751511301](https://github.com/Dimash313/FileShape/actions/runs/43751511301) completed `success`. Both Python unittest/Docker and Mini App test/typecheck/build executed and passed. It remains Draft/unmerged.
+## Domain-dependent branches, all currently Draft/unmerged
+- Architecture/docs parents [#93→#112](https://github.com/Dimash313/FileShape/pull/112) require independent review and safe sequential integration; governance #91→#92 also green but unmerged.
+- PDF [#114](https://github.com/Dimash313/FileShape/pull/114) (malformed/encrypted tests) → [#183](https://github.com/Dimash313/FileShape/pull/183) (atomic PDF writes). Both exact-head GitHub CI successes.
+- DOCX [#125](https://github.com/Dimash313/FileShape/pull/125) (ZIP name safety) → [#130](https://github.com/Dimash313/FileShape/pull/130) (corrupt OOXML errors) → [#146](https://github.com/Dimash313/FileShape/pull/146) (table bounds) → [#154](https://github.com/Dimash313/FileShape/pull/154) (vertical merges) → [#160](https://github.com/Dimash313/FileShape/pull/160) (nested tables) → [#187](https://github.com/Dimash313/FileShape/pull/187) (atomic DOCX/TXT outputs) → [#194](https://github.com/Dimash313/FileShape/pull/194) (row offset validity) → [#199](https://github.com/Dimash313/FileShape/pull/199) (bounded actual TXT input bytes).
+- #199 HEAD `62b39a9f0e6e134477e3e10575f3258de9f16800`: [GitHub Actions run #43754252338](https://github.com/Dimash313/FileShape/actions/runs/43754252338) completed **success** (Python unittest, Docker build, Mini App tests/typecheck/build).
 
-## Verification status / blockers
-- **Confirmed independently:** deterministic old-code byte-limit bypass under file-growth race on generated actual UTF-8 TXT; captured actual sizes 2,100,000 > 2,097,152, accepted string length 700,000.
-- **Not yet executed for #196 on exact HEAD at status creation:** committed new 8-test module, full Python suite, Mini App, Docker. GitHub Actions must run on final commit. Code review and proper merge ordering are mandatory even with green CI.
-- GitHub runner issue #101 closed after workflow recovery, but no waiver of exact-head CI, privacy checks or independent review.
-- Target file may be modified externally; a bounded stream read prevents excess byte acceptance/memory allocation but does not guarantee a stable snapshot of a concurrently written input. Application must maintain private, server-controlled processing paths and own upload sealing/leases.
+## Verification and caveats
+- **Executed** independent local Python 3.13 / python-docx 1.2.0 proof: `zipfile.ZipFile(stream)` validation did not close the stream; after an `os.replace`, `Document(stream)` read original and `Document(path)` read replacement.
+- **Not yet executed on this branch at STATUS creation:** new seven-test module, full repo unittest, Mini App tests/typecheck/build and Docker. GitHub Actions must pass on latest exact head before claiming success.
+- Descriptor pinning protects against **pathname replacement** but not **in-place mutation of the same inode**; workers must maintain sealed private input directories and file ownership. This is not a filesystem snapshot.
+- CI Issue #101 is closed; approval, parent integration and successful merged-main CI remain required. Do not merge a Draft or infer production readiness from green head checks.
 
-## Integration / next
-1. CTO and maintainers: integrate governance #91→#92 and architecture/docs #93→#112 after separate review; run green main push CI between staged merges. No forced or unreviewed merge.
-2. Integrate PDF #114→#183 independently and DOCX #125→#130→#146→#154→#160→#187→#194→#196, each with exact-head review/checks, then main CI.
-3. Observe full CI on #196 and correct any failures in the same PR; do not misstate release readiness.
+## Next actions
+1. Open Draft PR from `pdf-documents/203-pinned-docx-source` to `pdf-documents/196-bounded-txt-read`, verify changed-file scope.
+2. Execute exact-head GitHub Actions tests and fix regressions in this PR if discovered. Do not merge without independent review and parent stack integration.
+3. Coordinate integration order with CTO; carry contract/ownership/temporary file handling through architecture changes.
