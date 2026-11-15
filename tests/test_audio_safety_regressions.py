@@ -26,7 +26,7 @@ class RealMediaSafetyTests(unittest.TestCase):
             stream.setnchannels(1)
             stream.setsampwidth(2)
             stream.setframerate(16000)
-            stream.writeframes(b"\\x00\\x00" * 16000)
+            stream.writeframes(b"\x00\x00" * 16000)
 
     def test_reject_video_bearing_container(self):
         video = self.root / "video.mp4"
@@ -47,7 +47,7 @@ class RealMediaSafetyTests(unittest.TestCase):
 
     def test_corrupt_audio_and_invalid_target_do_not_create_output(self):
         invalid = self.root / "corrupt.wav"
-        invalid.write_bytes(b"RIFF" + b"\\x00" * 12)
+        invalid.write_bytes(b"RIFF" + b"\x00" * 12)
         with self.assertRaises(ValueError):
             probe_audio(invalid)
         output = self.root / "result.mp3"
