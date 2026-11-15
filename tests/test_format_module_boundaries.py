@@ -20,6 +20,7 @@ FORMAT_MODULES = {
     "document_adapter": ROOT / "services" / "document_module.py",
     "document_implementation": ROOT / "services" / "document_tools.py",
     "archive": ROOT / "services" / "archive_tools.py",
+    "archive_adapter": ROOT / "services" / "archive_module.py",
 }
 FORBIDDEN_PREFIXES = (
     "main", "api", "aiogram", "fastapi", "miniapp",
