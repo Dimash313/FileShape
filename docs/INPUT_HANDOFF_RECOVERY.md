@@ -29,6 +29,11 @@ immediately. The new opt-in IntakeDispatchStore fails closed:
    mark_input_ready() re-verify the bound input inside the dispatch
    transaction and create a readiness row with its recorded expiry.
    Claims are allowed only when the row says ready and its TTL remains valid.
+   The opt-in claim_next(blobs) **reads and verifies the input again**
+   while issuing the worker lease; if an apparently ready queued file has
+   vanished or become corrupt, it is demoted to suspect and not leased.
+   An unavailable expired worker lease is not reissued; handling that
+   processing state requires a separately reviewed recovery policy.
 5. A duplicate request using the same trusted owner/key/fingerprint
    first looks up the original admission **before allocating a new blob**.
    This makes safe replays possible even with a full staging quota.
@@ -81,7 +86,11 @@ is separate and must not remove unexpired active jobs.
 - All actual job IDs, input refs and result refs remain opaque.
   No OS paths or user filenames are included in the dispatch envelope.
 - Two SQLite connections concurrently attempting to claim a job cannot
-  claim an unready job; once ready, only one can lease it.
+  claim an unready job; once ready, only one can lease it. The new opt-in
+  claim operation requires a trusted PrivateBlobStore adapter and reads
+  a maximum of four candidate inputs while holding the SQLite dispatch
+  write lock, so it does not perform an unbounded scan of the queue.
+  The legacy dispatch prototype's API is unchanged.
 - A cancelled or failed job cannot be made ready or resumed by recovery.
 - Historic outbox rows lacking a readiness row are unclaimable when
   using this adapter; migration of existing data must be explicitly
