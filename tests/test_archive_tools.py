@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from services.archive_tools import inspect_zip, make_zip, unpack_zip
 
@@ -68,6 +69,19 @@ class ZipToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "лимит"):
             make_zip(sources, target)
         self.assertEqual(target.read_bytes(), b"do not overwrite on rejection")
+        self.assertEqual(list(self.folder.glob(".fileshape_zip_*.zip")), [])
+
+    def test_failure_during_zip_write_preserves_previous_target(self):
+        first = self.folder / "one.txt"
+        second = self.folder / "two.txt"
+        first.write_text("one", encoding="utf-8")
+        second.write_text("two", encoding="utf-8")
+        target = self.folder / "old.zip"
+        target.write_bytes(b"existing output must remain unchanged")
+        with patch.object(zipfile.ZipFile, "write", side_effect=OSError("disk failed")):
+            with self.assertRaisesRegex(OSError, "disk failed"):
+                make_zip([(first, "one.txt"), (second, "two.txt")], target)
+        self.assertEqual(target.read_bytes(), b"existing output must remain unchanged")
         self.assertEqual(list(self.folder.glob(".fileshape_zip_*.zip")), [])
 
     def test_external_high_ratio_zip_is_still_rejected_by_inspect_and_unpack(self):
