@@ -2,28 +2,29 @@
 
 Updated: 2026-11-15 UTC
 Track: `images-archives`
-Current Issue: [#148 — predecode image PDF bundle limits](https://github.com/Dimash313/FileShape/issues/148)
-Branch: `fix/image-bundle-predecode-limits-h4`
-Active PR: [#153](https://github.com/Dimash313/FileShape/pull/153) (**Draft**, base `fix/image-bundle-atomic-output-h3`)
-Implementation/test commit before docs update: `3488a324ad40fc92e947a190db4db4529fd74c97`; **inspect PR #153 live for the final head SHA** because status/roadmap commits follow.
+Current Issue: [#158 — image source format/frame preflight](https://github.com/Dimash313/FileShape/issues/158)
+Branch: `fix/image-input-format-preflight-h5`
+Active PR: [#159](https://github.com/Dimash313/FileShape/pull/159) (**Draft**, base `fix/image-bundle-predecode-limits-h4`)
+Implementation/test commit before docs update: `fcc0e5fb900a27ba4f27f427a9aaae0106a52b57`; see live PR #159 for **final** head SHA.
 
-## Scope implemented in Draft PR #153 (NOT merged)
-- `services/image_bundle.py`: input file-count and byte checks before any image decoder, reject symlink and non-regular paths including FIFOs. Open all image headers without fully decoding to enforce existing per-image 35m and total 22m pixel caps; warn-to-error on Pillow decompression bombs. Recheck source type, byte budget and actual pixel dimensions during decoding before RGB/alpha page materialization.
-- `tests/test_image_bundle_preflight.py`: 10 tests for valid ordered PDFs, early first/later/per-image pixel rejection (no decoder called), source-byte refusal before parsing, symlink/FIFO refusal, corrupt later header, changed decoded dimensions and target preservation on preflight failure.
-- Prior image-bundle atomic publication from PR #144 and existing 2–8 count, 20 MiB aggregate bytes, 22m total pixels, 35m per image, EXIF/alpha behavior, page order, result naming and API/bot boundary unchanged.
-- No new content/media assets, audio/music, external services, payments, integrations, or UI. AGENTS.md still applies.
+## Proposed changes in Draft PR #159 (NOT merged)
+- `services/image_tools.py`: `_validate_image_input_header` refuses input whose actual Pillow format is not JPEG, PNG or WEBP, or whose `n_frames != 1`. Check before any EXIF operation or pixel decode; independently of filename extension.
+- `services/image_bundle.py`: run the same validator in the existing batch-wide header preflight before any image decoding, including for later members.
+- `tests/test_image_input_preflight.py`: seven real-file regression tests for supported formats, supported bytes with mismatched suffix, disguised GIF/TIFF, animated WebP/APNG, batch preflight and failure cleanup.
+- No shared API/auth/quota/worker/Telegram/UI changes. Existing pixel/file budgets, image quality, PDF page order/EXIF/alpha behavior, atomic output publication and temporary cleanup retained.
+- AGENTS.md respected: only neutral solid-color test fixtures, no depictions of living beings, audio/music, advertising, payments, new third-party integrations or media assets.
 
-## Verification
-- **Executed locally** in Linux with Python 3.13.5, Pillow 12.3.0 and pypdf 5.9.0, using manually reconstructed copies of the changed domain modules/new tests plus the existing image-bundle tests. This is **not** an exact GitHub repository checkout.
-- Command: `python -m unittest -v tests.test_image_bundle tests.test_image_bundle_preflight` → **13/13 passed** (3 existing + 10 new, 0.450s).
-- **NOT EXECUTED / NOT VERIFIED**: full exact-head Python suite, Mini App tests/typecheck/build, Docker, bot/API image workload smoke, peak RSS/CPU benchmarks, branch CI and final-head GitHub Actions. These checks are required, and GitHub runner issue [#101](https://github.com/Dimash313/FileShape/issues/101) is still a release blocker. A status-less or zero-step run is not success.
+## Verified / unverified
+- **Executed locally** (2026-11-15): Python 3.13.5, Pillow 12.3.0, pypdf 5.9.0 on manually reconstructed domain sources and a lightweight compatibility adapter (not full GitHub checkout). Command `python -m unittest -v tests.test_image_input_preflight tests.test_image_bundle tests.test_image_bundle_atomic tests.test_image_bundle_preflight`: **29/29 passed** (7 new + 22 existing, 0.536s) after adding the 9 existing image-bundle atomic-output tests and using the actual typed `ImageModulePort` source in the local mirror.
+- **NOT EXECUTED / NOT VERIFIED**: exact-head complete Python suite with real full module adapter, Mini App tests/typecheck/build, Docker, live Telegram/API end-to-end, benchmark CPU/RAM, GitHub Actions runner jobs. [CI issue #101](https://github.com/Dimash313/FileShape/issues/101) remains blocking. Empty statuses / 0-step jobs are not proof of a pass.
+- Before merge: verify PR #159 head, changed-file scope, review, actual final-head green CI; after parent integration verify main CI and deployment filesystem.
 
-## Dependencies (all unmerged Draft)
-- [PR #153](https://github.com/Dimash313/FileShape/pull/153) (Issue #148) → [PR #144](https://github.com/Dimash313/FileShape/pull/144) (Issue #138) → [PR #137](https://github.com/Dimash313/FileShape/pull/137) (Issue #133).
-- [PR #128](https://github.com/Dimash313/FileShape/pull/128) (Issue #121) → [PR #112](https://github.com/Dimash313/FileShape/pull/112) (development tracks) → [PR #111](https://github.com/Dimash313/FileShape/pull/111) (Issue #110) → [PR #109](https://github.com/Dimash313/FileShape/pull/109), preceded by unmerged architecture parents.
-- Never merge out of sequence or without real exact-head CI, domain/integration review and post-merge main CI.
+## Stacked Draft dependencies (all unmerged at this snapshot)
+- [#159](https://github.com/Dimash313/FileShape/pull/159) (Issue #158) → [#153](https://github.com/Dimash313/FileShape/pull/153) (Issue #148) → [#144](https://github.com/Dimash313/FileShape/pull/144) (Issue #138) → [#137](https://github.com/Dimash313/FileShape/pull/137) (Issue #133).
+- [#128](https://github.com/Dimash313/FileShape/pull/128) (Issue #121) → [#112](https://github.com/Dimash313/FileShape/pull/112) (GitHub-first handoff) → [#111](https://github.com/Dimash313/FileShape/pull/111) (Issue #110) → [#109](https://github.com/Dimash313/FileShape/pull/109) → other unmerged architecture PRs.
+- Do **not** merge out of dependency order, skip failed/absent CI, or claim any of these deployed.
 
-## Next actionable work
-- Before further feature PRs, review #153/#144/#137/#128 for unexpected source changes; measure high-pixel real-input resource use in a bounded worker and reconcile limits with API/security if needed. No increase to upload limits without evidence.
-- Owner-scoped HTTP ZIP extraction remains **unimplemented**; contract discussion belongs to API/security, Issue [#132](https://github.com/Dimash313/FileShape/issues/132) / PR [#135](https://github.com/Dimash313/FileShape/pull/135).
-- Next unblocked issue: **NONE currently claimed**. New image/ZIP changes need independent Issue + claim, distinct files or an explicit stacked dependency.
+## Remaining risks / next actionable work
+- A regular input path can still be replaced between metadata/header check and the decoder open; this is out of scope for #159 and may merit a dedicated TOCTOU issue with `api-security` review if input paths become non-private or attacker writable.
+- Real peak-RSS/CPU measurements under worker constraints are not established. Do not increase file/pixel limits without evidence. Next task: review and integrate current chain first; any new security fix must claim a distinct Issue.
+- HTTP ZIP extraction remains **contract proposal only**, API/security-owned Issue [#132](https://github.com/Dimash313/FileShape/issues/132) / PR [#135](https://github.com/Dimash313/FileShape/pull/135); no runtime enablement in this track.
