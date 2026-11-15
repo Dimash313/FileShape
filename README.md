@@ -1,5 +1,14 @@
 # FileShape
 
+## FileShape 5.0.12 — Telegram audio trimming (draft PR)
+
+A proposed bot-only `✂️ Обрезать запись` action accepts a bounded
+`HH:MM:SS-HH:MM:SS` interval for uploaded audio and returns MP3 128 kbps.
+This work is **not yet merged or deployed**; no new Mini App/API conversion
+route or payment feature is enabled. Full Audio Studio tagging, joining and
+video extraction are separate future tasks. See
+[the 5.0.12 rollout checklist](docs/BOT_AUDIO_TRIM.md).
+
 ## FileShape 4.25b — Telegram bot profile (PR in review)
 
 The Telegram bot's `/profile` and Profile menu use a signed, scoped,
