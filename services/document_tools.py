@@ -1,6 +1,9 @@
 """Plain-text export/import for Word documents (layout is not preserved)."""
 from pathlib import Path
+from typing import BinaryIO, Callable
+import os
 import stat
+import tempfile
 import zipfile
 
 from docx import Document
@@ -221,9 +224,37 @@ def read_docx_text(source: Path) -> tuple[str, dict]:
     return "\n".join(parts), {"paragraphs": paragraphs, "tables": tables, "characters": length}
 
 
+def _write_document_atomically(
+    target: Path, write_content: Callable[[BinaryIO], None]
+) -> None:
+    """Publish a complete DOCX or TXT without truncating an old result.
+
+    Callers guarantee the output directory is private and server-controlled.
+    """
+    staged: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+            delete=False,
+        ) as stream:
+            staged = Path(stream.name)
+            write_content(stream)
+        os.replace(staged, target)
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
+
+
 def docx_to_txt(source: Path, target: Path) -> dict:
     text, info = read_docx_text(source)
-    target.write_text(text, encoding="utf-8")
+
+    def write_text(stream: BinaryIO) -> None:
+        stream.write(text.encode("utf-8"))
+
+    _write_document_atomically(target, write_text)
     return info
 
 
@@ -248,7 +279,7 @@ def txt_to_docx(source: Path, target: Path) -> dict:
     lines = text.split("\n")
     for line in lines:
         document.add_paragraph(line)
-    document.save(str(target))
+    _write_document_atomically(target, document.save)
     return {"lines": len(lines), "characters": len(text)}
 
 
