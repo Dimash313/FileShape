@@ -32,6 +32,47 @@ def _resource_limits():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+async def _communicate_bounded(proc, data: bytes) -> bytes:
+    """Read at most 64 KiB + 1 byte, even if a worker floods stdout.
+
+    Unlike Process.communicate(), this does not accumulate unbounded output
+    in the API process. Input is fed concurrently to avoid pipe deadlocks.
+    """
+    async def feed_input():
+        try:
+            proc.stdin.write(data)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            # Workers may reject malformed requests before reading stdin.
+            pass
+        finally:
+            proc.stdin.close()
+
+    async def read_output():
+        output = bytearray()
+        while True:
+            # Never request more than the budget plus one sentinel byte.
+            chunk = await proc.stdout.read(min(16384, WORKER_OUTPUT_LIMIT + 1 - len(output)))
+            if not chunk:
+                return bytes(output)
+            output.extend(chunk)
+            if len(output) > WORKER_OUTPUT_LIMIT:
+                raise WorkerFailed("Слишком большой ответ обработчика")
+
+    writer = asyncio.create_task(feed_input())
+    reader = asyncio.create_task(read_output())
+    try:
+        output = await reader
+        await writer
+        await proc.wait()
+        return output
+    finally:
+        for task in (reader, writer):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(reader, writer, return_exceptions=True)
+
+
 async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> dict:
     """Run one operation; kill and reap the worker on timeout or cancellation."""
     if timeout <= 0:
@@ -53,11 +94,9 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
     )
     try:
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(data), timeout=timeout)
+            stdout = await asyncio.wait_for(_communicate_bounded(proc, data), timeout=timeout)
         except asyncio.TimeoutError:
             raise WorkerTimeout("Обработка заняла слишком много времени") from None
-        if len(stdout) > WORKER_OUTPUT_LIMIT:
-            raise WorkerFailed("Слишком большой ответ обработчика")
         try:
             result = json.loads(stdout)
         except (ValueError, UnicodeDecodeError):
