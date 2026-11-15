@@ -156,3 +156,19 @@ one atomic persistence system. Confirmation based on repeated read errors can
 still misclassify a temporary storage outage. Charge-recovery policy,
 operator review for ambiguous loss, cross-store migration, download leases
 and multi-host storage must be verified before any route is switched.
+
+
+## Phase B4 — versioned HTTP capability discovery (5.0.10; PR review only)
+
+The read-only `GET /api/v1/capabilities` manifest projects **only** the
+currently implemented single-file HTTP `/api/v1/convert` action allowlist
+from `api/conversion_catalog.py`. It uses an explicit, deterministic and
+strictly versioned JSON contract for future independently authenticated web
+and mobile clients. Unknown new file kinds fail closed until reviewed.
+
+The manifest is not a client authorization source, license grant, file-content
+validation, runtime readiness guarantee, worker migration, or declaration that
+planned Audio Studio/video operations already exist. API processing still
+requires the current signed Telegram identity, quotas and resource limits.
+See [CAPABILITY_MANIFEST_V1.md](CAPABILITY_MANIFEST_V1.md). No live bot or
+deployment functionality is enabled by this documentation.
