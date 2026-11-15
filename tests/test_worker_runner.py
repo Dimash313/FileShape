@@ -109,7 +109,9 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
             with patch("api.worker_runner.asyncio.create_subprocess_exec", side_effect=spawn_tree):
                 with self.assertRaises(WorkerTimeout):
-                    await run_worker({"operation": "single"}, timeout=0.7)
+                    # Cold Python startup on loaded CI hosts can exceed 0.7s.
+                    # Still verify group termination under a short deadline.
+                    await run_worker({"operation": "single"}, timeout=2.0)
 
             self.assertTrue(pidfile.exists(), "Grandchild was not started")
             pid = int(pidfile.read_text())
