@@ -115,21 +115,34 @@ def _preflight_docx_tables(document) -> None:
             total_rows += 1
             if total_rows > MAX_DOCX_TABLE_ROWS:
                 raise ValueError("Слишком сложная таблица DOCX")
+            # These numeric attributes are lazily parsed by python-docx.
+            # Validate them here so malformed values cannot escape later
+            # from row.grid_cols_before or row.cells as raw parser errors.
+            try:
+                before = row.grid_before
+                after = row.grid_after
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Повреждённая таблица DOCX") from None
+            if before < 0 or after < 0 or before + after > width:
+                raise ValueError("Повреждённая таблица DOCX")
             row_cells = 0
             for tc in row:
                 if tc.tag != w_tc:
                     continue
                 try:
                     span = tc.grid_span
+                    merge = tc.vMerge
                 except (TypeError, ValueError, OverflowError):
                     raise ValueError("Повреждённая таблица DOCX") from None
+                if merge not in (None, "restart", "continue"):
+                    raise ValueError("Повреждённая таблица DOCX")
                 if span < 1 or span > MAX_DOCX_ROW_CELLS - row_cells:
                     raise ValueError("Слишком сложная таблица DOCX")
                 row_cells += span
                 total_cells += span
                 if total_cells > MAX_DOCX_TABLE_CELLS:
                     raise ValueError("Слишком сложная таблица DOCX")
-            if row_cells > width:
+            if before + row_cells + after > width:
                 raise ValueError("Повреждённая таблица DOCX")
 
 
