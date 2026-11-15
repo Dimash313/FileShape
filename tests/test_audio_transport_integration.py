@@ -56,7 +56,6 @@ class AudioHttpIntegrationTests(unittest.TestCase):
         admission = patch.object(server, "admission", AdmissionQueue())
         admission.start()
         self.addCleanup(admission.stop)
-        server.admission.start()
         registry = patch.object(server, "jobs", JobRegistry())
         registry.start()
         self.addCleanup(registry.stop)
