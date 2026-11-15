@@ -4,7 +4,7 @@ Updated: 2026-11-16 UTC
 Track: `images-archives`
 Current Issue: [#197 — pin ZIP creation input descriptors](https://github.com/Dimash313/FileShape/issues/197)
 Current branch: `fix/zip-pinned-create-inputs-j1`, base `fix/image-bundle-eager-buffer-release-h9` (parent [Draft PR #189](https://github.com/Dimash313/FileShape/pull/189)).
-Active PR: pending creation; inspect live branch/PR for **final exact head** after docs.
+Active PR: [#200](https://github.com/Dimash313/FileShape/pull/200), **Draft** on #189. Git data integration of parent #189 + #181 requires a new exact-head CI.
 
 ## Scope in current Draft (NOT merged)
 - `services/archive_tools.py`: `make_zip` now opens up to five regular input sources only once, rejects symbolic links and special files with `O_NOFOLLOW` / `O_NONBLOCK` (where supported) and `fstat`, pins file descriptors for both compressed pass and optional stored fallback, and writes bounded 64-KiB blocks from the already-open streams via `ZipFile.open(..., 'w')`. Rechecks file size, exact read byte count, per-member and aggregate budgets before publishing.
@@ -13,15 +13,17 @@ Active PR: pending creation; inspect live branch/PR for **final exact head** aft
 - No API, Telegram, Mini App, worker, quotas, billing, paid services or dependencies. Only generated neutral text/binary fixtures; `AGENTS.md` applies.
 
 ## Verification and blockers
-- Work and regression tests are committed on GitHub; **exact-head GitHub Actions not yet confirmed**. Must pass full Python suite (including archive and extracted-format regressions), Mini App typecheck/test/build, Docker and independent review. No production launch/merge.
-- Parent PR #189 on prior head `d651cd99b975f28443a690d11ac23a0c710a7497` had a **successful** real GitHub Actions run #43737276758 (Python/Mini App/Docker), but `mergeable:false` at last inspection. Parent #181 advanced from `12422e4b...` to `a11aa3c...` and both edit STATUS; parent #189 must reconcile its newer base before integration. This child is stacked behind #189, so it inherits that gate. Coordination comment left on PR #189; do not force merge.
-- [PR #181](https://github.com/Dimash313/FileShape/pull/181) at `a11aa3c...` passed [Actions #43751503357](https://github.com/Dimash313/FileShape/actions/runs/43751503357): Python/Mini App/Docker success. Existing near-cap memory measurements are diagnostic; shared worker policy still API/security [Issue #177](https://github.com/Dimash313/FileShape/issues/177).
-- The prior merged-main CI and genuine bot/API deployed workloads remain unverified. No image-domain output change in this branch.
+- **Previous** ZIP branch head `39126ec2bc4df12da19a26bf5f2f2d19bfaebd4d` passed [Actions #43754536056](https://github.com/Dimash313/FileShape/actions/runs/43754536056): **689 Python tests**, Mini App tests/typecheck/build, Docker all **success**. The seven ZIP adversarial regressions and existing round-trip tests passed.
+- Parent [PR #189](https://github.com/Dimash313/FileShape/pull/189) has been reconciled with the newer #181 by a true two-parent Git merge commit `b1fb0f3e1ff7a73e26abbbb49dda52e9d6508f7f`. It preserves #189's early PDF buffer release, #181's measured RSS document and regression tests, and a combined handoff. **New parent exact-head CI needs separate confirmation**; old [Actions #43737276758](https://github.com/Dimash313/FileShape/actions/runs/43737276758) was green only on prior head `d651cd9...`.
+- This ZIP branch must incorporate the reconciled parent #189, and preserve its latest two-worker procfs/cgroup measurement docs and image transient buffer regressions. The prior successful ZIP CI `#43754536056` does **not** certify the *new* merge head; rerun real Python/Mini App/Docker before review or integration. No forced merges.
+- [PR #181](https://github.com/Dimash313/FileShape/pull/181) at `a11aa3c...` passed [Actions #43751503357](https://github.com/Dimash313/FileShape/actions/runs/43751503357). Its near-cap resource figures are exploratory, not a production memory limit. API & Security owns real worker policy [Issue #177](https://github.com/Dimash313/FileShape/issues/177).
+- Runtime bot/API integration, production deployment, main CI and chain integration remain unverified. Public API, ZIP limits, worker queue, pricing and auth are unchanged in this ZIP PR.
+
 
 ## Stacked dependency chain
 This branch → [PR #189](https://github.com/Dimash313/FileShape/pull/189) → [#181](https://github.com/Dimash313/FileShape/pull/181) → [#168](https://github.com/Dimash313/FileShape/pull/168) → [#162](https://github.com/Dimash313/FileShape/pull/162) → [#159](https://github.com/Dimash313/FileShape/pull/159) → [#153](https://github.com/Dimash313/FileShape/pull/153) → [#144](https://github.com/Dimash313/FileShape/pull/144) → [#137](https://github.com/Dimash313/FileShape/pull/137) → [#128](https://github.com/Dimash313/FileShape/pull/128) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) → [#109](https://github.com/Dimash313/FileShape/pull/109) → architecture ancestors.
 
 ## Next actions
 - Inspect actual GitHub CI and fix concrete failures in this branch; do not loosen safety tests or claim green from an older SHA.
-- Coordinate parent #189 branch reconciliation and integration review before this ZIP PR is mergeable.
+- Verify the exact new merge head of #200 with GitHub Actions, review its incremental ZIP code only, and integrate parent Draft PRs strictly in dependency order.
 - Keep ZIP HTTP extraction as a contract proposal owned by API/security [Issue #132](https://github.com/Dimash313/FileShape/issues/132), [PR #135](https://github.com/Dimash313/FileShape/pull/135). Do not enable it here.
