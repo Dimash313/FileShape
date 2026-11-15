@@ -12,7 +12,7 @@ from unittest.mock import patch
 from services.audio_join import (
     MAX_JOIN_FILE_BYTES, join_audio,
 )
-from services.audio_tools import probe_audio
+from services.audio_tools import _probe_pinned_audio, probe_audio
 
 
 def make_silence(path: Path, seconds: float, rate: int):
@@ -159,9 +159,7 @@ class RealAudioJoinTests(unittest.TestCase):
         self.assertEqual(list(self.dir.glob(".fileshape-audio-join-*")), [])
 
     def test_replaced_input_path_still_uses_original_inode(self):
-        real_probe = __import__(
-            "services.audio_join", fromlist=["_probe_pinned_audio"]
-        )._probe_pinned_audio
+        real_probe = _probe_pinned_audio
         real_run = subprocess.run
         initial = [self.a.stat().st_ino, self.b.stat().st_ino]
         held = []
@@ -173,7 +171,7 @@ class RealAudioJoinTests(unittest.TestCase):
             held.append((path, fd))
             if len(held) == 2:
                 self.b.rename(saved)
-                self.b.write_text("ffconcat version 1.0\\nfile original-b.wav\\n")
+                self.b.write_text("ffconcat version 1.0\nfile original-b.wav\n")
             return info
 
         def check_encoder(command, *args, **kwargs):
