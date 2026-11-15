@@ -1,4 +1,5 @@
 """Hard UTF-8 TXT byte limit on the bytes actually read from disk."""
+from contextlib import contextmanager
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,16 +9,6 @@ from docx import Document
 
 from services import document_tools
 from services.document_module import document_module
-
-
-class GrowingOnOpenPath(type(Path())):
-    """Simulate a file growing after a hypothetical earlier stat() result."""
-
-    def open(self, mode="r", *args, **kwargs):
-        if mode == "rb":
-            with super().open("wb") as sink:
-                sink.write(("界" * 700_000).encode("utf-8"))
-        return super().open(mode, *args, **kwargs)
 
 
 class BoundedTxtReadTests(unittest.TestCase):
@@ -46,12 +37,22 @@ class BoundedTxtReadTests(unittest.TestCase):
             document_tools.read_plain_text(self.source)
 
     def test_growing_file_cannot_bypass_byte_limit(self):
-        growing = GrowingOnOpenPath(self.root / "growing.txt")
+        growing = self.root / "growing.txt"
         growing.write_bytes(b"old")
-        # Old stat()->unbounded read_bytes() accepted the 700000 chars
-        # despite the 2.1 MB byte length. A bounded read must reject it.
-        with self.assertRaisesRegex(ValueError, "TXT превышает лимит 2 МБ"):
-            document_tools.read_plain_text(growing)
+        original_open = document_tools._open_regular_input
+
+        @contextmanager
+        def grow_after_descriptor_open(path):
+            with original_open(path) as stream:
+                # Modify the *same* opened inode after the secure opener;
+                # an input can still grow, but the bounded read must reject.
+                path.write_bytes(("界" * 700_000).encode("utf-8"))
+                yield stream
+
+        with patch.object(document_tools, "_open_regular_input",
+                          side_effect=grow_after_descriptor_open):
+            with self.assertRaisesRegex(ValueError, "TXT превышает лимит 2 МБ"):
+                document_tools.read_plain_text(growing)
         self.assertEqual(growing.stat().st_size, 2_100_000)
 
     def test_read_does_not_use_stat_or_unbounded_read_bytes(self):
