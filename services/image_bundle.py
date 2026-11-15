@@ -46,6 +46,7 @@ def images_to_pdf(sources: list[Path], target: Path) -> int:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(source) as probe:
+                image_tools._validate_image_input_header(probe)
                 pixels = probe.width * probe.height
                 if pixels > image_tools.MAX_IMAGE_PIXELS:
                     raise ValueError("Image dimensions exceed the limit")
