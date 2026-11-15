@@ -23,3 +23,10 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - [Issue #133](https://github.com/Dimash313/FileShape/issues/133) / [Draft PR #137](https://github.com/Dimash313/FileShape/pull/137): ensure JPG, PNG, WebP, PDF conversion and WebP compression publish only a completed result. Private same-directory staging, atomic rename and staged cleanup on encode or publication failure; regression tests for real formats, oversized image headers, corrupted inputs, target preservation, symlinks and permissions.
 - PR #137 is based on ZIP cleanup PR #128 (and thus #112 → #111 → #109 → architecture parents). These are **draft/unmerged**, not delivered or deployed. Final-head GitHub CI and integration review are required; blocker #101 remains open.
 - Follow-up candidate (not started): `services/image_bundle.py` batch PDF output atomicity; create an independent Issue before implementing. Keep public HTTP/image contract ownership with `api-security`.
+
+
+## Multi-image PDF atomicity — active stacked Draft
+
+- [Issue #138](https://github.com/Dimash313/FileShape/issues/138) / [Draft PR #144](https://github.com/Dimash313/FileShape/pull/144): use the existing single-image atomic staging helper from PR #137 for 2–8 image PDF composition. A failed save or filesystem publication must not corrupt an existing output or leave staged files. Add regression tests for real page order, partial save, symlink, failed rename, byte and pixel budgets and private permissions.
+- Local isolated reconstructed-module test result: **12/12 Python tests passed** (3 existing + 9 new), not the full exact GitHub checkout. Full Python/Mini App/Docker CI, bot/API flows and deployment checks remain unverified; runner blocker #101 remains open.
+- **Dependency:** #144 is stacked on #137 → #128 → #112 → #111 → #109 and architecture parents. Keep Draft; merge only in parent order after exact-head green CI and review.
