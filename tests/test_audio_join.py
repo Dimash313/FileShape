@@ -1,5 +1,6 @@
 """Content-neutral audio-join tests with generated silent media only."""
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from services.audio_join import (
-    MAX_JOIN_FILE_BYTES, MAX_JOIN_TOTAL_BYTES, join_audio,
+    MAX_JOIN_FILE_BYTES, join_audio,
 )
 from services.audio_tools import probe_audio
 
@@ -45,6 +46,7 @@ class RealAudioJoinTests(unittest.TestCase):
                          [str(self.b.resolve()), str(self.a.resolve())])
         self.assertEqual(info["inputs"], 2)
         self.assertTrue(self.target.is_file())
+        self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o600)
         self.assertIn(probe_audio(self.target)["codec"], ("mp3",))
         self.assertAlmostEqual(info["seconds"], 1.1, delta=0.2)
         self.assertEqual(list(self.dir.glob(".fileshape-audio-join-*")), [])
