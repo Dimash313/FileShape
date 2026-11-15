@@ -258,3 +258,24 @@ runner assignment (issue #101). All affected PRs stay draft pending
 exact-head full Python, Mini App and Docker checks and real-file
 smoke testing. No readiness or guaranteed absence of bugs is claimed.
 
+
+### Phase E2 — Telegram ZIP operations through the shared archive module (draft)
+
+`main.py` now calls `archive_module.inspect` for `zip:list`,
+`archive_module.extract` for `zip:extract`, and
+`archive_module.create` for Telegram ZIP bundle completion. Existing
+callbacks, state-machine flow, two-to-five-file ZIP bundle order,
+`fileshape.zip` name, per-user quotas, access checks, input/output
+limits and Telegram result delivery have not changed. API ZIP
+capabilities are still **read-only**.
+
+New async bot handler tests cover operation routing, order and
+filenames, entitlement and ownership, incomplete FSM state, ZIP
+parser errors, failed Telegram sends and quota settlement/refunds.
+Existing real ZIP security regression suites remain required.
+
+Next work should review API feature parity without adding unsafe
+multi-file endpoints and reconcile all stacked PRs once CI runners
+are restored (issue #101). Exact-head full Python + Mini App + Docker
+CI and real-file smoke tests remain a hard merge requirement.
+
