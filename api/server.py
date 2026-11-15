@@ -57,6 +57,7 @@ from services.image_tools import IMAGE_FORMATS
 from services.image_module import image_module
 from services.pdf_module import pdf_module
 from services.pdf_tools import MAX_MERGE_FILES
+from services.archive_tools import MAX_BUNDLE_FILES, MAX_MEMBER_BYTES
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_BYTES = 20 * 1024 * 1024
@@ -110,7 +111,7 @@ join_replay = JoinReplayGuard()
 api.add_middleware(
     UploadIngressGuard,
     max_bytes=MAX_REQUEST_BYTES,
-    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/pdf/merge", "/api/v1/jobs"},
+    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/pdf/merge", "/api/v1/zip/create", "/api/v1/jobs"},
 )
 # Outer middleware also observes requests rejected before multipart parsing.
 api.add_middleware(RequestTrace)
@@ -1118,6 +1119,91 @@ async def multi_pdf_merge(
                 work.cleanup()
             logger.error("Multi-PDF merge failed")
             raise HTTPException(status_code=422, detail="Не удалось объединить PDF") from None
+
+
+@api.post("/api/v1/zip/create")
+async def multi_zip_create(
+    uploads: list[UploadFile] = FileField(...),
+    user_id: int = Depends(authorize_new_processing),
+):
+    """Create one ZIP from 2–5 arbitrary files, bounded by HTTP upload limits."""
+    if not 2 <= len(uploads) <= MAX_BUNDLE_FILES:
+        raise HTTPException(status_code=422, detail="Выбери от 2 до 5 файлов")
+    names = []
+    for upload in uploads:
+        name = upload.filename
+        if not isinstance(name, str) or not 1 <= len(name) <= 255:
+            raise HTTPException(status_code=422, detail="Некорректное имя файла")
+        names.append(name)
+
+    await enforce_rate_limit(user_id)
+    async with conversion_job(user_id, uploads) as job_id:
+        work = None
+        try:
+            work = Workspace(prefix="fileshape_batch_zip_create_")
+            total_bytes = 0
+            for index, upload in enumerate(uploads):
+                # Never write a client-supplied filename into the filesystem.
+                path = Path(work.name) / f"zip_item_{index}"
+                file_bytes = 0
+                with path.open("wb") as output:
+                    while True:
+                        chunk = await upload.read(64 * 1024)
+                        if not chunk:
+                            break
+                        file_bytes += len(chunk)
+                        total_bytes += len(chunk)
+                        if file_bytes > MAX_MEMBER_BYTES or total_bytes > MAX_INPUT_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail="Общий размер файлов превышает лимит 20 МБ",
+                            )
+                        output.write(chunk)
+                if file_bytes == 0:
+                    raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
+
+            await run_managed_worker({
+                "operation": "zip_create", "work": work.name,
+                "count": len(uploads), "names": names,
+            })
+            result = Path(work.name) / "fileshape.zip"
+            if not result.is_file() or result.stat().st_size == 0:
+                raise ValueError("Не удалось создать ZIP")
+            if result.stat().st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            jobs.transition(job_id, user_id, "completed")
+            return BoundedFileResponse(
+                result,
+                filename="fileshape.zip",
+                media_type="application/zip",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-FileShape-Job-Id": job_id,
+                },
+                background=BackgroundTask(work.cleanup),
+            )
+        except asyncio.CancelledError:
+            if work is not None:
+                work.cleanup()
+            raise
+        except HTTPException:
+            if work is not None:
+                work.cleanup()
+            raise
+        except WorkerTimeout as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=504, detail=str(exc)) from None
+        except ValueError as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+        except Exception:
+            if work is not None:
+                work.cleanup()
+            logger.error("ZIP creation failed")
+            raise HTTPException(status_code=422, detail="Не удалось создать ZIP") from None
 
 
 # Owner-only campaign endpoints share the API-owned durable SQLite store.
