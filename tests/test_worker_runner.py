@@ -1,6 +1,8 @@
 """Hard timeout, error and cancellation tests for worker isolation."""
 import asyncio
 import os
+import shutil
+import wave
 import tempfile
 from pathlib import Path
 import sys
@@ -125,6 +127,57 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, worker_env, clear=True):
             self.assertFalse(load_dotenv(stream=StringIO("BOT_TOKEN=secret_from_dotenv\n")))
             self.assertNotIn("BOT_TOKEN", os.environ)
+
+    async def test_real_txt_to_docx_with_restricted_worker_environment(self):
+        # Exercise the actual child import + converter stack, not a patched
+        # subprocess that only echoes its environment.
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            (work / "source.txt").write_text("FileShape test document", encoding="utf-8")
+            with patch.dict(os.environ, {
+                "BOT_TOKEN": "fake_parent_bot_token",
+                "FILESHAPE_PRIVATE_KEY": "fake_parent_secret",
+                "PYTHONPATH": "/tmp/should-not-be-inherited",
+            }):
+                result = await run_worker({
+                    "operation": "single",
+                    "work": folder,
+                    "suffix": ".txt",
+                    "action": "txt:docx",
+                    "pages": "",
+                }, timeout=15)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["filename"], "converted.docx")
+            output = work / result["filename"]
+            self.assertGreater(output.stat().st_size, 0)
+            from docx import Document
+            document = Document(str(output))
+            self.assertEqual(document.paragraphs[0].text, "FileShape test document")
+
+    @unittest.skipUnless(shutil.which("ffprobe"), "FFprobe is required")
+    async def test_real_silent_wav_probe_with_restricted_worker_environment(self):
+        # Silence is sufficient; no recorded audio or musical content.
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            with wave.open(str(work / "source.wav"), "wb") as writer:
+                writer.setnchannels(1)
+                writer.setsampwidth(2)
+                writer.setframerate(16000)
+                writer.writeframes(b"\\x00\\x00" * 8000)
+            with patch.dict(os.environ, {
+                "BOT_TOKEN": "fake_parent_bot_token",
+                "GITHUB_TOKEN": "fake_parent_github_token",
+                "LD_LIBRARY_PATH": "/tmp/untrusted-libs",
+            }):
+                result = await run_worker({
+                    "operation": "single",
+                    "work": folder,
+                    "suffix": ".wav",
+                    "action": "audio:info",
+                    "pages": "",
+                }, timeout=15)
+            self.assertTrue(result["ok"])
+            self.assertAlmostEqual(result["info"]["seconds"], 0.5, delta=0.2)
 
     async def test_timeout_kills_child(self):
         original = asyncio.create_subprocess_exec
