@@ -32,7 +32,9 @@ from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
-from services.file_tools import MAX_MERGE_FILES, compress_image, convert_image
+from services.file_tools import MAX_MERGE_FILES
+from services.image_tools import IMAGE_FORMATS
+from services.image_module import image_module
 from services.pdf_module import pdf_module
 
 router = Router()
@@ -796,7 +798,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         await asyncio.to_thread(pdf_module.rotate, source, target, 90)
                     elif action == "img:compress":
                         target = folder / "optimized.webp"
-                        await asyncio.to_thread(compress_image, source, target)
+                        await asyncio.to_thread(image_module.compress, source, target)
                     elif action.startswith("audio:"):
                         fmt = action.split(":", 1)[1]
                         target = folder / ("audio" + OUTPUT_FORMATS[fmt])
@@ -809,9 +811,9 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         await asyncio.to_thread(txt_to_docx, source, target)
                     else:
                         fmt = action.split(":", 1)[1]
-                        ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}[fmt]
+                        ext = IMAGE_FORMATS[fmt]
                         target = folder / ("converted" + ext)
-                        await asyncio.to_thread(convert_image, source, target, fmt)
+                        await asyncio.to_thread(image_module.convert, source, target, fmt)
                     await send_result(callback.message, target)
     except BotOperationQuotaExceeded:
         await callback.message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
