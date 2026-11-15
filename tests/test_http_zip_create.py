@@ -12,7 +12,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 import zipfile
 
@@ -172,7 +172,7 @@ class HttpZipCreateTests(unittest.TestCase):
 
         with (
             patch.object(server, "Workspace", side_effect=tracking_workspace),
-            patch.object(server, "run_managed_worker",
+            patch.object(server, "run_managed_worker", new_callable=AsyncMock,
                          side_effect=ValueError("worker refused ZIP")),
         ):
             response = self.upload([("a.bin", b"a"), ("b.bin", b"b")])
