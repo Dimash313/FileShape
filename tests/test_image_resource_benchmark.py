@@ -49,27 +49,32 @@ class ImageResourceBenchmarkTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "linux", "Linux peak RSS and RLIMIT_AS")
     def test_isolated_smoke_report_is_measured_and_has_bounded_inputs(self):
-        proc = subprocess.run(
-            [sys.executable, str(SCRIPT), "--profile", "smoke", "--timeout", "30"],
-            cwd=ROOT, capture_output=True, text=True, timeout=40,
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr[-1000:])
-        result = json.loads(proc.stdout)
-        # These numbers come from a real subprocess running FileShape and
-        # are safe to print: fixtures and paths are entirely synthetic.
-        print("IMAGE_BENCHMARK_SMOKE_JSON: " + json.dumps(result, sort_keys=True), flush=True)
-        self.assertEqual(result["profile"], "smoke")
-        self.assertEqual(result["result_pages"], result["input_count"])
-        self.assertEqual(result["input_count"], 2)
-        self.assertEqual(result["platform"], "Linux")
-        self.assertEqual(result["total_input_pixels"], 96 * 72 + 80 * 104)
-        self.assertGreater(result["total_input_bytes"], 0)
-        self.assertLessEqual(result["total_input_bytes"], 20 * 1024 * 1024)
-        self.assertGreater(result["result_bytes"], 0)
-        self.assertGreater(result["peak_rss_mib"], 0)
-        self.assertGreaterEqual(result["elapsed_seconds"], 0)
-        self.assertGreaterEqual(result["cpu_seconds"], 0)
-        self.assertIn("imports", result["rss_scope"])
+        for style in ("solid", "blocks"):
+            with self.subTest(fixture_style=style):
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--profile", "smoke",
+                     "--fixture-style", style, "--timeout", "30"],
+                    cwd=ROOT, capture_output=True, text=True, timeout=40,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr[-1000:])
+                result = json.loads(proc.stdout)
+                # Real subprocess and generated abstract fixture, no user data.
+                print("IMAGE_BENCHMARK_SMOKE_JSON: " + json.dumps(
+                    result, sort_keys=True,
+                ), flush=True)
+                self.assertEqual(result["profile"], "smoke")
+                self.assertEqual(result["fixture_style"], style)
+                self.assertEqual(result["result_pages"], result["input_count"])
+                self.assertEqual(result["input_count"], 2)
+                self.assertEqual(result["platform"], "Linux")
+                self.assertEqual(result["total_input_pixels"], 96 * 72 + 80 * 104)
+                self.assertGreater(result["total_input_bytes"], 0)
+                self.assertLessEqual(result["total_input_bytes"], 20 * 1024 * 1024)
+                self.assertGreater(result["result_bytes"], 0)
+                self.assertGreater(result["peak_rss_mib"], 0)
+                self.assertGreaterEqual(result["elapsed_seconds"], 0)
+                self.assertGreaterEqual(result["cpu_seconds"], 0)
+                self.assertIn("imports", result["rss_scope"])
 
     def test_invalid_timeout_does_not_launch_child(self):
         proc = subprocess.run(
