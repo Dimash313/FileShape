@@ -201,16 +201,16 @@ def _open_zip_source(source: Path):
 def _verify_pinned_zip_source(stream, metadata: os.stat_result) -> None:
     """Fail closed if a pinned inode is modified while creating the ZIP.
 
-    A pathname swap is already prevented by the open descriptor; these
-    checks also reject typical in-place same-length overwrites. They do
-    not provide a cryptographic snapshot against hostile same-inode writers.
+    An open descriptor pins the original inode despite path replacement.
+    Renaming that inode can change ctime without changing its bytes, so
+    require unchanged size and mtime, NOT ctime. These checks reject typical
+    in-place same-length overwrites but are not a cryptographic snapshot.
     """
     current = os.fstat(stream.fileno())
     if (current.st_dev != metadata.st_dev
             or current.st_ino != metadata.st_ino
             or current.st_size != metadata.st_size
-            or current.st_mtime_ns != metadata.st_mtime_ns
-            or current.st_ctime_ns != metadata.st_ctime_ns):
+            or current.st_mtime_ns != metadata.st_mtime_ns):
         raise ValueError("Исходный файл изменился во время создания ZIP")
 
 
