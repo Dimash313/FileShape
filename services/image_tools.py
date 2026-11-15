@@ -15,7 +15,20 @@ from PIL import Image, ImageOps
 MAX_IMAGE_PIXELS = 35_000_000
 
 IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}
+SUPPORTED_IMAGE_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP"})
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
+
+def _validate_image_input_header(image: Image.Image) -> None:
+    """Reject hidden image parsers and silent first-frame conversion.
+
+    Source extensions are not trusted format evidence. An animated APNG or
+    WebP would otherwise produce only one frame in PDF/JPEG conversions.
+    """
+    if image.format not in SUPPORTED_IMAGE_INPUT_FORMATS:
+        raise ValueError("Unsupported image input format")
+    if getattr(image, "n_frames", 1) != 1:
+        raise ValueError("Multi-frame images are not supported")
 
 
 @contextmanager
@@ -41,6 +54,7 @@ def _open_image(source: Path) -> Image.Image:
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         with Image.open(source) as original:
+            _validate_image_input_header(original)
             if original.width * original.height > MAX_IMAGE_PIXELS:
                 raise ValueError("Image dimensions exceed the limit")
             image = ImageOps.exif_transpose(original)
