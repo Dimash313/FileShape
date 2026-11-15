@@ -156,3 +156,20 @@ one atomic persistence system. Confirmation based on repeated read errors can
 still misclassify a temporary storage outage. Charge-recovery policy,
 operator review for ambiguous loss, cross-store migration, download leases
 and multi-host storage must be verified before any route is switched.
+
+
+## Phase E4 — queued input handoff recovery (5.0.9; not live)
+
+The experimental [input handoff coordinator](INPUT_HANDOFF_RECOVERY.md)
+separates accepted jobs from **ready-to-lease** jobs. Its opt-in dispatch
+subclass refuses to lease any job without a committed readiness row. A
+partial crash after job admission but before staged-file binding can be
+repaired using the authoritative outbox envelope, owner and input reference.
+
+Repeated failures lead to an operator-review state rather than blindly
+executing a missing file. An explicitly confirmed, still-unavailable
+queued job may be marked failed with its reserved quota released in one
+dispatch transaction. This reduces the crash gap but **does not**
+make filesystem bytes and the dispatch database one atomic persistence
+system. It is neither shared storage nor an activated startup recovery
+protocol, and must not be injected into the current JobRuntime.
