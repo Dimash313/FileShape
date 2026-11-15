@@ -9,3 +9,10 @@
 5. Image domain performance and capability parity, with bounded image dimensions/pixel budgets and real benchmark evidence.
 
 Work through Issues and independent PRs. New chat must inspect live PR heads and update STATUS in its own branch.
+
+
+## ZIP extraction failure cleanup — active stacked draft
+
+- [Issue #121](https://github.com/Dimash313/FileShape/issues/121) / [Draft PR #128](https://github.com/Dimash313/FileShape/pull/128): stage bounded extracted files, reject overwrites/symlink destinations, roll back partially published output after CRC or filesystem failures. Add adversarial tests for archive swapping, actual byte limits, corrupt CRC and ZIP bombs.
+- PR #128 is stacked on documentation PR #112, itself based on ZIP compatibility PR #111 and HTTP ZIP creation PR #109; **none of this is merged or deployed** as of 2026-11-15. Do not merge out of order or without successful exact-head CI. See `STATUS.md`.
+- This is domain-only work; the owner-scoped multi-result HTTP ZIP extraction contract must be coordinated with `api-security` in a separate Issue/PR.
