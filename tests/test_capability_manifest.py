@@ -75,8 +75,11 @@ class CapabilityManifestTests(unittest.TestCase):
     def test_http_route_does_not_require_telegram_login(self):
         # Inspecting available operations is not a conversion or a quota grant.
         # This does not weaken the authenticated processing admission paths.
-        with TestClient(server.api) as client:
+        client = TestClient(server.api)
+        try:
             result = client.get("/api/v1/capabilities")
+        finally:
+            client.close()
         self.assertEqual(result.status_code, 200, result.text)
         self.assertEqual(result.json()["route"], "/api/v1/convert")
         self.assertEqual(result.headers["cache-control"], "no-store")
