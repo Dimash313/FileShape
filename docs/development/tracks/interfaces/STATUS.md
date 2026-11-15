@@ -23,3 +23,5 @@ Verified:
 Dependencies/blockers: #101 Actions runner allocation; #136 is stacked on #126/#118/#112; [#46](https://github.com/Dimash313/FileShape/pull/46) touches App.tsx and requires conflict review. No release or merge readiness claimed.
 Next unblocked Issue: NONE claimed. Next candidate: focused 320–370px responsive/keyboard/screen-reader focus audit of Mini App, with a separately claimed Issue and independent PR after checking overlapping files.
 Risk / cross-track decision needed: no API change in #136; only browser-side preflight hints. Server remains authoritative for malicious files and unsupported content.
+
+Integration checkpoint: incorporated parent Draft PR #126 cancellation-preserving picker patch and added its new regression test via two-parent Draft-branch merge. This is NOT a tested/released integration; CI #101 still blocks validation. Keep PR #136 Draft.
