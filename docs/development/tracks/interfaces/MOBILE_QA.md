@@ -2,6 +2,7 @@
 
 **Scope:** Draft PR [#173](https://github.com/Dimash313/FileShape/pull/173), Issue [#172](https://github.com/Dimash313/FileShape/issues/172).
 **Status:** manual verification **NOT EXECUTED**. This is an acceptance checklist, not proof of compatibility.
+The batch-reorder focus check K8 is covered by unit and source-level regressions, but still requires real keyboard/TalkBack verification.
 
 ## Before testing
 
@@ -20,6 +21,7 @@
 | K5 | Navigate via keyboard / TalkBack through the upload controls | Two invisible native file inputs are **not** tab stops or separately announced; visible buttons remain operable | Not run |
 | K6 | Open and cancel the native file chooser from the Tools tab | No unwanted file/mode change; the previous batch or file remains visible where appropriate | Not run |
 | K7 | Navigate to PDF page selection and notices | All interactive elements expose readable names/selected states, focus is visible, no keyboard trap | Not run |
+| K8 | Using a keyboard, select 3 photos and reorder the middle item up/down | The moved photo retains focus on its own control at the new position; at first/last positions focus moves to its enabled opposite-direction control, not to a different photo | Not run |
 
 ## Mobile layout and functionality
 
@@ -38,7 +40,7 @@
 ## Sign-off evidence and stop conditions
 
 - Record for each attempted case: **Pass / Fail / Blocked**, environment and a short note. A result of “Not run” is not a Pass.
-- Any unresolvable keyboard trap, hidden focused element, incorrect file preservation, fabricated progress, or horizontal content blocking a primary action is a **release blocker**. File an Issue with repro steps; do not merge a workaround without tests.
+- Any unresolvable keyboard trap, focus transferring to the wrong photo after reorder, hidden focused element, incorrect file preservation, fabricated progress, or horizontal content blocking a primary action is a **release blocker**. File an Issue with repro steps; do not merge a workaround without tests.
 - Required automated gate: exact PR head `miniapp` job passes frontend tests, typecheck and build; `tests` job passes Python and Docker; retain GitHub run URL/commit.
 - Required integration gate: parent PRs #112 → #118 → #126 → #136 → #145 → #152, conflicting historical #46 reviewed, independent code review, and successful integration in target branch. **Green CI alone is not 10/10 readiness.**
 
