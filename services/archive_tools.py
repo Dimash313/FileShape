@@ -198,6 +198,22 @@ def _open_zip_source(source: Path):
         yield stream, info
 
 
+def _verify_pinned_zip_source(stream, metadata: os.stat_result) -> None:
+    """Fail closed if a pinned inode is modified while creating the ZIP.
+
+    A pathname swap is already prevented by the open descriptor; these
+    checks also reject typical in-place same-length overwrites. They do
+    not provide a cryptographic snapshot against hostile same-inode writers.
+    """
+    current = os.fstat(stream.fileno())
+    if (current.st_dev != metadata.st_dev
+            or current.st_ino != metadata.st_ino
+            or current.st_size != metadata.st_size
+            or current.st_mtime_ns != metadata.st_mtime_ns
+            or current.st_ctime_ns != metadata.st_ctime_ns):
+        raise ValueError("Исходный файл изменился во время создания ZIP")
+
+
 def _write_pinned_zip_members(
     archive: zipfile.ZipFile,
     members: list[tuple],
@@ -211,9 +227,7 @@ def _write_pinned_zip_members(
     total_written = 0
     high_ratio: set[str] = set()
     for stream, metadata, name in members:
-        actual_metadata = os.fstat(stream.fileno())
-        if actual_metadata.st_size != metadata.st_size:
-            raise ValueError("Исходный файл изменился во время создания ZIP")
+        _verify_pinned_zip_source(stream, metadata)
         stream.seek(0)
         date_time = time.localtime(metadata.st_mtime)[:6]
         if date_time[0] < 1980:
@@ -238,8 +252,9 @@ def _write_pinned_zip_members(
                         or total_written > MAX_UNCOMPRESSED_TOTAL):
                     raise ValueError("Исходный файл изменился во время создания ZIP")
                 dest.write(chunk)
-        if written != metadata.st_size or os.fstat(stream.fileno()).st_size != metadata.st_size:
+        if written != metadata.st_size:
             raise ValueError("Исходный файл изменился во время создания ZIP")
+        _verify_pinned_zip_source(stream, metadata)
         if _too_high_compression(archive.getinfo(name)):
             high_ratio.add(name)
     return high_ratio
