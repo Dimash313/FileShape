@@ -66,7 +66,7 @@ def inspect_zip(source: Path) -> dict:
 
 
 def unpack_zip(source: Path, folder: Path) -> list[tuple[Path, str]]:
-    """Extract into a private stage; never expose partial or clobbered output.
+    """Stage ZIP extraction and roll back incomplete publication on failure.
 
     Staged files are hard-linked into place only after every member has
     passed CRC and actual-byte checks. The stage lives on the same filesystem
