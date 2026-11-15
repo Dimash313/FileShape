@@ -132,3 +132,52 @@ private-chat smoke tests or a fully executed GitHub Actions run.
 domain, one PR at a time; audit how all clients share format capabilities.
 Do not introduce per-format microservices or change shared storage/billing.
 
+
+## Phase C1 — PDF domain port for the API (draft, unmerged)
+
+The new `services/pdf_module.py` declares `PdfModulePort` and a
+`ExistingPdfModule` compatibility adapter with five operations:
+
+- `count_pages(source)`
+- `extract(source, target, pages)`
+- `rotate(source, target, degrees)`
+- `merge(sources, target)`
+- `remove(source, target, pages)`
+
+It delegates to the existing bounded `services.file_tools` PDF functions.
+The API single-file dispatcher uses this port for `pdf:info`, `pdf:first`,
+`pdf:extract`, `pdf:remove`, and `pdf:rotate`. It retains the same
+result filenames, action strings, page selection semantics, output content
+validation and error propagation. The format module has **no** direct
+dependency on FastAPI, Telegram, billing, or database/queue infrastructure.
+
+### Why not move all PDF code immediately?
+
+`services/file_tools.py` currently implements **both** PDF and images.
+The new PDF port establishes a stable seam without risky mass relocation.
+Physical extraction into separate `services/pdf_tools.py` and image
+code can happen later under behavioral parity tests. Do not delete the
+old public imports while the bot and existing tests depend on them.
+
+### Preserved boundaries and next steps
+
+- Authentication, per-user quota, staging, temporary-file cleanup,
+  cancellation and subprocess limits remain the responsibility of the
+  API/bot application layers and worker runtime.
+- `pdf:merge` is a **Telegram-bot flow** using the existing legacy
+  `merge_pdfs` service, not a newly exposed single-file API operation.
+  The port includes `merge` now for that future bot migration.
+- The Telegram bot deliberately still uses the legacy PDF functions in
+  this phase. Its PDF page-selection FSM, multi-file merge behavior and
+  billing remain untouched.
+- `tests/test_pdf_module_contract.py` covers the port, delegation,
+  generated real-PDF page fidelity, errors, action allowlists and
+  legacy API output naming. The architecture guard forbids direct ingress
+  and billing imports into the new PDF adapter.
+- **Next phase:** migrate the bot's PDF info/edit/multi-file calls through
+  the port, preserving callback security, state, result delivery and
+  refund behavior with separate async handler regressions.
+- No claim of completed full test suite, live Telegram validation,
+  throughput or guaranteed absence of regressions until CI and
+  production-like checks provide evidence.
+
