@@ -4,7 +4,7 @@ Updated: 2026-11-15 UTC
 Track: `images-archives`
 Claimed Issue: [#178 — bounded concurrent image PDF resource measurement](https://github.com/Dimash313/FileShape/issues/178)
 Current branch: `test/image-concurrent-resources-h8`
-Active PR: **Draft, pending creation**, based on `test/image-resource-benchmarks-h7` (PR #168). Review live GitHub PR head/CI after documentation changes.
+Active PR: [#181](https://github.com/Dimash313/FileShape/pull/181), **Draft** based on `test/image-resource-benchmarks-h7` (PR #168). Review live GitHub PR head/CI after documentation changes.
 
 ## Work in this branch (not merged)
 
