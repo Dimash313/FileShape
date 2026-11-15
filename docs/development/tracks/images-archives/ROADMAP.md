@@ -30,3 +30,10 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - [Issue #138](https://github.com/Dimash313/FileShape/issues/138) / [Draft PR #144](https://github.com/Dimash313/FileShape/pull/144): use the existing single-image atomic staging helper from PR #137 for 2–8 image PDF composition. A failed save or filesystem publication must not corrupt an existing output or leave staged files. Add regression tests for real page order, partial save, symlink, failed rename, byte and pixel budgets and private permissions.
 - Local isolated reconstructed-module test result: **12/12 Python tests passed** (3 existing + 9 new), not the full exact GitHub checkout. Full Python/Mini App/Docker CI, bot/API flows and deployment checks remain unverified; runner blocker #101 remains open.
 - **Dependency:** #144 is stacked on #137 → #128 → #112 → #111 → #109 and architecture parents. Keep Draft; merge only in parent order after exact-head green CI and review.
+
+
+## Pre-decode PDF bundle bounds — active stacked draft
+
+- [Issue #148](https://github.com/Dimash313/FileShape/issues/148) / [Draft PR #153](https://github.com/Dimash313/FileShape/pull/153): inspect all 2–8 input image headers and 20 MiB aggregate file sizes before decoding any pixels. Reject symlink/FIFO inputs, preserve the 35m per-image and 22m cumulative pixel caps, and recheck limits during final conversion. This reduces unnecessary peak decode allocations for batches guaranteed to fail, but is **not** a measured throughput or memory improvement claim.
+- Local reconstructed-domain tests: **13 passed** (3 existing + 10 new) with synthetic solid-color images; full exact-head Python/Mini App/Docker and realistic resource benchmarks remain unverified. Runner CI issue #101 still blocks readiness.
+- Draft dependency: #153 → #144 → #137 → #128 → #112 → #111 → #109 → prior architecture parents. Review/merge only in dependency order after exact-head checks run and pass; preserve existing API/contracts and AGENTS.md rules.
