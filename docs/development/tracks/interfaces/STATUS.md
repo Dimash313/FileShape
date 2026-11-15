@@ -49,3 +49,10 @@ Draft PR: [#173](https://github.com/Dimash313/FileShape/pull/173); branch `ux/mi
 - Formerly all notices, including invalid file selection, incorrect PDF ranges and request failures, rendered as `role="status"`. App now stores a typed atomic notice object `{ text, kind }` and renders its `role` as `alert` for explicitly identified validation/failure states, or `status` for routine confirmations. Failed job-state messages are alert; other states stay polite. No classification by error wording. Dismissal/navigation clears the notice.
 - Added `miniapp/tests/noticeA11y.test.mjs` with 5 regressions, and manual TalkBack/VoiceOver checks K9/K10 (both **NOT RUN**) to `MOBILE_QA.md`. Browser file handling and backend API are unchanged; no new styles/assets/dependencies/payments.
 - Direct review checked nine source invariants and explicit alert paths. **This is static inspection, not executed tests.** Fresh exact-head GitHub Actions and real Telegram WebView/AT verification are mandatory. Do not merge while Draft, while any check is pending/failed, or before the stacked parent integration/review.
+
+## PDF page input accessibility correction (2026-11-16)
+
+- Reviewed the current Mini App after #192. Found that PDF page input used `aria-invalid={!validPageSelection}`, which checks range syntax but can report **valid** when the chosen pages violate operation limits (e.g., more than 150 selected or deleting all pages).
+- Changed the input to `aria-invalid={Boolean(pageSelectionError)}`, and connected it to the existing `role="alert"` explanation via conditional `aria-describedby="pdf-page-selection-error"`. Existing validation and backend processing unchanged.
+- Added one source-level Node regression in `miniapp/tests/noticeA11y.test.mjs` covering the field, descriptive ID and semantic restrictions. Updated manual keyboard QA case K7 to cover syntactically valid but disallowed selections. Tests/QA are **not** automatically evidence of real screen-reader behavior.
+- No new PR: this is a correction within Draft #173. Recheck exact-head GitHub Actions, parent stack, independent review and real Telegram/TalkBack QA before merging.
