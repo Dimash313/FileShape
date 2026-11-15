@@ -1,6 +1,10 @@
 # FileShape — Universal Format & Editor Roadmap
 Status: **product proposal, not implemented or deployed**. Created 2026-11-15. This supplements [ROADMAP.md](ROADMAP.md) and [ARCHITECTURE_5.md](ARCHITECTURE_5.md); it does not change approved Free/Pro pricing, quotas, privacy, security, billing or release gates.
 
+## Active product scope and focus
+
+**Only FileShape is active.** NickScope is removed from the development and investment roadmap. Quranex is deferred indefinitely; a distinct, more ambitious Islamic application may be reconsidered only after FileShape achieves sustained profitability and funding. Do not allocate FileShape engineering time, infrastructure budgets, milestones, marketing spend or shared-account design to either project. IhsanSoft remains the publisher brand, not an application or identity platform.
+
 ## Approved rollout strategy: Telegram first, platform-ready from day one
 
 **Release order:** (1) Telegram bot production launch; (2) public website; (3) Android and iOS applications. The existing Telegram Mini App is a client of the bot ecosystem, **not** a separate public mobile-app launch. Do not block bot launch on a complete website, app store distribution, Google/Apple sign-in or cross-product single sign-on.
@@ -9,13 +13,13 @@ Status: **product proposal, not implemented or deployed**. Created 2026-11-15. T
 
 ### Product-owned FileShape accounts and subscriptions — future-proof contract
 
-**Decision: do not create IhsanSoft ID, cross-product single sign-on or a shared IhsanSoft user database.** IhsanSoft is the publisher/umbrella brand and quality standard only. FileShape, NickScope and any future products independently own their accounts, user data, permissions, subscriptions and billing. Reusable technical libraries may be shared without shared production identities or cross-product access.
+**Decision: do not create IhsanSoft ID, cross-product single sign-on or a shared IhsanSoft user database.** IhsanSoft is the publisher/umbrella brand and quality standard only. **FileShape is the sole active product and the exclusive engineering, launch and marketing priority.** Any hypothetical future product would independently own its accounts, user data, permissions, subscriptions and billing. Reusable technical libraries may be shared without shared production identities or cross-product access.
 
 - **FileShape account:** one opaque internal `fileshape_account_id` per FileShape user across its Telegram bot, Mini App, website, Android and iOS. Provider credentials are separately verified linked login methods; Telegram ID, Google email and Apple relay email are not primary keys.
 - **Bot launch:** verify Telegram identity using existing trusted bot/Mini App mechanisms. Create or map a FileShape account without extra signup. Preserve current identity behavior until migration and isolation tests pass.
 - **Website:** add secure Telegram login and optionally verified email/Google login. Link identities only after proof of control of both; never merge solely by matching email.
 - **Mobile:** add appropriate Google/Apple sign-in, restore purchases and account-deletion flows. Observe each store's purchase requirements; do not assume Telegram Stars checkout can replace store billing.
-- **FileShape Pro only:** one FileShape entitlement across FileShape clients where platform policies allow. Validate receipts, refunds and grants server-side per payment provider. FileShape Pro does **not** unlock NickScope or any other IhsanSoft product.
+- **FileShape Pro only:** one FileShape entitlement across FileShape clients where platform policies allow. Validate receipts, refunds and grants server-side per payment provider. FileShape Pro is strictly a FileShape entitlement; no cross-product subscription or identity is planned.
 - Price target: **149 Telegram Stars / 30 days** in bot; future local-currency prices target comparable user cost, not guaranteed exact equality. Existing bot/cloud quotas in ROADMAP.md remain authoritative.
 - Future mobile **on-device** operations aim to have no artificial attempt-count limits and no third-party ad networks. Server/cloud processing remains resource-metered.
 - Sync minimal FileShape-specific settings and favorites only when useful and authorized. Never permanently sync user files by default; enforce strict temporary artifact ownership and deletion.
