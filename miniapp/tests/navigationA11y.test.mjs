@@ -13,10 +13,15 @@ test('keyboard skip link precedes other interactive controls and targets focusab
 });
 
 test('native hidden pickers do not steal keyboard focus or appear to screen readers', () => {
-  const single = app.match(/<input ref=\{inputRef\}[^>]+\/>/);
-  const batch = app.match(/<input ref=\{batchInputRef\}[^>]+\/>/);
-  assert.ok(single && batch);
-  for (const input of [single[0], batch[0]]) {
+  // JSX arrow callbacks contain '>' inside attribute expressions. Do not
+  // terminate the input match at the first '>' character.
+  const singleStart = app.indexOf('<input ref={inputRef}');
+  const batchStart = app.indexOf('<input ref={batchInputRef}');
+  const headerStart = app.indexOf('<header className="topbar">');
+  assert.ok(singleStart >= 0 && batchStart > singleStart && headerStart > batchStart);
+  const single = app.slice(singleStart, batchStart);
+  const batch = app.slice(batchStart, headerStart);
+  for (const input of [single, batch]) {
     assert.match(input, /tabIndex=\{-1\}/);
     assert.match(input, /aria-hidden="true"/);
     assert.match(input, /type="file"/);
