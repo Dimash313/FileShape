@@ -350,3 +350,25 @@ No new paid dependency, integration, content or media assets.
 Keep all changes unmerged until exact-head CI completes on real
 GitHub runners and malformed/large ZIP smoke tests pass
 (issue #101).
+
+## Phase F4 — ZIP self-compatibility and safe bundle budget (draft)
+
+Corrected ZIP generation so FileShape-created archives do not
+trigger its own high-ratio decompression safety policy: write
+DEFLATED normally, fallback to ZIP_STORED **only** for members
+exceeding the unchanged reader threshold, verify with the reader,
+then atomically publish. No weakening of external ZIP-bomb,
+symlink, name or size validation. Failed writes do not replace an
+existing target.
+
+All ZIP creation now preflights the reader's **50 MiB** total
+uncompressed limit, including Telegram bundle intake and its
+visible error text (previously 60 MiB). PDF merges retain their
+separate 60 MiB bot limit; HTTP ZIP creation remains capped at
+20 MiB aggregate. Tests assert real roundtrips, reader rejection
+of external bombs, failed write cleanup, boundary mismatch
+prevention and HTTP/bot integration.
+
+Tracked as issue #110. Keep draft until issue #101 GitHub Actions
+runners can actually execute and all exact-head Python, Mini App
+and Docker checks, plus ZIP corruption/bomb smoke tests, pass.
