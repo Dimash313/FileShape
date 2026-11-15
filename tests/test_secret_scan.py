@@ -1,9 +1,11 @@
 """Secret-scan preflight regression tests; all token specimens are synthetic."""
 import io
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.secret_scan import MAX_FILE_BYTES, _safe_path_label, scan_file, scan_repository
 
@@ -96,6 +98,29 @@ class SecretScanTests(unittest.TestCase):
         self.put("private.txt", "private")
         (self.root / "linked.txt").symlink_to("private.txt")
         self.assertEqual(scan_file(self.root, "linked.txt"), ("tracked_symlink_requires_review",))
+
+    def test_symlink_swap_after_lstat_fails_closed(self):
+        path = self.put("tracked.txt", "ordinary text")
+        self.put("private.txt", "private")
+        original_open = os.open
+
+        def replace_before_open(name, flags, *args, **kwargs):
+            path.rename(self.root / "old.txt")
+            path.symlink_to("private.txt")
+            return original_open(name, flags, *args, **kwargs)
+
+        with patch("tools.secret_scan.os.open", side_effect=replace_before_open):
+            self.assertEqual(
+                scan_file(self.root, "tracked.txt"),
+                ("unreadable_tracked_file",),
+            )
+
+    def test_large_media_prefix_still_scans_for_tokens(self):
+        specimen = ("12345678" + ":" + "z" * 35).encode()
+        self.put("oversized.png", specimen + b"0" * MAX_FILE_BYTES)
+        self.assertIn(
+            "telegram_bot_token", scan_file(self.root, "oversized.png")
+        )
 
     def test_sensitive_token_in_filename_is_redacted(self):
         secret_name = "ghp" + "_" + "Z" * 40
