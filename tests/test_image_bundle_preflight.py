@@ -122,7 +122,8 @@ class ImageBundlePreflightTests(unittest.TestCase):
             with patch.object(image_bundle, "_open_image", return_value=inflated) as decode:
                 with self.assertRaisesRegex(ValueError, "разрешение"):
                     image_bundle.images_to_pdf([self.first, self.second], self.target)
-                decode.assert_called_once_with(self.first)
+                decode.assert_called_once()
+                self.assertTrue(hasattr(decode.call_args.args[0], "fileno"))
         self.assert_not_published()
 
     def test_preflight_failure_preserves_existing_target(self):
