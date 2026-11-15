@@ -5,11 +5,11 @@ Track: `api-security`.
 Current Issue: [#120](https://github.com/Dimash313/FileShape/issues/120).
 Active PR: [#124](https://github.com/Dimash313/FileShape/pull/124) (**Draft**; base `docs/independent-development-tracks`, itself unmerged PR #112).
 Branch: `api-security/120-upload-framing`.
-Code/test commit: `5e7dce4a1bd46b16b1c351cffdda77d22f010530` (the STATUS update itself advances branch HEAD; inspect PR #124 for the exact latest commit).
+Latest code/test commit: `b3806776b63258ff069ae931feaefcd00cf9c478` (this STATUS commit advances branch HEAD; inspect PR #124 for the exact latest SHA).
 
 ## P0 — CI blocker #101 (unresolved)
 
-GitHub Actions hosted runner allocation remains broken before any test execution. Run [43709270266](https://github.com/Dimash313/FileShape/actions/runs/43709270266) for Draft PR #102 and later runs [43720058288](https://github.com/Dimash313/FileShape/actions/runs/43720058288) and [43720144330](https://github.com/Dimash313/FileShape/actions/runs/43720144330) show **both jobs failed with `runner_id=0` and zero steps**. The diagnostic evidence was recorded as a comment on [Issue #101](https://github.com/Dimash313/FileShape/issues/101). The exact check-run annotation/account billing policy is not visible through the connector. **Root cause not confirmed, not resolved; no PR may merge on these results.**
+GitHub Actions hosted runner allocation remains broken before any test execution. Run [43709270266](https://github.com/Dimash313/FileShape/actions/runs/43709270266) for Draft PR #102 and later runs [43720058288](https://github.com/Dimash313/FileShape/actions/runs/43720058288) and [43720144330](https://github.com/Dimash313/FileShape/actions/runs/43720144330) show **both jobs failed with `runner_id=0` and zero steps**. The initial PR #124 run [43720813909](https://github.com/Dimash313/FileShape/actions/runs/43720813909) also failed with `runner_id=0` and zero steps for both jobs. The diagnostic evidence was recorded as a comment on [Issue #101](https://github.com/Dimash313/FileShape/issues/101). The exact check-run annotation/account billing policy is not visible through the connector. **Root cause not confirmed, not resolved; no PR may merge on these results.**
 
 Owner action: inspect the workflow failure banner/annotation in GitHub UI, the account Actions usage/budgets, and repository Settings → Actions → General. Do not enable paid overages or relax spending protection without explicit owner consent. If all account settings are normal, contact GitHub Support with the failing run IDs and exact banner text.
 
