@@ -22,4 +22,6 @@ Each change is a scoped Issue/PR with UI tests, accessibility review, screenshot
 
 - [#149](https://github.com/Dimash313/FileShape/issues/149) / [Draft PR #152](https://github.com/Dimash313/FileShape/pull/152): accessible progressbar for actual XHR upload and honest, nonnumeric server waiting messages. Stacked on #145. API/worker progress is not fabricated.
 
+- [#172](https://github.com/Dimash313/FileShape/issues/172) / [Draft PR #173](https://github.com/Dimash313/FileShape/pull/173): keyboard skip-to-content and focus dynamic H1 after Mini App navigation; isolates useful accessibility from stale PR #46. Stacked on #152. Device/AT QA remains required.
+
 **Next candidate:** test screen-reader focus order and responsive layout at 320/360/370px on an actual Telegram WebView. PR #46 also modifies accessibility CSS/React components and needs integration review before changing overlapping behavior. Do not implement standalone website or Android/iOS clients in this release. #101 remains a CI execution blocker; a Draft PR or source assertions alone do not establish deployment readiness.
