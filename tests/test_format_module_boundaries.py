@@ -17,6 +17,8 @@ FORMAT_MODULES = {
     "image_adapter": ROOT / "services" / "image_module.py",
     "image_implementation": ROOT / "services" / "image_tools.py",
     "image_bundle": ROOT / "services" / "image_bundle.py",
+    "document_adapter": ROOT / "services" / "document_module.py",
+    "document_implementation": ROOT / "services" / "document_tools.py",
     "archive": ROOT / "services" / "archive_tools.py",
 }
 FORBIDDEN_PREFIXES = (
