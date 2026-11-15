@@ -150,8 +150,8 @@ class DocumentPortTests(unittest.TestCase):
                 server._transform(root / "original.docx", root, "docx:txt", "")
                 documents.to_text.assert_called_once()
                 for other in (images, audio, pdf):
-                    other.convert.assert_not_called() if hasattr(other, "convert") else None
-                    other.rotate.assert_not_called() if hasattr(other, "rotate") else None
+                    self.assertEqual(other.mock_calls, [],
+                                     "Document transformation must not dispatch another domain")
 
     def test_public_document_action_catalog_unchanged(self):
         self.assertEqual(SUPPORTED["docx"], {"docx:info", "docx:txt"})
