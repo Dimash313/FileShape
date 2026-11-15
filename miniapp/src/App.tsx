@@ -11,14 +11,15 @@ import { initTelegram, tapFeedback, telegramInitData } from './telegram';
 import { activeTools, acceptForTool, type SingleFileToolKey, type ToolKey } from './toolCatalog';
 import { batchImageSelectionError, singleFileSelectionError } from './filePreflight';
 import { describeTransfer } from './transferPresentation';
+import { nextBatchReorderFocus, type BatchReorderFocus, type BatchReorderDirection } from './batchReorderFocus';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
-import type { QueueStatus, UploadProgress } from './api';
+import type { JobStatus, QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
 import { OwnerCampaigns } from './OwnerCampaigns';
 import { UsageProfile } from './UsageProfile';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
-type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: string };
+type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: JobStatus['state'] };
 const toolIcons: Record<ToolKey, LucideIcon> = {
   pdf: FileText,
   image: Image,
@@ -34,6 +35,23 @@ const nav: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: 'history', label: 'История', icon: Clock3 },
   { tab: 'profile', label: 'Профиль', icon: UserRound },
 ];
+// Shared, type-checked Russian labels for the statuses returned by our API.
+const jobStateLabels: Record<JobStatus['state'], string> = {
+  queued: 'ожидание',
+  processing: 'обработка',
+  completed: 'завершено',
+  failed: 'ошибка',
+  cancelled: 'отменено',
+};
+// Decorative icons mirror the textual status; a missing retained blob does not
+// mean a queued, processing or failed job has completed successfully.
+const historyStateIcons: Record<JobStatus['state'], LucideIcon> = {
+  queued: Clock3,
+  processing: Clock3,
+  completed: Check,
+  failed: X,
+  cancelled: X,
+};
 const formats: { value: ImageFormat; label: string }[] = [
   { value: 'image/jpeg', label: 'JPG' },
   { value: 'image/png', label: 'PNG' },
@@ -75,6 +93,9 @@ function ProgressIndicator({ progress }: { progress: UploadProgress }) {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
+  const previousTabRef = useRef<Tab>('home');
+  const screenTitleRef = useRef<HTMLHeadingElement>(null);
+  const pendingBatchFocusRef = useRef<BatchReorderFocus | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
@@ -86,8 +107,13 @@ export default function App() {
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
-  const [notice, setNotice] = useState('');
+  // Keep notice text and severity atomic to avoid stale error announcements.
+  const [notice, setNotice] = useState<{ text: string; kind: 'status' | 'alert' } | null>(null);
+  const showNotice = (text: string, kind: 'status' | 'alert' = 'status') => setNotice({ text, kind });
   const [history, setHistory] = useState<Task[]>([]);
+  // Unique for the current mount even when two results arrive in one millisecond.
+  // Never reuse a history key after clearing the in-memory list.
+  const nextHistoryIdRef = useRef(0);
   const [queueInfo, setQueueInfo] = useState<QueueStatus | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState('');
@@ -96,6 +122,14 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
+  // Switching the in-app section does not navigate the browser. Move focus to
+  // the new heading so keyboard and screen-reader users know which page opened.
+  // Do not steal focus on the initial render or on updates within one section.
+  useEffect(() => {
+    if (previousTabRef.current === tab) return;
+    previousTabRef.current = tab;
+    screenTitleRef.current?.focus();
+  }, [tab]);
   // Browser-only preview: never upload just to display an image.
   // Revoke object URLs whenever the file changes or the component unmounts.
   useEffect(() => {
@@ -129,7 +163,7 @@ export default function App() {
     if (busy) return;
     background.releaseInput();
     tapFeedback(); setBatchMode(true); setBatchFiles([]); setFile(null);
-    setTab('home'); setNotice(''); setProgress(null);
+    setTab('home'); setNotice(null); setProgress(null);
   };
   const openTool = (key: ToolKey) => {
     if (key === 'batch') showBatch();
@@ -139,24 +173,41 @@ export default function App() {
     if (busy || !files.length) return;
     const error = batchImageSelectionError(files);
     if (error) {
-      setNotice(error);
+      showNotice(error, 'alert');
       return;
     }
     background.releaseInput();
-    setBatchFiles(files); setBatchMode(true); setFile(null); setNotice('');
+    setBatchFiles(files); setBatchMode(true); setFile(null); setNotice(null);
   };
-  const reorderBatch = (index: number, change: number) => {
+  const reorderBatch = (index: number, change: BatchReorderDirection) => {
+    if (busy) return;
+    const target = nextBatchReorderFocus(index, change, batchFiles.length);
+    if (!target) return;
+    // React reuses keyed rows at the old positions. Restore focus to the
+    // moved photo's new row rather than a different photo at the old position.
+    pendingBatchFocusRef.current = target;
     setBatchFiles(files => {
+      if (!nextBatchReorderFocus(index, change, files.length)) return files;
       const next = [...files];
-      const target = index + change;
-      if (target < 0 || target >= next.length) return files;
-      [next[index], next[target]] = [next[target], next[index]];
+      const destination = index + change;
+      [next[index], next[destination]] = [next[destination], next[index]];
       return next;
     });
   };
+  useEffect(() => {
+    const target = pendingBatchFocusRef.current;
+    if (!target) return;
+    pendingBatchFocusRef.current = null;
+    const row = document.querySelector<HTMLElement>(
+      `.batch-row[data-batch-position="${target.index}"]`,
+    );
+    row?.querySelector<HTMLButtonElement>(
+      `button[data-batch-direction="${target.direction}"]`,
+    )?.focus();
+  }, [batchFiles]);
   const remember = (name: string, blob: Blob, jobId?: string) => {
     const task: Task = {
-      id: Date.now(), name, jobId, jobState: jobId ? 'completed' : undefined, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
+      id: ++nextHistoryIdRef.current, name, jobId, jobState: jobId ? 'completed' : undefined, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
       format: name.split('.').pop()?.toUpperCase() ?? 'ФАЙЛ',
       time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
     };
@@ -172,11 +223,11 @@ export default function App() {
     });
   };
   const background = useBackgroundJobs(result => {
-    if (result.type === 'info') setNotice(result.text);
+    if (result.type === 'info') showNotice(result.text);
     else {
       downloadBlob(result.blob, result.name);
       remember(result.name, result.blob, result.jobId);
-      setNotice('Результат передан браузеру для сохранения.');
+      showNotice('Результат передан браузеру для сохранения.');
     }
   });
   const busy = requestBusy || background.creating || background.cancelling;
@@ -185,9 +236,9 @@ export default function App() {
     try {
       const status = await getJobStatus(item.jobId);
       setHistory(items => items.map(entry => entry.id === item.id ? { ...entry, jobState: status.state } : entry));
-      setNotice('Статус задания: ' + ({ queued: 'ожидание', processing: 'обработка', completed: 'завершено', failed: 'ошибка', cancelled: 'отменено' }[status.state]));
+      showNotice('Статус задания: ' + jobStateLabels[status.state], status.state === 'failed' ? 'alert' : 'status');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось проверить статус.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось проверить статус.', 'alert');
     }
   };
   const acceptFile = (next?: File) => {
@@ -195,7 +246,7 @@ export default function App() {
     tapFeedback();
     const error = singleFileSelectionError(next);
     if (error) {
-      setNotice(error);
+      showNotice(error, 'alert');
       return;
     }
     background.releaseInput();
@@ -206,22 +257,22 @@ export default function App() {
     setBatchMode(false);
     setServerAction('');
     setPages('');
-    setNotice('');
+    setNotice(null);
     setTab('home');
   };
-  const clear = () => { if (busy) return; background.releaseInput(); setFile(null); setPdfPageCount(null); setPdfGridPage(0); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
+  const clear = () => { if (busy) return; background.releaseInput(); setFile(null); setPdfPageCount(null); setPdfGridPage(0); setBatchMode(false); setBatchFiles([]); setNotice(null); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
   const convert = async () => {
     if (!file || !canConvertLocally(file) || busy) return;
     setBusy(true);
-    setNotice('');
+    setNotice(null);
     try {
       const blob = await convertLocalImage(file, format);
       const filename = `${file.name.replace(/\.[^.]+$/, '') || 'image'}_fileshape.${extensionFor(format)}`;
       downloadBlob(blob, filename);
       remember(filename, blob);
-      setNotice('Готово! Файл сохранён на устройство.');
+      showNotice('Готово! Файл сохранён на устройство.');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось обработать файл.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось обработать файл.', 'alert');
     } finally { setBusy(false); }
   };
   const kind = file ? fileCategory(file) : 'other';
@@ -232,7 +283,7 @@ export default function App() {
   const inspectPdf = async () => {
     if (!file || kind !== 'pdf' || busy || !telegramInitData()) return;
     setBusy(true);
-    setNotice('');
+    setNotice(null);
     setProgress({ stage: 'upload', percent: null });
     try {
       const result = await runServerAction(file, 'pdf:info', '', setProgress);
@@ -244,10 +295,10 @@ export default function App() {
       }
       setPdfPageCount(count);
       setPdfGridPage(0);
-      setNotice('Информация о PDF получена.');
+      showNotice('Информация о PDF получена.');
     } catch (error) {
       setPdfPageCount(null);
-      setNotice(error instanceof Error ? error.message : 'Не удалось прочитать PDF.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось прочитать PDF.', 'alert');
     } finally {
       setBusy(false);
       setProgress(null);
@@ -278,27 +329,27 @@ export default function App() {
     if (busy) return;
     if (mode === 'clear') {
       setPages('');
-      setNotice('');
+      setNotice(null);
       return;
     }
     if (pdfPageCount === null || !validPageSelection) return;
     if (mode === 'all') {
       if (pdfPageCount > 150) {
-        setNotice('За одну операцию можно выбрать не более 150 страниц.');
+        showNotice('За одну операцию можно выбрать не более 150 страниц.', 'alert');
         return;
       }
       if (selectedAction === 'pdf:remove') {
-        setNotice('Нельзя удалить все страницы PDF. Оставь хотя бы одну.');
+        showNotice('Нельзя удалить все страницы PDF. Оставь хотя бы одну.', 'alert');
         return;
       }
       setPages('1-' + pdfPageCount);
-      setNotice('');
+      setNotice(null);
       return;
     }
     const inverted = Array.from({ length: pdfPageCount }, (_, index) => index + 1)
       .filter(page => !selectedPageNumbers.has(page));
     if (inverted.length > 150 || (selectedAction === 'pdf:remove' && inverted.length === pdfPageCount)) {
-      setNotice('Такой выбор нельзя выполнить: максимум 150 страниц, и нельзя удалить все страницы.');
+      showNotice('Такой выбор нельзя выполнить: максимум 150 страниц, и нельзя удалить все страницы.', 'alert');
       return;
     }
     const ranges: string[] = [];
@@ -310,11 +361,11 @@ export default function App() {
     }
     const next = ranges.join(',');
     if (next.length > 90) {
-      setNotice('Выбор слишком сложный. Используй диапазоны в поле выше.');
+      showNotice('Выбор слишком сложный. Используй диапазоны в поле выше.', 'alert');
       return;
     }
     setPages(next);
-    setNotice('');
+    setNotice(null);
   };
   const togglePdfPage = (page: number) => {
     if (busy || !validPageSelection) return;
@@ -331,15 +382,15 @@ export default function App() {
     }
     const value = chunks.join(',');
     if (next.size > 150 || (selectedAction === 'pdf:remove' && pdfPageCount !== null && next.size === pdfPageCount)) {
-      setNotice('Максимум 150 страниц; нельзя удалить все страницы PDF.');
+      showNotice('Максимум 150 страниц; нельзя удалить все страницы PDF.', 'alert');
       return;
     }
     if (value.length > 90) {
-      setNotice('Слишком много выбранных страниц. Используй диапазоны в поле выше.');
+      showNotice('Слишком много выбранных страниц. Используй диапазоны в поле выше.', 'alert');
       return;
     }
     setPages(value);
-    setNotice('');
+    setNotice(null);
   };
   const pageSelectionLimit = pdfPageCount ?? 250;
   const gridStart = pdfGridPage * 50 + 1;
@@ -355,31 +406,31 @@ export default function App() {
   const addPageSelection = (value: string) => {
     if (busy) return;
     setPages(current => current.trim() ? current.trim() + ',' + value : value);
-    setNotice('');
+    setNotice(null);
   };
   const serverConvert = async () => {
     if (!file || busy || !selectedAction || !background.canSubmit) return;
-    if (!safePageSelection) { setNotice(pageSelectionError || 'Проверь выбранные страницы.'); return; }
-    setBusy(true); setNotice(''); setProgress({ stage: 'upload', percent: null });
+    if (!safePageSelection) { showNotice(pageSelectionError || 'Проверь выбранные страницы.', 'alert'); return; }
+    setBusy(true); setNotice(null); setProgress({ stage: 'upload', percent: null });
     try {
       await background.create(file, selectedAction, pages.trim(), setProgress);
-      setNotice('Задание принято. Статус и кнопка результата доступны в разделе заданий.');
+      showNotice('Задание принято. Статус и кнопка результата доступны в разделе заданий.');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Номер задания не подтверждён. Автоматическая повторная отправка не выполняется.');
+      showNotice(error instanceof Error ? error.message : 'Номер задания не подтверждён. Автоматическая повторная отправка не выполняется.', 'alert');
     } finally { setBusy(false); setProgress(null); }
   };
   const convertBatch = async () => {
     if (busy || batchFiles.length < 2 || !telegramInitData()) return;
-    setBusy(true); setNotice(''); setProgress({ stage: 'upload', percent: null });
+    setBusy(true); setNotice(null); setProgress({ stage: 'upload', percent: null });
     try {
       const result = await runMultiImagePdf(batchFiles, setProgress);
       if (result.type === 'file') {
         downloadBlob(result.blob, result.name);
         remember(result.name, result.blob);
-        setNotice('Готово! PDF создан из ' + batchFiles.length + ' изображений.');
+        showNotice('Готово! PDF создан из ' + batchFiles.length + ' изображений.');
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось объединить изображения.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось объединить изображения.', 'alert');
     } finally {
       setBusy(false); setProgress(null);
     }
@@ -400,8 +451,9 @@ export default function App() {
   const title = tab === 'home' ? 'Работа с файлами' : tab === 'tools' ? 'Все инструменты' : tab === 'history' ? 'История' : 'Профиль';
 
   return <div className="app-shell">
-    <input ref={inputRef} className="visually-hidden" type="file" onChange={e => acceptFile(e.target.files?.[0])} />
-    <input ref={batchInputRef} className="visually-hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+    <a className="skip-link" href="#main-content">Перейти к содержимому</a>
+    <input ref={inputRef} className="visually-hidden" type="file" tabIndex={-1} aria-hidden="true" onChange={e => acceptFile(e.target.files?.[0])} />
+    <input ref={batchInputRef} className="visually-hidden" type="file" tabIndex={-1} aria-hidden="true" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
       onChange={e => chooseBatch(Array.from(e.target.files ?? []))} />
     <header className="topbar">
       <div className="brand">
@@ -410,9 +462,9 @@ export default function App() {
       </div>
       <button className="icon-button" type="button" aria-label="Профиль" onClick={() => setTab('profile')}><Settings2 size={20} /></button>
     </header>
-    <main>
+    <main id="main-content" tabIndex={-1}>
       <div className="page-kicker">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      <h1>{title}<span className="accent-dot">.</span></h1>
+      <h1 ref={screenTitleRef} id="screen-title" tabIndex={-1}>{title}<span className="accent-dot">.</span></h1>
       {(tab === 'home' || tab === 'history') && <BackgroundJobsPanel jobs={background} busy={busy} />}
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
@@ -421,11 +473,11 @@ export default function App() {
           <p className="batch-intro">Выбери от 2 до 8 изображений. Порядок ниже станет порядком страниц PDF.</p>
           <button type="button" className="secondary-button full" disabled={busy} onClick={pickBatch}><UploadCloud size={17}/> Выбрать фотографии</button>
           {batchFiles.length > 0 && <div className="batch-list">
-            {batchFiles.map((photo, index) => <div className="batch-row" key={index}>
+            {batchFiles.map((photo, index) => <div className="batch-row" key={index} data-batch-position={index}>
               <span className="batch-number">{index + 1}</span>
               <div className="batch-file"><strong title={photo.name}>{photo.name}</strong><span>{sizeLabel(photo.size)}</span></div>
-              <button aria-label="Переместить выше" type="button" disabled={index === 0 || busy} onClick={() => reorderBatch(index, -1)}>↑</button>
-              <button aria-label="Переместить ниже" type="button" disabled={index === batchFiles.length - 1 || busy} onClick={() => reorderBatch(index, 1)}>↓</button>
+              <button aria-label={`Переместить фото ${index + 1} (${photo.name}) выше`} data-batch-direction="-1" type="button" disabled={index === 0 || busy} onClick={() => reorderBatch(index, -1)}>↑</button>
+              <button aria-label={`Переместить фото ${index + 1} (${photo.name}) ниже`} data-batch-direction="1" type="button" disabled={index === batchFiles.length - 1 || busy} onClick={() => reorderBatch(index, 1)}>↓</button>
             </div>)}
           </div>}
           <div className="batch-summary">{batchFiles.length} фото · {sizeLabel(batchFiles.reduce((sum, photo) => sum + photo.size, 0))} всего</div>
@@ -474,11 +526,13 @@ export default function App() {
               {serverActions.map(option => <button type="button" key={option.code}
                 className={selectedAction === option.code ? 'server-option active' : 'server-option'}
                 disabled={busy} aria-pressed={selectedAction === option.code}
-                onClick={() => { setServerAction(option.code); setPages(''); setNotice(''); }}>{option.label}</button>)}
+                onClick={() => { setServerAction(option.code); setPages(''); setNotice(null); }}>{option.label}</button>)}
             </div>
             {selectedOption?.pages && <label className="pages-field">Номера страниц
               <input type="text" value={pages} onChange={event => setPages(event.target.value)}
-                placeholder="Например: 1,3-5" maxLength={90} disabled={busy} aria-invalid={!validPageSelection} />
+                placeholder="Например: 1,3-5" maxLength={90} disabled={busy}
+                aria-invalid={Boolean(pageSelectionError)}
+                aria-describedby={pageSelectionError ? 'pdf-page-selection-error' : undefined} />
             </label>}
             {selectedOption?.pages && <div className="page-presets" aria-label="Быстрый выбор страниц">
               <span>Быстрый выбор</span>
@@ -486,11 +540,11 @@ export default function App() {
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1')}>Первая</button>
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1-3')}>1–3</button>
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1-5')}>1–5</button>
-                <button type="button" disabled={busy} onClick={() => { setPages(''); setNotice(''); }}>Очистить</button>
+                <button type="button" disabled={busy} onClick={() => { setPages(''); setNotice(null); }}>Очистить</button>
               </div>
               <small>Можно объединять: 1,3-5. Диапазоны от 1 до {pdfPageCount ?? 250}. Для точной проверки сначала узнай количество страниц.</small>
             </div>}
-            {selectedOption?.pages && pageSelectionError && <div className="pdf-inline-error" role="alert">
+            {selectedOption?.pages && pageSelectionError && <div id="pdf-page-selection-error" className="pdf-inline-error" role="alert">
               <Info size={15}/><span>{pageSelectionError}</span>
             </div>}
             {selectedOption?.pages && pdfPageCount !== null && <div className="pdf-page-picker">
@@ -536,7 +590,20 @@ export default function App() {
         <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
-      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + item.jobState : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
+      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => {
+          const HistoryStateIcon = item.jobState ? historyStateIcons[item.jobState] : Check;
+          return <div className="history-item" key={item.id}>
+            <div className="tool-list-icon"><FileImage size={20}/></div>
+            <div>
+              <strong>{item.name}</strong>
+              <span>{item.format} · {item.time} · {item.jobState ? jobStateLabels[item.jobState] : 'завершено'}</span>
+              {item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}
+            </div>
+            {item.blob
+              ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button>
+              : <HistoryStateIcon size={18} aria-hidden="true" />}
+          </div>;
+        })}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
       {tab === 'profile' && <>
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
@@ -565,8 +632,8 @@ export default function App() {
           <p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. На сервере остаются ограниченные по сроку метаданные заданий. Ссылки без файлов, имён и данных авторизации действуют до часа и очищаются при работе приложения или следующем открытии.</p>
         </div></div>
       </>}
-      {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
+      {notice && <div className="notice" role={notice.kind}>{notice.text}<button aria-label="Закрыть" onClick={() => setNotice(null)}><X size={16}/></button></div>}
     </main>
-    <nav className="bottom-nav" aria-label="Основная навигация">{nav.map(item => <button type="button" key={item.tab} aria-current={tab === item.tab ? 'page' : undefined} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</nav>
+    <nav className="bottom-nav" aria-label="Основная навигация">{nav.map(item => <button type="button" key={item.tab} aria-current={tab === item.tab ? 'page' : undefined} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(null); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</nav>
   </div>;
 }
