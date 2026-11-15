@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from services.file_tools import _open_image
+from services.image_tools import _open_image
 
 MIN_IMAGES = 2
 MAX_IMAGES = 8
