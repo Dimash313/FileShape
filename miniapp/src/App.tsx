@@ -111,6 +111,9 @@ export default function App() {
   const [notice, setNotice] = useState<{ text: string; kind: 'status' | 'alert' } | null>(null);
   const showNotice = (text: string, kind: 'status' | 'alert' = 'status') => setNotice({ text, kind });
   const [history, setHistory] = useState<Task[]>([]);
+  // Unique for the current mount even when two results arrive in one millisecond.
+  // Never reuse a history key after clearing the in-memory list.
+  const nextHistoryIdRef = useRef(0);
   const [queueInfo, setQueueInfo] = useState<QueueStatus | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState('');
@@ -204,7 +207,7 @@ export default function App() {
   }, [batchFiles]);
   const remember = (name: string, blob: Blob, jobId?: string) => {
     const task: Task = {
-      id: Date.now(), name, jobId, jobState: jobId ? 'completed' : undefined, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
+      id: ++nextHistoryIdRef.current, name, jobId, jobState: jobId ? 'completed' : undefined, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
       format: name.split('.').pop()?.toUpperCase() ?? 'ФАЙЛ',
       time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
     };
