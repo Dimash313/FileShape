@@ -118,6 +118,33 @@ class ImageConcurrencyBenchmarkTests(unittest.TestCase):
         self.assertFalse(locations[0].exists())
 
     @unittest.skipUnless(sys.platform == "linux", "Linux procfs")
+    def test_sampled_aggregate_memory_budget_aborts_and_reaps(self):
+        original_temp = tempfile.TemporaryDirectory
+        locations = []
+
+        def tracked_temp(*args, **kwargs):
+            temp = original_temp(*args, **kwargs)
+            locations.append(Path(temp.name))
+            return temp
+
+        # Force a sampled two-process total above the configured budget.
+        # The test never allocates this amount of memory.
+        with patch.object(
+            image_concurrency.tempfile, "TemporaryDirectory",
+            side_effect=tracked_temp,
+        ), patch.object(
+            image_concurrency, "_rss_bytes",
+            return_value=600 * 1024 * 1024,
+        ):
+            with self.assertRaisesRegex(MemoryError, "aggregate budget"):
+                image_concurrency.run_parallel(
+                    "smoke", "solid", 2, 512, 30, 10,
+                    aggregate_memory_mib=1024,
+                )
+        self.assertEqual(len(locations), 1)
+        self.assertFalse(locations[0].exists())
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux procfs")
     def test_proc_rss_sampler_reads_current_process(self):
         current = image_concurrency._rss_bytes(os.getpid())
         self.assertGreater(current, 0)
