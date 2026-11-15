@@ -516,7 +516,8 @@ async def public_capabilities():
     result["max_upload_bytes"] = MAX_INPUT_BYTES
     result["max_result_bytes"] = MAX_RESULT_BYTES
     # All batch uploads currently share the HTTP max aggregate input size.
-    result["batch_operations"][0]["max_total_upload_bytes"] = MAX_INPUT_BYTES
+    for batch_operation in result["batch_operations"]:
+        batch_operation["max_total_upload_bytes"] = MAX_INPUT_BYTES
     return JSONResponse(
         result,
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
