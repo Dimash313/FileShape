@@ -239,6 +239,54 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             else:
                 self.fail("Grandchild remains running after worker timeout")
 
+    async def test_repeated_cancellation_still_waits_for_child_reap(self):
+        # Control when proc.wait() may finish. The direct child receives
+        # SIGKILL immediately, but run_worker must not report cleanup as
+        # complete before its independently scheduled reap has finished.
+        original = asyncio.create_subprocess_exec
+        reap_started = asyncio.Event()
+        permit_reap_return = asyncio.Event()
+        processes = []
+
+        async def delayed_reap_child(*args, **kwargs):
+            proc = await original(
+                sys.executable, "-c", "import time; time.sleep(30)",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            original_wait = proc.wait
+
+            async def gated_wait():
+                code = await original_wait()
+                reap_started.set()
+                await permit_reap_return.wait()
+                return code
+
+            proc.wait = gated_wait
+            processes.append(proc)
+            return proc
+
+        with patch("api.worker_runner.asyncio.create_subprocess_exec", side_effect=delayed_reap_child):
+            task = asyncio.create_task(run_worker({"operation": "single"}, timeout=15))
+            try:
+                await asyncio.sleep(0.1)
+                task.cancel()
+                await asyncio.wait_for(reap_started.wait(), 5)
+                self.assertFalse(task.done())
+                task.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(task.done(), "Repeated cancel abandoned child reap")
+            finally:
+                permit_reap_return.set()
+                if not task.done():
+                    task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+        self.assertEqual(len(processes), 1)
+        self.assertIsNotNone(processes[0].returncode)
+
     async def test_cancel_kills_child(self):
         original = asyncio.create_subprocess_exec
         processes = []
