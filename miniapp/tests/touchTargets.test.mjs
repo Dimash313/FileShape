@@ -43,7 +43,7 @@ test('batch reorder controls remain usable on narrow screens', () => {
   const rule = declarationBlock('.batch-row button');
   has44(rule, 'min-width');
   has44(rule, 'min-height');
-  assert.ok(!/width:\s*\d+px\s*;/.test(rule), 'Do not set a fixed width for batch controls');
+  assert.ok(!/(?:^|[;\\s])width:\s*\d+px\s*;/.test(rule), 'Do not set a fixed width for batch controls');
 });
 
 test('notifications wrap and existing focus, reduced-motion and narrow-screen rules remain', () => {
