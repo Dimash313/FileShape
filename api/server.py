@@ -48,7 +48,7 @@ from api.workspaces import Workspace, OrphanCleaner, cleanup_orphans
 from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
-from services.archive_tools import inspect_zip
+from services.archive_module import archive_module
 from services.document_module import document_module
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES
 from services.upload_validation import validate_upload
@@ -826,7 +826,7 @@ def _info_action(source: Path, action: str) -> dict | None:
     if action == "txt:info":
         return {"info": document_module.inspect_text(source)}
     if action == "zip:list":
-        return {"info": inspect_zip(source)}
+        return {"info": archive_module.inspect(source)}
     return None
 
 
