@@ -2,6 +2,17 @@
 
 > Status: living engineering plan, reviewed 2026-11-14. **Not** a public launch, payment enablement, deployment or production-readiness declaration. Every change requires its own branch, PR, green checks on the final head commit and a successful push-triggered main CI run after merging.
 
+## Mandatory 10/10 quality target and release gates
+
+Every dimension of FileShape must aim for **10/10**. Follow the
+[evidence-based quality standard](QUALITY_STANDARD.md) and do not claim
+perfection without independent tests and user evidence. One required
+criterion marked FAIL or NOT TESTED blocks a production-ready claim.
+Fix defects, re-test and document residual limitations; do not average
+away a serious weakness with strengths elsewhere. New unshipped features
+must remain explicitly unavailable rather than delaying a safe, honestly
+scoped core launch.
+
 ## Button-first product UX (permanent requirement)
 
 All Telegram bot, Mini App and future web/native user flows must follow the
