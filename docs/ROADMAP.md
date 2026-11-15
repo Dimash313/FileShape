@@ -179,3 +179,23 @@ frontend, Docker and real file-processing test evidence. The prior
 GitHub Actions runs failed before executing job steps; do not treat
 them as either successful tests or proof of a code regression.
 
+
+### Phase C5 — image domain parity for Telegram bot (draft)
+
+The existing Telegram bot image callbacks now delegate conversion and
+optimization to the same typed `ImageModulePort` as the API. This keeps
+all original formats, bot filenames, menu buttons, upload/output limits
+and billing decisions. User-ownership checks and temporary files stay in
+the bot; the shared domain module only processes images.
+
+Dedicated asynchronous bot regressions cover all five callbacks, Telegram
+photo input, unauthorized or unsupported actions, busy states, entitlement
+denial, quota refunds and failed Telegram delivery. Existing real image
+processing and API matrix checks remain required. See
+[MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md).
+
+Next separate domain PRs can migrate `services.document_tools` and
+`services.archive_tools`, one tested release at a time. No new API
+endpoints or supported formats are claimed here. Keep this PR draft
+until parent PRs and full exact-head CI pass.
+
