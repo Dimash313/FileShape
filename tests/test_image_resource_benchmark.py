@@ -34,6 +34,9 @@ class ImageResourceBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr[-1000:])
         result = json.loads(proc.stdout)
+        # These numbers come from a real subprocess running FileShape and
+        # are safe to print: fixtures and paths are entirely synthetic.
+        print("IMAGE_BENCHMARK_SMOKE_JSON: " + json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(result["profile"], "smoke")
         self.assertEqual(result["result_pages"], result["input_count"])
         self.assertEqual(result["input_count"], 2)
