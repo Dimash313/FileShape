@@ -19,4 +19,7 @@ Each change is a scoped Issue/PR with UI tests, accessibility review, screenshot
 - [#131](https://github.com/Dimash313/FileShape/issues/131) / [Draft PR #136](https://github.com/Dimash313/FileShape/pull/136): reject empty and malformed selected files in the Mini App before processing. Stacked on #126.
 - [#139](https://github.com/Dimash313/FileShape/issues/139) / [Draft PR #145](https://github.com/Dimash313/FileShape/pull/145): enforce minimum 44px touch targets on small mobile controls, and wrap long notices. Stacked on #136.
 
+
+- [#149](https://github.com/Dimash313/FileShape/issues/149) / [Draft PR #152](https://github.com/Dimash313/FileShape/pull/152): accessible progressbar for actual XHR upload and honest, nonnumeric server waiting messages. Stacked on #145. API/worker progress is not fabricated.
+
 **Next candidate:** test screen-reader focus order and responsive layout at 320/360/370px on an actual Telegram WebView. PR #46 also modifies accessibility CSS/React components and needs integration review before changing overlapping behavior. Do not implement standalone website or Android/iOS clients in this release. #101 remains a CI execution blocker; a Draft PR or source assertions alone do not establish deployment readiness.
