@@ -509,3 +509,54 @@ by issue #101 and the separate PR #102. All architecture PRs remain
 unmerged drafts pending actual completed Python, frontend and Docker
 checks. No positive test result or production release is claimed here.
 
+
+## Phase E2 — Telegram ZIP archive handlers use shared domain port (draft)
+
+The Telegram bot now uses the same `ArchiveModulePort` that the API
+already uses for ZIP inspection:
+
+| Existing Telegram flow | Shared module call | Result |
+| --- | --- | --- |
+| `zip:list` | `archive_module.inspect(source)` | Existing text summary |
+| `zip:extract` | `archive_module.extract(source, folder)` | Individual files in the original order |
+| `zip:create` then bundle completion | `archive_module.create(inputs, target)` | `fileshape.zip` |
+
+The ZIP bundle flow, its `ZipState.collecting` state, two-to-five file
+requirement, file names, callback labels and result captions are preserved.
+The API public action catalog still contains **only** `zip:list`;
+this bot refactor does not add server ZIP extraction or creation endpoints.
+
+**Security and billing stay at the transport boundary:** private
+chat/owner checks on callbacks, file type/size limits, user entitlement
+validation before admission, 3-slot bot processing cap, queue/usage
+reservation and settlement, per-work temporary directories, safe
+download size checks, output size checks, final Telegram delivery, and
+failure refunds remain outside the domain adapter. ZIP validators and
+bounded archive creation/extraction in `services/archive_tools` are
+unchanged. The adapter performs in-process delegation, not an extra
+network call, subprocess or duplicate decompression.
+
+`tests/test_bot_archive_module.py` adds mocked Telegram handler
+regressions for ZIP listing, ordered extraction, bundle setup and
+completion, unchanged names and follow-up menus, foreign/invalid/busy
+callbacks, entitlement and chat restrictions, unfinished bundle,
+creation or extraction errors, partial multi-file delivery failures
+and charging/refund semantics. Existing real malformed ZIP and
+compression-bomb tests remain required for correctness.
+
+**Compatibility caveat:** a multi-file Telegram send is not atomic.
+If a later extracted-file send fails, earlier files may already have
+arrived; the existing operation refunds the quota rather than
+falsely marking the entire operation successful. This phase does
+not claim transactional multi-file delivery.
+
+**Next phase:** assess cross-platform API capabilities independently.
+No unsupported ZIP creation/extraction endpoint is advertised until
+a dedicated endpoint or async-job protocol provides authenticated
+admission, secure output delivery and bounded cleanup.
+
+**Release gate:** this E2 draft is stacked on E1 and the earlier
+unmerged architecture PRs. GitHub Actions issue #101 still prevents
+test execution on hosted runners. Do not merge this PR with red or
+unexecuted checks, and do not claim a production-ready release.
+
