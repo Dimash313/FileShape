@@ -303,16 +303,20 @@ class IntakeDispatchStore(FencedDispatchStore):
                     ) != expiry:
                         raise BlobUnavailable()
                 except BlobUnavailable:
-                    if state == "queued":
-                        self._db.execute(
-                            """UPDATE input_handoff
-                               SET state='suspect',first_missing_at=?,
-                                   input_expires_at=NULL,updated_at=?
-                               WHERE job_id=? AND state='ready'""",
-                            (timestamp, timestamp, job_id),
-                        )
-                    # Expired leased jobs need a separate reviewed failure
-                    # path. Never claim again while input is unavailable.
+                    # Demote BOTH queued and expired-lease inputs. Without
+                    # demoting a stale leased entry, four unavailable older
+                    # jobs could occupy the bounded candidate scan forever
+                    # and starve other users' healthy queued jobs.
+                    self._db.execute(
+                        """UPDATE input_handoff
+                           SET state='suspect',first_missing_at=?,
+                               input_expires_at=NULL,updated_at=?
+                           WHERE job_id=? AND state='ready'""",
+                        (timestamp, timestamp, job_id),
+                    )
+                    # A failed processing attempt still needs separate
+                    # explicit operator resolution before refund or retry.
+                    # Demotion prevents re-leasing it without verification.
                     continue
                 if state == "queued":
                     changed = self._db.execute(
