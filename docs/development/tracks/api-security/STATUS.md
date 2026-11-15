@@ -1,35 +1,30 @@
 # API & security — handoff
 
-Updated: 2026-11-15 UTC; verify live GitHub heads/issues/checks before resuming.
+Updated: 2026-11-15 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
-Current Issue: [#163](https://github.com/Dimash313/FileShape/issues/163), worker stdout stream limit.
-Active PR: [#164](https://github.com/Dimash313/FileShape/pull/164) (**Draft**; branch `api-security/163-bounded-worker-stdout`, base `docs/independent-development-tracks` / unmerged PR #112).
-Latest code/test commit before this STATUS edit: `c52b6ab38e3bb39a8f881258b4831b05e48b5890` (STATUS commit advances head).
+Current Issue: [#169](https://github.com/Dimash313/FileShape/issues/169), remove inherited API environment secrets from untrusted worker subprocesses.
+Current PR: pending creation on this branch, `api-security/169-worker-env-boundary`, to target `api-security/163-bounded-worker-stdout` / [PR #164](https://github.com/Dimash313/FileShape/pull/164).
+Dependency: PR #164 is **Draft**, itself based on `docs/independent-development-tracks` / unmerged PR #112. Merge in dependency order; never squash this branch directly to `main` before #164 and base stack are ready.
 
-## Current branch changes
+## Current bounded change
 
-- `api/worker_runner.py`: bounded stdout reads, <=16 KiB chunk and 64 KiB+1 byte total sentinel; immediately reject a flooding worker rather than buffering all `proc.communicate()` output. Concurrent input feed, existing wall-clock timeout, Linux process-group termination and child reaping preserved.
-- `tests/test_worker_runner.py`: real-process infinite stdout flood rejection and exact output-size JSON boundary; relax existing grandchild-start timeout from 0.7 to 2.0 seconds to avoid failures on slow/cold Python startup while preserving kill verification.
-- No `api/server.py`, domain handlers, user auth, accounting/billing, payment, account or external service changes.
+- `api/worker_runner.py`: explicitly allowlist only necessary non-secret locale, PATH, temp/cache environment keys for the conversion worker; do not forward parent `BOT_TOKEN`, cloud keys, internal assertions, `PYTHONPATH`, `LD_PRELOAD` etc. Supply `PYTHON_DOTENV_DISABLED=1` plus safe Python process flags to keep the transitively imported `config.py` from reloading `.env`.
+- `tests/test_worker_runner.py`: launch a **real subprocess** with fake sentinel secrets in the parent's environment; assert no inherited secrets and compatible execution. Verify `load_dotenv` refuses to import a fake BOT_TOKEN when the child flag is set.
+- `requirements.txt`: raise the existing python-dotenv lower bound from 1.0 to 1.2 because `PYTHON_DOTENV_DISABLED` was only introduced in v1.2.0. No new dependency.
+- No changes to user content, HTTP API routes, authorization, billing, external services or media. Environment minimization is defense-in-depth, **not full sandboxing** of local file parser code.
 
-**Verification (limited):** a manually reconstructed isolated Linux/Python 3.13 mirror of the changed worker-runner code and tests, with a stub child `api.worker`, ran `python -m unittest discover -s tests -v`: **6/6 passed** after the test timeout adjustment. Initial 0.7s version had **5 passed, 1 existing test failed**. **This was NOT a full repo checkout, exact-GitHub-head CI, Mini App test/build or Docker test.** No unverified production-ready or 10/10 claim.
+## Validation and release gates
 
-## P0 GitHub Actions #101 still blocks merges
+Issue [#101](https://github.com/Dimash313/FileShape/issues/101) is **closed**: owner made FileShape public after consuming the entire private-repo included Actions Compute, and genuine hosted runners resumed. Parent PR #164 exact head `bef8fad55ff9e2e5912aa02fb8fa31f5ae772eb8` has actual green Python, Mini App and Docker checks ([run #43726214310](https://github.com/Dimash313/FileShape/actions/runs/43726214310) attempt 2). This **does not validate the new worker-env change**; require new PR exact-head full Python tests, Mini App test/typecheck/build, Docker build, additional real-file smoke and independent security/integration review before merging.
 
-[Issue #101](https://github.com/Dimash313/FileShape/issues/101): multiple jobs failed before obtaining any runner; recent unrelated [run #43725350075](https://github.com/Dimash313/FileShape/actions/runs/43725350075) has Python/miniapp `runner_id=0`, `steps=[]`. Logs unavailable; annotation text and account usage/policy inaccessible to connector. Owner to inspect run UI and account Actions budgets/policies. No paid overages or bypass. **No Draft PR merge without actual final-head executed Python, Mini App and Docker green tests and review.**
+## Other unmerged track Draft PRs
 
-## Independent track PRs and integration
+- [#124](https://github.com/Dimash313/FileShape/pull/124) HTTP upload framing / issue #120, exact-head green on [run #43720956440](https://github.com/Dimash313/FileShape/actions/runs/43720956440) attempt 2.
+- [#135](https://github.com/Dimash313/FileShape/pull/135) design-only HTTP ZIP extract result contract / issue #132; independent staged domain implementation prerequisite and signoff needed.
+- [#142](https://github.com/Dimash313/FileShape/pull/142) artifact inode/size pinning / issue #141, exact-head green on [run #43722810006](https://github.com/Dimash313/FileShape/actions/runs/43722810006) attempt 2.
+- [#151](https://github.com/Dimash313/FileShape/pull/151) privacy-safe API route tracing / issue #147, exact-head green on [run #43723454162](https://github.com/Dimash313/FileShape/actions/runs/43723454162) attempt 2.
+- [#156](https://github.com/Dimash313/FileShape/pull/156) bounded queue admission / issue #155, exact-head green on [run #43724105405](https://github.com/Dimash313/FileShape/actions/runs/43724105405) attempt 2.
+- [#164](https://github.com/Dimash313/FileShape/pull/164) streaming subprocess stdout limit / issue #163, exact-head green as above.
+- [#102](https://github.com/Dimash313/FileShape/pull/102) CI superseded PR cancellation / pip cache is green and unmerged; #112 and underlying architecture Drafts are also unmerged.
 
-- [#124](https://github.com/Dimash313/FileShape/pull/124) / #120: HTTP Content-Length framing guard.
-- [#135](https://github.com/Dimash313/FileShape/pull/135) / #132: design-only ZIP multi-result HTTP extraction; no implemented route, requires domain owner signoff.
-- [#142](https://github.com/Dimash313/FileShape/pull/142) / #141: pin published artifact inode/size.
-- [#151](https://github.com/Dimash313/FileShape/pull/151) / #147: privacy-safe API route tracing.
-- [#156](https://github.com/Dimash313/FileShape/pull/156) / #155: concurrency-safe queue free-slot admission; isolated local model and tests, CI still blocked.
-- [#164](https://github.com/Dimash313/FileShape/pull/164) / #163: current bounded worker output.
-- PR #87 capability manifest overlaps stacked #107; #108 PDF merge and #109 ZIP create remain unmerged stack dependencies. Each branch has its own STATUS edit; reconcile GitHub Issues/PRs, never blindly overwrite.
-
-## Next
-
-1. Restore hosted Actions runner (#101) and verify full exact-head CI plus Docker and genuine regression tests before merge.
-2. Independently review #164 stdout cap, FIFO input/backpressure, timeout/cancellation and process-tree cleanup; rerun with full `api.worker` and Python 3.12.
-3. Reconcile dependent branches and STATUS during integration. No public HTTP ZIP-extract route or native website/app implementations in this track yet.
+Never treat unmerged changes as active `main` features. Each branch modifies this STATUS file; reconcile handoff changes at integration rather than overwriting. No production/10-of-10 claim until full system smoke and reviews.
