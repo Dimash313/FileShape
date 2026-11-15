@@ -95,6 +95,26 @@ async def _communicate_bounded(proc, data: bytes) -> bytes:
         await asyncio.gather(reader, writer, return_exceptions=True)
 
 
+async def _reap_worker(proc) -> None:
+    """Finish child reaping even when the caller is cancelled repeatedly.
+
+    A single shield() protects the wait *task*, not the outer caller:
+    a second cancellation still interrupts an awaiting run_worker().
+    Keep a strong reference to the wait task until it is complete and do
+    not swallow a cancellation that arrived during cleanup.
+    """
+    waiter = asyncio.create_task(proc.wait())
+    cancelled = False
+    while not waiter.done():
+        try:
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            cancelled = True
+    await waiter
+    if cancelled:
+        raise asyncio.CancelledError()
+
+
 async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> dict:
     """Run one operation; kill and reap the worker on timeout or cancellation."""
     if timeout <= 0:
@@ -140,6 +160,5 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
         elif proc.returncode is None:
             proc.kill()
         if proc.returncode is None:
-            # Reap after cancellation without allowing a second cancellation
-            # to abandon the subprocess.
-            await asyncio.shield(proc.wait())
+            # Repeated cancellation must not end cleanup ahead of process reap.
+            await _reap_worker(proc)
