@@ -58,6 +58,7 @@ def _pinned_audio_source(source: Path):
     finally:
         os.close(fd)
 
+
 def _program(name: str) -> str:
     location = shutil.which(name)
     if not location:
