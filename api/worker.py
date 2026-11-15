@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 from services.upload_validation import validate_upload
-from services.image_bundle import images_to_pdf
+from services.image_module import image_module
 
 
 def execute(request: dict) -> dict:
@@ -30,7 +30,7 @@ def execute(request: dict) -> dict:
         for path, suffix in zip(paths, request["suffixes"]):
             validate_upload(path, suffix)
         target = work / "fileshape_photos.pdf"
-        images_to_pdf(paths, target)
+        image_module.bundle_as_pdf(paths, target)
     else:
         raise ValueError("Недопустимая операция")
     if not target.is_file() or target.stat().st_size == 0:
