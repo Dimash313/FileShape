@@ -28,6 +28,7 @@ from starlette.background import BackgroundTask
 
 from api.artifacts import ArtifactStore, ArtifactUnavailable
 from api.conversion_catalog import IMAGE_EXTENSIONS, SUPPORTED, file_kind
+from api.capability_manifest import build_http_capabilities
 from api.background_jobs import BackgroundJobs
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
@@ -505,6 +506,15 @@ async def internal_campaign_join(
 @api.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@api.get("/api/v1/capabilities")
+async def public_capabilities():
+    """Advertise only implemented single-file HTTP actions; never an auth gate."""
+    result = build_http_capabilities()
+    result["max_upload_bytes"] = MAX_INPUT_BYTES
+    result["max_result_bytes"] = MAX_RESULT_BYTES
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @api.get("/ready")
