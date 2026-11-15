@@ -19,6 +19,7 @@
     "src/telegram.ts",
     "src/campaignsApi.ts",
     "src/toolCatalog.ts",
-    "src/filePreflight.ts"
+    "src/filePreflight.ts",
+    "src/transferPresentation.ts"
   ]
 }

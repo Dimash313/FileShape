@@ -10,6 +10,7 @@ import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } 
 import { initTelegram, tapFeedback, telegramInitData } from './telegram';
 import { activeTools, acceptForTool, type SingleFileToolKey, type ToolKey } from './toolCatalog';
 import { batchImageSelectionError, singleFileSelectionError } from './filePreflight';
+import { describeTransfer } from './transferPresentation';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
 import type { QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
@@ -56,14 +57,19 @@ function fileCategory(file: File) {
 }
 
 function ProgressIndicator({ progress }: { progress: UploadProgress }) {
+  const view = describeTransfer(progress);
   return <div className="transfer-status" role="status" aria-live="polite">
     <div className="transfer-label">
-      <span>{progress.stage === 'upload' ? 'Загрузка файла' : progress.stage === 'validation' ? 'Проверка файла сервером' : 'Ожидание или обработка'}</span>
-      <strong>{progress.stage === 'upload' && progress.percent !== null ? progress.percent + '%' : '…'}</strong>
+      <span>{view.label}</span>
+      <strong aria-hidden="true">{view.uploadPercent === null ? '…' : view.uploadPercent + '%'}</strong>
     </div>
-    {progress.stage === 'upload' && progress.percent !== null
-      ? <div className="transfer-track" role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: progress.percent + '%' }} /></div>
-      : <div className="transfer-wait">{progress.stage === 'upload' ? 'Передаём файл на сервер…' : 'Файл загружен. Дождись подтверждения сервера.'}</div>}
+    {view.uploadPercent !== null
+      ? <div className="transfer-track" role="progressbar" aria-label="Загрузка файла на сервер"
+          aria-valuenow={view.uploadPercent} aria-valuemin={0} aria-valuemax={100}
+          aria-valuetext={view.uploadValueText ?? undefined}>
+          <div style={{ width: view.uploadPercent + '%' }} />
+        </div>
+      : <div className="transfer-wait">{view.detail}</div>}
   </div>;
 }
 
