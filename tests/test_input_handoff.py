@@ -64,7 +64,7 @@ class InputHandoffTests(unittest.TestCase):
                 OWNER, env.job_id, env.input_ref, now=self.now + 1,
             ), PDF)
             self.assertEqual(dispatch.usage_snapshot(OWNER, now=self.now)["daily_used"], 1)
-            lease = dispatch.claim_next(now=self.now + 1)
+            lease = dispatch.claim_next(blobs, now=self.now + 1)
             self.assertEqual(lease.envelope, env)
             candidate = blobs.stage_candidate(
                 OWNER, env.job_id, b"result content", now=self.now + 2,
@@ -79,7 +79,7 @@ class InputHandoffTests(unittest.TestCase):
         with IntakeDispatchStore(self.db_path) as dispatch, \
                 PrivateBlobStore(self.blob_root) as blobs:
             env = self.simulate_partial_admission(dispatch, blobs)
-            self.assertIsNone(dispatch.claim_next(now=self.now + 1))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 1))
             self.assertEqual(dispatch.pending_inputs(), [(OWNER, env)])
             self.assertEqual(dispatch.usage_snapshot(OWNER, now=self.now + 1)["daily_used"], 1)
         with IntakeDispatchStore(self.db_path) as dispatch, \
@@ -90,7 +90,7 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(blobs.read_input(
                 OWNER, env.job_id, env.input_ref, now=self.now + 3,
             ), PDF)
-            self.assertEqual(dispatch.claim_next(now=self.now + 3).envelope, env)
+            self.assertEqual(dispatch.claim_next(blobs, now=self.now + 3).envelope, env)
             self.assertEqual(InputHandoff(dispatch, blobs).recover(
                 now=self.now + 4,
             ).examined, 0)
@@ -100,10 +100,10 @@ class InputHandoffTests(unittest.TestCase):
                 PrivateBlobStore(self.blob_root) as blobs:
             env = self.simulate_partial_admission(dispatch, blobs)
             self.assertTrue(blobs.bind_input(OWNER, env.job_id, env.input_ref, now=self.now))
-            self.assertIsNone(dispatch.claim_next(now=self.now + 1))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 1))
             report = InputHandoff(dispatch, blobs).recover(now=self.now + 2)
             self.assertEqual(report.made_ready, 1)
-            self.assertEqual(dispatch.claim_next(now=self.now + 3).envelope, env)
+            self.assertEqual(dispatch.claim_next(blobs, now=self.now + 3).envelope, env)
 
     def test_duplicate_submissions_create_one_accepted_job(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
@@ -126,7 +126,7 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(blobs._db.execute(
                 "SELECT COUNT(*) FROM staged_blobs",
             ).fetchone()[0], 1)
-            lease = dispatch.claim_next(now=self.now + 1)
+            lease = dispatch.claim_next(blobs, now=self.now + 1)
             repeated, created = self.submit(intake)
             self.assertFalse(created)
             self.assertEqual(repeated, original)
@@ -172,7 +172,7 @@ class InputHandoffTests(unittest.TestCase):
             result = InputHandoff(dispatch, blobs).recover(now=self.now + 2)
             self.assertEqual(result.suspected, 1)
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "suspect")
-            self.assertIsNone(dispatch.claim_next(now=self.now + 3))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 3))
             result = InputHandoff(dispatch, blobs).recover(now=self.now + 34)
             self.assertEqual(result.needs_review, 1)
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "review")
@@ -186,7 +186,7 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(blobs._db.execute(
                 "SELECT owner_id FROM staged_blobs WHERE ref=?", (foreign,),
             ).fetchone()[0], OTHER)
-            self.assertIsNone(dispatch.claim_next(now=self.now + 36))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 36))
             with self.assertRaises((JobNotFound, JobStateError)):
                 dispatch.fail_reviewed_input(OWNER, env.job_id, blobs, now=self.now + 36)
 
@@ -199,14 +199,14 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(InputHandoff(dispatch, blobs).recover(
                 now=self.now + 2,
             ).suspected, 1)
-            self.assertIsNone(dispatch.claim_next(now=self.now + 3))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 3))
             path.write_bytes(PDF)
             path.chmod(0o600)
             self.assertEqual(InputHandoff(dispatch, blobs).recover(
                 now=self.now + 40,
             ).made_ready, 1)
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "ready")
-            self.assertEqual(dispatch.claim_next(now=self.now + 41).envelope, env)
+            self.assertEqual(dispatch.claim_next(blobs, now=self.now + 41).envelope, env)
 
     def test_operator_review_refuses_failure_if_input_recovered(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
@@ -224,7 +224,7 @@ class InputHandoffTests(unittest.TestCase):
             ))
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "ready")
             self.assertEqual(dispatch.get(env.job_id, OWNER).state, "queued")
-            self.assertEqual(dispatch.claim_next(now=self.now + 46).envelope, env)
+            self.assertEqual(dispatch.claim_next(blobs, now=self.now + 46).envelope, env)
 
     def test_cancelled_handoff_not_resurrected(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
@@ -238,7 +238,7 @@ class InputHandoffTests(unittest.TestCase):
                 dispatch.mark_input_ready(
                     OWNER, env.job_id, env.input_ref, blobs, now=self.now + 3,
                 )
-            self.assertIsNone(dispatch.claim_next(now=self.now + 4))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 4))
             self.assertEqual(dispatch.usage_snapshot(OWNER, now=self.now + 4)["daily_used"], 0)
 
     def test_concurrent_claims_and_recovery_are_isolated(self):
@@ -249,7 +249,7 @@ class InputHandoffTests(unittest.TestCase):
             # Multiple workers see no work before readiness.
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(
-                    lambda x: x.claim_next(now=self.now + 1),
+                    lambda x: x.claim_next(blobs, now=self.now + 1),
                     (one, two),
                 ))
             self.assertEqual(results, [None, None])
@@ -262,7 +262,7 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(one.input_status(OWNER, env.job_id)[1], 'ready')
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(
-                    lambda x: x.claim_next(now=self.now + 3),
+                    lambda x: x.claim_next(blobs, now=self.now + 3),
                     (one, two),
                 ))
             claimed = [x for x in results if x is not None]
@@ -281,13 +281,13 @@ class InputHandoffTests(unittest.TestCase):
             self.assertTrue(created)
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "ready")
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[3], self.now + 5)
-            self.assertIsNone(dispatch.claim_next(now=self.now + 6))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 6))
             first = InputHandoff(dispatch, blobs).recover(now=self.now + 7)
             self.assertEqual(first.suspected, 1)
             self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "suspect")
             second = InputHandoff(dispatch, blobs).recover(now=self.now + 40)
             self.assertEqual(second.needs_review, 1)
-            self.assertIsNone(dispatch.claim_next(now=self.now + 41))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 41))
             self.assertTrue(dispatch.fail_reviewed_input(
                 OWNER, env.job_id, blobs, now=self.now + 42,
             ))
@@ -339,4 +339,4 @@ class InputHandoffTests(unittest.TestCase):
                     InputHandoff(dispatch, blobs).recover(
                         now=self.now, review_after_seconds=interval,
                     )
-            self.assertIsNone(dispatch.claim_next(now=self.now + 1))
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 1))
