@@ -25,3 +25,5 @@ Verification:
 
 Next unblocked task: NONE claimed. Candidate: tab heading/focus announcement and responsive keyboard QA, but older #46 already addresses skip-link/heading-focus behavior, so coordinate/review #46 before duplicating it. Prefer stabilizing the stacked PR chain / restoring CI before adding more dependent UX features.
 Risk/cross-track coordination: multiple unmerged stacked drafts, #46 App.tsx overlap, #101 runner allocation. No cross-track API decision required for this presentation-only fix.
+
+Integration checkpoint: two-parent merge of Draft #145 incorporated the single-file picker cancellation fix and its regression test into this branch. Exact-head CI and mobile tests remain blocked/unverified under #101; do not merge until real green checks.
