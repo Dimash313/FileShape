@@ -31,8 +31,8 @@ MAX_TEXT_CHARS = 700_000
 MAX_TEXT_LINES = 5_000
 
 
-def validate_docx(source: Path) -> None:
-    """Reject oversized or ambiguous Office ZIP packages before XML parsing."""
+def validate_docx(source: Path | BinaryIO) -> None:
+    """Reject unsafe DOCX ZIP parts from a path or an already-open stream."""
     try:
         with zipfile.ZipFile(source) as archive:
             entries = archive.infolist()
@@ -147,15 +147,21 @@ def _preflight_docx_tables(document) -> None:
 
 
 def read_docx_text(source: Path) -> tuple[str, dict]:
-    validate_docx(source)
-    try:
-        document = Document(str(source))
-    except (XMLSyntaxError, InvalidXmlError, PackageNotFoundError,
-            zipfile.BadZipFile, zipfile.LargeZipFile,
-            KeyError, ValueError):
-        # The archive passed size/path checks but its OOXML is malformed.
-        # Do not expose parser output or private input paths to callers.
-        raise ValueError("Повреждённый DOCX") from None
+    # Pin a single descriptor: validating a pathname and then reopening it
+    # for parsing allows atomic pathname replacement to bypass ZIP checks.
+    # python-docx accepts a seekable binary stream and reads the package
+    # eagerly; the descriptor closes on all parsing or validation errors.
+    with source.open("rb") as stream:
+        validate_docx(stream)
+        stream.seek(0)
+        try:
+            document = Document(stream)
+        except (XMLSyntaxError, InvalidXmlError, PackageNotFoundError,
+                zipfile.BadZipFile, zipfile.LargeZipFile,
+                KeyError, ValueError):
+            # The archive passed size/path checks but its OOXML is malformed.
+            # Do not expose parser output or private input paths to callers.
+            raise ValueError("Повреждённый DOCX") from None
     _preflight_docx_tables(document)
     parts = []
     paragraphs = 0
