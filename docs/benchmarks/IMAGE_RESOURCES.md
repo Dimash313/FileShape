@@ -56,3 +56,18 @@ This is **not a production memory budget**: synthetic images compress unusually 
 - Run typical and near-cap with several repetitions in the deployment-equivalent worker/container; record host CPU, memory ceiling, Python/Pillow versions, elapsed p50/p95 and peak RSS across repetitions. **No deployment-equivalent repeated near-cap results are established by the CI baseline or the local exploratory measurements.**
 - Verify cancellation, process timeouts, per-owner resource scheduling, and cross-format workloads under production-like concurrency before raising image limits or claiming 10/10 resource readiness.
 - Deployment behavior, platform parity, billing and owner-scoped transport security are separate checks; this benchmark neither enables nor asserts them.
+
+
+## Eager release of transient PDF page buffers — Issue #186
+
+**Local exploratory A/B comparison, not deployed or exact GitHub checkout.** Both cases used the same existing `run_local_bench.py` diagnostic script, identical generated single-color PNG/WebP/JPEG input profiles, three *fresh subprocesses* per profile, Linux Python 3.13.5, Pillow 12.3.0, pypdf 5.9.0 and 1,024 MiB child RLIMIT_AS. The only intended domain change in the manually reconstructed optimized copy was `services/image_bundle.py`: close each decoded original and temporary RGBA buffer as soon as the completed RGB PDF page is prepared, retaining only the final RGB page buffers until encoding. Original implementation is the parent of [Issue #186](https://github.com/Dimash313/FileShape/issues/186).
+
+| Synthetic profile | Pixels / batch | Old absolute peak RSS, three runs (MiB) | New absolute peak RSS, three runs (MiB) |
+| --- | ---: | --- | --- |
+| Typical, 3 images | 1,478,400 | 114.688 / 114.633 / 114.633 | 105.512 / 105.582 / 105.660 |
+| Near-cap, 6 images | 19,440,000 | 306.887 / 306.883 / 306.887 | 195.891 / 195.934 / 195.891 |
+
+The near-cap **median** absolute child-process peak was **306.887 → 195.891 MiB (~36.2% lower)** in this synthetic local environment; the typical median dropped from **114.633 → 105.582 MiB (~7.9% lower)**. Each invocation produced the same PDF page count and output byte size before/after (2,920 etc. are unrelated smoke numbers; this A/B comparison used a 313,671-byte near-cap PDF and 27,002-byte typical PDF). Output identity/format and error cleanup still require full regression tests and exact-head GitHub Actions.
+
+The measured peaks include Python and Pillow imports. Child CPU and wall times were noisy between batches and are **not** used to claim throughput improvement. Synthetic solid-color files may decode/encode differently from typical user images; results are not proof of safe concurrency or a production RSS ceiling. Confirm with the exact GitHub PR checkout, real worker image and diverse safe test fixtures before changing actual workload limits. Shared concurrency policy remains with API/security [Issue #177](https://github.com/Dimash313/FileShape/issues/177).
+
