@@ -139,6 +139,27 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(repeated, original)
             self.assertEqual(dispatch.usage_snapshot(OWNER, now=self.now + 3)["daily_used"], 0)
 
+    def test_identical_replay_succeeds_when_blob_store_is_full(self):
+        with IntakeDispatchStore(self.db_path) as dispatch, \
+                PrivateBlobStore(
+                    self.blob_root,
+                    max_bytes=len(PDF), max_blob_bytes=len(PDF),
+                ) as blobs:
+            intake = InputHandoff(dispatch, blobs)
+            original, created = self.submit(intake)
+            self.assertTrue(created)
+            # No spare storage remains for a second identical file. An
+            # accepted idempotent replay should not allocate one.
+            replay, was_created = self.submit(intake)
+            self.assertFalse(was_created)
+            self.assertEqual(replay, original)
+            self.assertEqual(blobs._db.execute(
+                "SELECT COUNT(*), SUM(byte_count) FROM staged_blobs",
+            ).fetchone(), (1, len(PDF)))
+            self.assertEqual(dispatch.usage_snapshot(
+                OWNER, now=self.now,
+            )["daily_used"], 1)
+
     def test_missing_foreign_input_is_never_bound_or_claimable(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
                 PrivateBlobStore(self.blob_root) as blobs:
