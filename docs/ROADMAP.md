@@ -139,3 +139,23 @@ separately tested phase. See
 [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md). No production
 readiness or successful full CI is claimed for this draft PR.
 
+
+### Phase C3 — physically separate PDF implementation (draft)
+
+The PDF parser, page-selection logic, transformation functions and limits
+are now defined only in `services/pdf_tools.py`. The typed
+`services/pdf_module.py` port calls this implementation directly.
+`services/file_tools.py` retains image operations and backwards-compatible
+PDF re-exports, so existing imports keep working.
+
+This is a mechanical code move, **not** a new user-facing feature or
+production rollout. Dedicated tests assert legacy import identity,
+standalone PDF dependencies, generated-PDF behavior and image stability.
+See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md).
+
+The next isolated phase should extract `services/image_tools.py` and
+introduce an image domain port; avoid removing legacy exports until callers
+are audited. Merge only after all required CI and representative real-file
+regressions pass. No measured speedup or complete production validation
+is claimed in this draft.
+
