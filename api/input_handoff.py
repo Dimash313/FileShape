@@ -114,21 +114,28 @@ class IntakeDispatchStore(FencedDispatchStore):
 
     @serialized
     def mark_input_ready(
-        self, owner_id: int, job_id: str, input_ref: str, *,
-        now: float | None = None,
+        self, owner_id: int, job_id: str, input_ref: str,
+        blobs: PrivateBlobStore, *, now: float | None = None,
     ) -> bool:
-        """Set ready ONLY after trusted caller checked actual bound bytes."""
+        """Check bound bytes AGAIN under the dispatch transaction before ready.
+
+        No arbitrary trusted caller may set ready just by supplying a valid
+        string. This still cannot pin local file bytes for the full lease.
+        """
         timestamp = _now(now)
         if not _valid_id(input_ref):
             raise BlobUnavailable()
+        if not isinstance(blobs, PrivateBlobStore):
+            raise TypeError("PrivateBlobStore required")
         with self._transaction():
             envelope, state, _ = self._get_queued_input(owner_id, job_id)
             if envelope.input_ref != input_ref:
                 raise BlobUnavailable()
-            if state == "ready":
-                return False
             if state == "failed":
                 raise JobStateError()
+            blobs.read_input(owner_id, job_id, input_ref, now=timestamp)
+            if state == "ready":
+                return False
             self._db.execute(
                 """INSERT INTO input_handoff
                    (job_id,state,first_missing_at,updated_at)
@@ -380,7 +387,8 @@ class InputHandoff:
                 now=timestamp, review_after_seconds=review_after_seconds,
             )
         self.dispatch.mark_input_ready(
-            owner_id, envelope.job_id, envelope.input_ref, now=timestamp,
+            owner_id, envelope.job_id, envelope.input_ref,
+            self.blobs, now=timestamp,
         )
         return "ready"
 
