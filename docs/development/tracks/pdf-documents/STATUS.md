@@ -1,24 +1,25 @@
 # PDF & documents — GitHub-first handoff
 
 Updated: 2026-11-15 UTC. Track: `pdf-documents`.
-Current Issue: [#150 — cap vertical merge recursion](https://github.com/Dimash313/FileShape/issues/150).
-Active PR: [#154](https://github.com/Dimash313/FileShape/pull/154) **DRAFT**, head `pdf-documents/150-vertical-merge-guard`, base `pdf-documents/140-bounded-tables` ([PR #146](https://github.com/Dimash313/FileShape/pull/146)).
-Code/tests commit before status edit: `e98913d348de7e5dbc16ae84d5699a350a25fb25`. This STATUS edit advances the branch SHA. Verify the true final head via GitHub.
+Current Issue: [#157 — count nested DOCX tables against resource limits](https://github.com/Dimash313/FileShape/issues/157).
+Active PR: [#160](https://github.com/Dimash313/FileShape/pull/160) **DRAFT**. Branch `pdf-documents/157-nested-table-quotas`; base `pdf-documents/150-vertical-merge-guard` ([PR #154](https://github.com/Dimash313/FileShape/pull/154)).
+Code+test commit before status edit: `6588439621fd0bbac88fcbf26f48cd36a25b8ba3`. This status commit advances the branch head; always query GitHub for the final exact head SHA.
 
-## Implemented on unmerged, dependent branches
-- [PR #125](https://github.com/Dimash313/FileShape/pull/125) / [#119](https://github.com/Dimash313/FileShape/issues/119): reject dangerous/ambiguous DOCX ZIP member paths, duplicates and symlinks. Stacked on docs [PR #112](https://github.com/Dimash313/FileShape/pull/112) and architecture chain.
-- [PR #130](https://github.com/Dimash313/FileShape/pull/130) / [#129](https://github.com/Dimash313/FileShape/issues/129): normalize known malformed OOXML parse exceptions to a stable `ValueError`.
-- [PR #146](https://github.com/Dimash313/FileShape/pull/146) / [#140](https://github.com/Dimash313/FileShape/issues/140): bound total table rows, expanded grid cells, row grid width and incremental text length before constructing text; preflight `w:gridSpan`.
-- **[PR #154](https://github.com/Dimash313/FileShape/pull/154) / [#150](https://github.com/Dimash313/FileShape/issues/150):** limit vertical merge chains to 128 rows and validate previous row's cell span/column offset before `row.cells` recursively resolves `w:vMerge=continue`. A 1,100-row DOCX previously passed row/cell limits but raised `RecursionError` after ~24 seconds. New `tests/test_docx_vertical_merges.py` has eight real-document tests, including normal merged output, orphan/mismatched continuations and skipped grid columns.
+## Implemented only in unmerged Draft PRs
+- [#125](https://github.com/Dimash313/FileShape/pull/125) / Issue [#119](https://github.com/Dimash313/FileShape/issues/119): reject unsafe/ambiguous DOCX ZIP parts, duplicate names and symlinks.
+- [#130](https://github.com/Dimash313/FileShape/pull/130) / Issue [#129](https://github.com/Dimash313/FileShape/issues/129): normalize corrupt OOXML parser exceptions without revealing internal paths.
+- [#146](https://github.com/Dimash313/FileShape/pull/146) / Issue [#140](https://github.com/Dimash313/FileShape/issues/140): bound 5,000 top-level table rows / 20,000 expanded grid cells / 64 grid cells per row and incrementally check text length.
+- [#154](https://github.com/Dimash313/FileShape/pull/154) / Issue [#150](https://github.com/Dimash313/FileShape/issues/150): bound vertical `w:vMerge` chains and check predecessor spans before recursive `row.cells` expansion.
+- **[#160](https://github.com/Dimash313/FileShape/pull/160) / Issue [#157](https://github.com/Dimash313/FileShape/issues/157)**: new `_preflight_docx_tables` walks all body `w:tbl` nodes, including nested tables, before calling `row.cells`. It counts cumulative rows and expanded cells across nesting, preflights nested `w:gridSpan` and row widths, adds `MAX_DOCX_TABLES=200` and `MAX_DOCX_NESTING_DEPTH=8`. New `tests/test_docx_nested_table_limits.py` contains eight generated DOCX scenarios. Accepted plaintext output remains as before: inner table text is not exported.
 
-## Verification and remaining limits
-- **Executed locally on isolated DOCX subset (not full repository):** `python -m compileall -q services tests` passed; `python -m unittest discover -s tests -v` passed **25/25 tests** (8 new + 17 earlier DOCX tests) with python-docx 1.2.0/Python 3.13. The source SHA `8546a4426652d44b8ecbb57cb407da422edbf01d` and test SHA `d2ad9acc70d7c05a2d43bb5c7fcad0d677669e5b` matched GitHub blob hashes byte-for-byte. These checks do **not** establish production readiness.
-- **NOT EXECUTED:** complete exact-head Python suite, Mini App Node tests/typecheck/build, Docker image/build, live Telegram bot/API and load testing.
-- GitHub Actions pre-runner blocking [Issue #101](https://github.com/Dimash313/FileShape/issues/101) persists. A zero-step failure is not an executed check. Leave all PRs draft; do not merge without reviewed exact-head green CI and post-merge main push workflow.
-- Deep XML parsing and arbitrary OOXML body elements still occur before the table-domain guards; worker-level memory/CPU/time limits remain essential. Very long but otherwise valid >128-row vertical merges are intentionally rejected.
-- All domain changes preserve existing accepted DOCX/TXT action interfaces, quota/auth, filenames and text-format semantics; no new dependencies or media, payments, ads, imagery or third parties.
+## Verification / blockers
+- **Executed:** local isolated functional probe (python-docx 1.2.0), using real generated DOCX fixtures and the same preflight algorithm, passed **8/8** case categories. This was **not** an exact full GitHub checkout, and **did not** execute the new committed unittest module directly. No claim of full suite/test completion.
+- **NOT EXECUTED on exact head:** full Python unittest suite, Mini App Node tests/typecheck/build, Docker, bot/API integration, throughput or load/memory tests. Domain fixture tests in GitHub must run after CI runners recover.
+- [GitHub Actions CI blocker #101](https://github.com/Dimash313/FileShape/issues/101) has pre-runner zero-step failures; do not count these as passing. Retain Draft, do not merge until exact-head checks **run and pass**, review is complete and merged-main push CI passes.
+- Parser and XML allocation happen before table preflight; worker/host resource isolation and upload/ZIP bounds are still required. New caps can intentionally reject previously accepted very deeply nested tables; performance not benchmarked.
+- No shared HTTP/auth/quota/worker code modified; security-owned contract coordination remains required for cross-client behavior changes. No new dependencies or prohibited content.
 
-## Integration and next work
-1. Integrate architecture/ZIP/docs parents → [#112](https://github.com/Dimash313/FileShape/pull/112) → #125 → #130 → #146 → #154 after verified CI and security review; recheck file overlaps and final head SHAs.
-2. Do not duplicate PDF regression [PR #114](https://github.com/Dimash313/FileShape/pull/114) or HTTP PDF merge [PR #108](https://github.com/Dimash313/FileShape/pull/108). API/security owns shared request/worker/auth/quotas; coordinate changes there.
-3. Prioritize exact-head full CI, representative DOCX performance measurements, XML/OPC parsing error taxonomy and nested-table resource limits. Open an Issue only for a reproduced gap without an owner PR; no speculative performance promises.
+## Integration / next work
+1. Required parent chain: architecture/docs [PR #112](https://github.com/Dimash313/FileShape/pull/112) → #125 → #130 → #146 → #154 → #160. All are unmerged Draft; preserve dependency order, recheck current GitHub statuses and merge only on verified CI.
+2. Existing PDF work belongs to [#114](https://github.com/Dimash313/FileShape/pull/114) (malformed/encrypted/size regressions) and [#108](https://github.com/Dimash313/FileShape/pull/108) (HTTP PDF merge). Do not duplicate or alter their shared API contracts.
+3. Next: run new tests on the exact GitHub checkout and full repo when runner issue #101 is resolved; inspect nested-table text semantics separately (no fidelity change in #160), profile bounded OOXML parser resource behavior on representative documents and open independent Issues only for confirmed gaps.
