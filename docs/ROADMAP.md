@@ -238,3 +238,23 @@ blocked before runner allocation (issue #101); this PR must stay draft
 until exact-head tests, Mini App checks and Docker all actually execute
 successfully.
 
+
+### Phase E1 — ZIP archive contract and shared API inspection (draft)
+
+Created `services/archive_module.py`: a typed in-process port for
+ZIP inspect, safe extract and bounded create. API `zip:list` uses
+the port, preserving the public action and result format. Existing
+Telegram archive callbacks retain their original service imports
+until a separate handler migration (E2). No new ZIP API endpoints,
+allowed actions, formats, limits, payments or dependencies.
+
+Regression tests include original ZIP paths, duplicate filenames,
+real archive roundtrip, malicious member names/symlinks, decompression
+limits and unchanged cross-format dispatch. The existing
+`services.archive_tools` implementation is unchanged.
+
+The required complete GitHub Actions CI is currently blocked before
+runner assignment (issue #101). All affected PRs stay draft pending
+exact-head full Python, Mini App and Docker checks and real-file
+smoke testing. No readiness or guaranteed absence of bugs is claimed.
+
