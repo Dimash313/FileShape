@@ -7,7 +7,7 @@ remain in the calling application layers.
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from services import image_tools
+from services import image_tools, image_bundle
 
 
 @runtime_checkable
@@ -18,6 +18,8 @@ class ImageModulePort(Protocol):
 
     def compress(self, source: Path, target: Path) -> None: ...
 
+    def bundle_as_pdf(self, sources: list[Path], target: Path) -> int: ...
+
 
 class ExistingImageModule:
     """Compatibility adapter preserving existing image conversion behavior."""
@@ -27,6 +29,9 @@ class ExistingImageModule:
 
     def compress(self, source: Path, target: Path) -> None:
         return image_tools.compress_image(source, target)
+
+    def bundle_as_pdf(self, sources: list[Path], target: Path) -> int:
+        return image_bundle.images_to_pdf(sources, target)
 
 
 image_module: ImageModulePort = ExistingImageModule()
