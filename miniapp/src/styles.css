@@ -545,3 +545,35 @@ h1 {
 .usage-profile .usage-reset{display:flex;align-items:center;gap:7px;font-size:11px;line-height:1.5;color:var(--text-secondary);margin:0}
 .usage-profile .usage-error{font-size:12px;line-height:1.55;border:1px solid #777;background:#282828;color:#f1f1f1;padding:12px;margin:0;border-radius:10px}
 @media(max-width:350px){.usage-grid{grid-template-columns:1fr}.usage-heading{align-items:flex-start;flex-wrap:wrap}}
+
+
+/* Interfaces UX: 44px touch targets for small-screen Telegram WebViews (#139). */
+/* Keep visual icon dimensions compact while expanding the actual click areas. */
+.icon-button {
+  width: 44px;
+  height: 44px;
+}
+.notice {
+  overflow-wrap: anywhere;
+}
+.notice button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+.text-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 9px 8px;
+}
+.page-presets-row button,
+.pdf-bulk-actions button,
+.pdf-grid-navigation button,
+.job-check,
+.usage-heading button {
+  min-height: 44px;
+}
+.batch-row button {
+  min-width: 44px;
+  min-height: 44px;
+}
