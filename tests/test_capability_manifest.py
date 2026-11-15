@@ -39,28 +39,36 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertNotIn("docx:pdf", all_actions)
         self.assertNotIn("zip:extract", all_actions)
 
-    def test_batch_manifest_is_real_route_and_not_single_file_action(self):
+    def test_batch_manifest_lists_only_real_image_pdf_and_merge_routes(self):
         from services.image_bundle import MIN_IMAGES, MAX_IMAGES
+        from services.pdf_tools import MAX_MERGE_FILES
+
         manifest = build_http_capabilities()
-        self.assertEqual(len(manifest["batch_operations"]), 1)
-        batch = manifest["batch_operations"][0]
-        self.assertEqual(batch["route"], "/api/v1/images/pdf")
-        self.assertEqual(batch["method"], "POST")
-        self.assertEqual(batch["input_kind"], "image")
-        self.assertEqual(batch["input_extensions"], sorted(conversion_catalog.IMAGE_EXTENSIONS))
-        self.assertEqual(batch["min_files"], MIN_IMAGES)
-        self.assertEqual(batch["max_files"], MAX_IMAGES)
-        self.assertEqual(batch["output_extension"], ".pdf")
-        self.assertTrue(any(
-            route.path == batch["route"] and "POST" in route.methods
-            for route in server.api.routes
-        ))
-        self.assertFalse(any(
-            batch["route"] in entry["actions"] for entry in manifest["operations"]
-        ))
-        self.assertEqual(
-            set(conversion_catalog.SUPPORTED["archive"]), {"zip:list"},
-        )
+        self.assertEqual(len(manifest["batch_operations"]), 2)
+        listed = {batch["route"]: batch for batch in manifest["batch_operations"]}
+        self.assertEqual(set(listed), {"/api/v1/images/pdf", "/api/v1/pdf/merge"})
+        image = listed["/api/v1/images/pdf"]
+        self.assertEqual(image["method"], "POST")
+        self.assertEqual(image["input_kind"], "image")
+        self.assertEqual(image["input_extensions"], sorted(conversion_catalog.IMAGE_EXTENSIONS))
+        self.assertEqual((image["min_files"], image["max_files"]), (MIN_IMAGES, MAX_IMAGES))
+        self.assertEqual(image["output_extension"], ".pdf")
+        merge = listed["/api/v1/pdf/merge"]
+        self.assertEqual(merge["method"], "POST")
+        self.assertEqual(merge["input_kind"], "pdf")
+        self.assertEqual(merge["input_extensions"], [".pdf"])
+        self.assertEqual((merge["min_files"], merge["max_files"]), (2, MAX_MERGE_FILES))
+        self.assertEqual(merge["output_extension"], ".pdf")
+        for batch in manifest["batch_operations"]:
+            self.assertTrue(any(
+                route.path == batch["route"] and batch["method"] in route.methods
+                for route in server.api.routes
+            ))
+            self.assertFalse(any(
+                batch["route"] in entry["actions"] for entry in manifest["operations"]
+            ))
+        self.assertEqual(conversion_catalog.SUPPORTED["archive"], {"zip:list"})
+        self.assertNotIn("pdf:merge", conversion_catalog.SUPPORTED["pdf"])
 
     def test_unsupported_bot_only_tools_are_not_listed_in_http_capabilities(self):
         manifest = build_http_capabilities()
@@ -98,7 +106,10 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(body["schema_version"], 1)
         self.assertEqual(body["max_upload_bytes"], server.MAX_INPUT_BYTES)
         self.assertEqual(body["max_result_bytes"], server.MAX_RESULT_BYTES)
-        self.assertEqual(body["batch_operations"][0]["max_total_upload_bytes"], server.MAX_INPUT_BYTES)
+        self.assertTrue(all(
+            batch["max_total_upload_bytes"] == server.MAX_INPUT_BYTES
+            for batch in body["batch_operations"]
+        ))
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertNotIn("user_id", response.body.decode())
         self.assertNotIn("bot_token", response.body.decode())
@@ -120,7 +131,10 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(result.json()["route"], "/api/v1/convert")
         self.assertEqual(result.headers["cache-control"], "no-store")
         self.assertEqual(result.headers["x-content-type-options"], "nosniff")
-        self.assertEqual(result.json()["batch_operations"][0]["route"], "/api/v1/images/pdf")
+        self.assertEqual(
+            {batch["route"] for batch in result.json()["batch_operations"]},
+            {"/api/v1/images/pdf", "/api/v1/pdf/merge"},
+        )
 
 
 if __name__ == "__main__":
