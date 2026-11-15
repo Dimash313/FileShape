@@ -249,6 +249,32 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(claimed[0].envelope, env)
             self.assertEqual(one.usage_snapshot(OWNER, now=self.now + 3)["daily_used"], 1)
 
+    def test_expired_ready_input_cannot_be_claimed_and_enters_review(self):
+        with IntakeDispatchStore(self.db_path) as dispatch, \
+                PrivateBlobStore(self.blob_root) as blobs:
+            env, created = InputHandoff(dispatch, blobs).submit(
+                OWNER, "a" * 64, "b" * 64, PDF,
+                action="pdf:extract", suffix=".pdf", pages="1",
+                ttl=5, now=self.now,
+            )
+            self.assertTrue(created)
+            self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "ready")
+            self.assertEqual(dispatch.input_status(OWNER, env.job_id)[3], self.now + 5)
+            self.assertIsNone(dispatch.claim_next(now=self.now + 6))
+            first = InputHandoff(dispatch, blobs).recover(now=self.now + 7)
+            self.assertEqual(first.suspected, 1)
+            self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "suspect")
+            second = InputHandoff(dispatch, blobs).recover(now=self.now + 40)
+            self.assertEqual(second.needs_review, 1)
+            self.assertIsNone(dispatch.claim_next(now=self.now + 41))
+            self.assertTrue(dispatch.fail_reviewed_input(
+                OWNER, env.job_id, blobs, now=self.now + 42,
+            ))
+            self.assertEqual(dispatch.get(env.job_id, OWNER).state, "failed")
+            self.assertEqual(dispatch.usage_snapshot(
+                OWNER, now=self.now + 42,
+            )["daily_used"], 0)
+
     def test_rejected_admission_cleans_staged_input_and_never_charges(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
                 PrivateBlobStore(self.blob_root) as blobs:
