@@ -130,6 +130,28 @@ class RealAudioJoinTests(unittest.TestCase):
                 join_audio([self.a, self.b], self.target)
         self.assertFalse(self.target.exists())
 
+    def test_rounded_durations_cannot_silently_truncate_result(self):
+        # Each file is 300.04s but the public probe returns 300.0s.
+        # Rounding would incorrectly permit 600.08s and FFmpeg -t 600
+        # would silently cut part of the last recording.
+        a = self.dir / "long_a.wav"
+        b = self.dir / "long_b.wav"
+        make_silence(a, 300.04, 8000)
+        make_silence(b, 300.04, 8000)
+        self.assertEqual(probe_audio(a)["seconds"], 300.0)
+        self.assertEqual(probe_audio(b)["seconds"], 300.0)
+
+        def probe_only(binary):
+            if binary == "ffmpeg":
+                self.fail("FFmpeg must not start for an overlong join")
+            return shutil.which(binary)
+
+        with patch("services.audio_join._program", side_effect=probe_only):
+            with self.assertRaisesRegex(ValueError, "10 минут"):
+                join_audio([a, b], self.target)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(list(self.dir.glob(".fileshape-audio-join-*")), [])
+
     def test_ffmpeg_timeout_cleans_intermediate(self):
         with patch("services.audio_join.probe_audio", return_value={
             "seconds": 1, "codec": "pcm_s16le"
