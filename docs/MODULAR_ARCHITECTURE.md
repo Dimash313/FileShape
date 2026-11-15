@@ -462,3 +462,50 @@ resource limits. No new archive types or user features until independently
 verified. This PR remains draft until its parent stack and the exact-head
 CI complete, including tests, TypeScript and Docker.
 
+
+## Phase E1 — typed ZIP archive module and API inspection (draft)
+
+The new `services/archive_module.py` defines a typed
+`ArchiveModulePort` for three bounded operations:
+
+| Domain method | Existing implementation | Current public surface |
+| --- | --- | --- |
+| `inspect(source)` | `archive_tools.inspect_zip` | API `zip:list`, bot `zip:list` |
+| `extract(source, folder)` | `archive_tools.unpack_zip` | Existing Telegram bot ZIP extract |
+| `create(inputs, target)` | `archive_tools.make_zip` | Existing Telegram bot ZIP bundle |
+
+The FastAPI `zip:list` information dispatch now uses the **port** with
+exactly the existing `{"info": {"files", "bytes", "names"}}` result.
+`zip:extract` and `zip:create` are **not** available as public
+single-file API actions: their existing Telegram interaction and batch
+constraints require separate per-client interfaces. Do not silently
+expand the API action allowlist.
+
+`services/archive_tools.py` remains the original bounded implementation.
+This work does not change archive entry/path validation, directory and
+symlink rejection, encrypted-member rejection, per-member and total
+uncompressed byte limits, compression-ratio limits, max entry count,
+max extract count, safe result basenames or ZIP duplicate-name handling.
+Archive extraction, creation and inspection paths are called only on
+trusted, per-request workspace paths. The caller still owns per-user
+authorization, quotas, Telegram upload/download, workspace cleanup,
+sending the result, and batch state machine.
+
+`tests/test_archive_module_contract.py` verifies adapter delegation,
+real archive create/inspect/extract roundtrip, duplicate filename
+handling, path traversal and symlink rejection, compression-bomb and
+count limits, invalid archive errors, exact API response shape, lack of
+cross-format dispatch and unchanged API ZIP action allowlist.
+`tests/test_format_module_boundaries.py` now guards the archive
+adapter against importing API, Telegram or accounting infrastructure.
+
+**Next step E2:** move Telegram ZIP list, extraction and ZIP-bundle
+handlers behind this same domain port, preserving quota refunds,
+order of bundled files and per-user ownership. This must be a separate
+PR with async handler regressions before the staged changes merge.
+
+**CI reality:** the GitHub Actions blocked-runner issue is tracked
+by issue #101 and the separate PR #102. All architecture PRs remain
+unmerged drafts pending actual completed Python, frontend and Docker
+checks. No positive test result or production release is claimed here.
+
