@@ -43,6 +43,15 @@ const jobStateLabels: Record<JobStatus['state'], string> = {
   failed: 'ошибка',
   cancelled: 'отменено',
 };
+// Decorative icons mirror the textual status; a missing retained blob does not
+// mean a queued, processing or failed job has completed successfully.
+const historyStateIcons: Record<JobStatus['state'], LucideIcon> = {
+  queued: Clock3,
+  processing: Clock3,
+  completed: Check,
+  failed: X,
+  cancelled: X,
+};
 const formats: { value: ImageFormat; label: string }[] = [
   { value: 'image/jpeg', label: 'JPG' },
   { value: 'image/png', label: 'PNG' },
@@ -578,7 +587,20 @@ export default function App() {
         <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
-      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + jobStateLabels[item.jobState] : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
+      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => {
+          const HistoryStateIcon = item.jobState ? historyStateIcons[item.jobState] : Check;
+          return <div className="history-item" key={item.id}>
+            <div className="tool-list-icon"><FileImage size={20}/></div>
+            <div>
+              <strong>{item.name}</strong>
+              <span>{item.format} · {item.time} · {item.jobState ? jobStateLabels[item.jobState] : 'завершено'}</span>
+              {item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}
+            </div>
+            {item.blob
+              ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button>
+              : <HistoryStateIcon size={18} aria-hidden="true" />}
+          </div>;
+        })}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
       {tab === 'profile' && <>
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
