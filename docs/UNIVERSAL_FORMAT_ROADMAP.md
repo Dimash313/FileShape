@@ -82,6 +82,34 @@ The processing system must reject unsafe inputs, archive bombs, malformed metada
 
 **Parallel track:** Telegram Stars PR #69 remains draft; enable only after verified checkout, refunds, quotas, real Telegram tests and owner approval. This document authorizes no new paid provider, hosting or purchases.
 
+## Product completeness: one studio instead of many converters
+
+**North star:** a user should complete the vast majority of common file workflows without needing a second conversion tool. This is a product goal, **not** a claim of universal compatibility. Measure top failed/unsupported intents and prioritize demand.
+
+### Core studios and expansion backlog
+
+1. **PDF Studio:** compress, merge, split, reorder, rotate, extract/delete pages, text/image extraction, safe text watermark, metadata, password handling for authorized files, forms, OCR and searchable PDF (later). Preserve digital signatures only when operation semantics allow; clearly warn when edits invalidate them.
+2. **Image Studio:** resize/crop/rotate, format/quality conversion, EXIF inspect/remove, transparency, batch, animation frame selection, ICO generation, contact sheets, color profiles where supported.
+3. **Audio Studio:** full metadata/tagging/cover art, trim, join, split, gain, normalize, playback speed, silence trimming, bitrate and channels, audio extraction from video; bounded batch editing.
+4. **Video Studio:** trim, join compatible clips, compress, resize, transcode, rotate, mute, select/extract tracks, subtitles where supported, video ↔ animated GIF/WebP, thumbnails, frame extraction.
+5. **Document Studio:** DOCX/ODT/TXT/RTF/HTML/MD/CSV/XLSX/PPTX/EPUB selected conversions, text extraction and safe previews. Do not claim full editable round-trip or pixel-perfect rendering.
+6. **Archive Studio:** ZIP/7Z/TAR and supported compressed variants, list, selective extract, safe create/recompress, integrity checks; enforce archive bomb/path/symlink limits.
+7. **Scan & OCR Studio:** camera capture in supported mobile clients, crop/perspective correction, text recognition, searchable PDF, offline/private options when feasible. Accuracy varies by script and image quality.
+8. **Developer/Data Studio:** JSON/XML/YAML/TOML/CSV/TSV formatting, validation, bounded transformations, encoding conversions, Base64 and URL encoding; prevent XML entity expansion and malicious payload processing.
+9. **Batch Workflow Studio:** multi-select, ordered input sets, per-item failure reports, bulk rename, preset actions, safe ZIP delivery, idempotent accounting. No hidden per-file charges.
+10. **File Inspector & Privacy:** detect true file type, view supported metadata/technical details, strip EXIF and sensitive tags on explicit request, calculate checksums, compare files and report safe limits.
+
+### Discoverability and retention
+- **Upload-first UX:** detect file type, present only available actions and supported outputs; display exact unsupported reasons and alternatives.
+- **Searchable tool catalog:** search by desired result (e.g., "extract audio") instead of requiring knowledge of codecs.
+- **Favorites and recent operations:** optional, privacy-scoped; avoid persistent file storage by default.
+- **Saved presets:** explicit format/quality/time-range preferences; do not store raw private content.
+- **Cross-platform parity:** one capability source for bot, Mini App, web, Android and iOS; platform-specific transport and size limits must remain visible.
+- **Measurement:** opt-in privacy-safe counts of requested tools, failure reasons, format popularity, processing latency and cost; no raw filenames or content in analytics.
+
+### Delivery principle
+Prefer **one end-to-end reliable workflow** over dozens of advertised but untested codecs. Release a small set of popular tools with real fixtures, load tests and supported transport, then expand the matrix iteratively. No third-party paid services or dependency licensing changes without owner approval.
+
 ## Definition of done for every format adapter
 - Document exact input/output pair and limits; test invalid/malicious files, corruption, cancellation, restart and owner isolation.
 - Prove output format, readable result, metadata preservation where promised, and no silent quality degradation claim.
