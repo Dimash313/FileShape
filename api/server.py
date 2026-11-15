@@ -46,7 +46,8 @@ from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
 from api.workspaces import Workspace, OrphanCleaner, cleanup_orphans
 from config import get_settings
-from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
+from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
+from services.audio_module import audio_module
 from services.archive_tools import inspect_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
@@ -820,7 +821,7 @@ def _info_action(source: Path, action: str) -> dict | None:
     if action == "pdf:info":
         return {"info": {"pages": pdf_page_count(source)}}
     if action == "audio:info":
-        return {"info": probe_audio(source)}
+        return {"info": audio_module.probe(source)}
     if action == "docx:info":
         _, info = read_docx_text(source)
         return {"info": info}
@@ -843,7 +844,7 @@ def _transform(source: Path, output_dir: Path, action: str, pages: str) -> Path:
     elif action.startswith("audio:"):
         fmt = action.split(":", 1)[1]
         target = output_dir / ("converted" + OUTPUT_FORMATS[fmt])
-        convert_audio(source, target, fmt)
+        audio_module.convert(source, target, fmt)
     elif action == "pdf:rotate":
         target = output_dir / "rotated.pdf"
         rotate_pdf(source, target, 90)
