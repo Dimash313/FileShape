@@ -75,3 +75,13 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 ## FileShape 5.0 — architecture rebuild (proposed; staged)
 
 Architecture migration design and mandatory invariants: [ARCHITECTURE_5.md](ARCHITECTURE_5.md). This is a **proposal**, not a deployed or benchmarked architecture. Implement contract-tested boundaries before replacing SQLite or in-process execution. Keep existing quotas, owner isolation, file cleanup and disabled Stars checkout intact. Proceed with measured phases A–F and separate PRs; do not claim 100,000 concurrent conversions without representative load tests. The earlier 4.26 premium UI milestone remains planned, with sequencing to be agreed after the architecture foundation review.
+
+## Modular update-safe architecture — phase A
+
+See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md) for independent
+per-format modules, stable cross-client contracts, compatibility and
+cross-format regression gates. The first PR adds architecture documentation
+and import-boundary regression checks for existing audio and ZIP services;
+it **does not** migrate runtime code or claim zero overhead. Refactor one
+format at a time after baseline and contract tests; do not activate new
+infrastructure or break existing entry points.
