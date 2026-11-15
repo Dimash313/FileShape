@@ -129,11 +129,11 @@ class PdfModuleContractTests(unittest.TestCase):
             source = directory / "source.png"
             with (
                 patch.object(server, "pdf_module") as pdf,
-                patch.object(server, "convert_image") as convert_image,
+                patch.object(server, "image_module") as image_module,
             ):
                 target = server._transform(source, directory, "img:PNG", "")
                 self.assertEqual(target, directory / "converted.png")
-                convert_image.assert_called_once_with(source, target, "PNG")
+                image_module.convert.assert_called_once_with(source, target, "PNG")
                 pdf.count_pages.assert_not_called()
                 pdf.extract.assert_not_called()
                 pdf.rotate.assert_not_called()
