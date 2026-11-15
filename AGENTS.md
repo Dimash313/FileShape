@@ -133,3 +133,58 @@ criteria in [QUALITY_STANDARD.md](docs/QUALITY_STANDARD.md):
 **Quality is continuous:** after release, measure real failures and user
 experience, fix regressions, and raise the bar. A claimed 10/10 without
 evidence is a violation of this standard.
+
+### Per-function and per-line engineering excellence — mandatory
+
+The 10/10 target applies **recursively**: not only to the whole product,
+screen, or feature, but to **every function, method, class, module, API,
+database migration, configuration change, test, dependency, and line of code
+changed**. Review untouched code whenever a change relies on it. Never use
+a good overall score to excuse a weak individual component.
+
+For **each implementation**, engineers and AI agents MUST:
+
+1. **Prove necessity and clarity:** choose the simplest maintainable design
+   that solves the actual user need. Avoid dead code, duplicated logic,
+   magic values, unjustified abstractions, speculative complexity, and
+   unnecessary dependencies. Naming, types, contracts and ownership must
+   be clear.
+2. **Prove correctness:** define inputs, outputs, invariants and failure
+   behavior; cover edge cases, invalid inputs, boundaries, encoding, file
+   corruption and concurrency where applicable. Never silently swallow
+   errors or fabricate results.
+3. **Prove security and privacy:** validate at trust boundaries, enforce
+   server-side identity and ownership, prevent injection/path traversal,
+   protect secrets and user files, bound CPU/memory/disk/time, and delete
+   temporary artifacts. Re-check these at the function level.
+4. **Prove robustness:** handle timeouts, retries, cancellations, stale
+   callbacks, partial failures, crash/restart and idempotency as applicable;
+   preserve backwards compatibility or document a deliberate migration.
+5. **Prove efficiency:** avoid needless downloads, conversions, memory
+   copies, blocking I/O, repeated database queries and unbounded loops;
+   measure hot paths before asserting performance improvements.
+6. **Prove testability:** add meaningful unit, integration and regression
+   tests, including negative cases; verify exact-head CI and real runtime
+   behavior where needed. Tests themselves must be deterministic, readable
+   and free of false positives.
+7. **Prove usability:** for user-visible changes, ensure discoverable
+   button-first interaction, accessibility, consistent visual states and
+   honest progress/errors. A working backend with an unusable UI is not
+   finished.
+8. **Prove maintainability:** keep modules focused, review complexity,
+   use consistent style, document non-obvious choices and update accurate
+   public docs. Remove obsolete code only with evidence that it is unused.
+9. **Prove ethical compliance:** check the permanent halal/shubuhat
+   requirements at the smallest change scope, not only at release.
+10. **Review every changed line:** no TODO placeholder masquerading as a
+    shipped feature, no knowingly broken tests, no unreviewed generated
+    code, no copy-paste implementation without understanding and checking
+    its dependencies.
+
+**Granular acceptance gate:** each PR must include a change-by-change
+quality review: affected functions/modules, risks, tests, residual gaps and
+evidence. If any changed component has a known release-blocking defect,
+fix it before merge. For lower-severity issues, track them transparently
+and do not describe that component as 10/10 until resolved. Do not claim
+that every line has been formally proven perfect; document the checks
+actually performed and what remains unverified.
