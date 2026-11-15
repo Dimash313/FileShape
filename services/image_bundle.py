@@ -64,20 +64,28 @@ def images_to_pdf(sources: list[Path], target: Path) -> int:
                 if actual_bytes > MAX_BUNDLE_BYTES:
                     raise ValueError("Общий размер фотографий превышает 20 МБ")
                 stream.seek(0)
-                image = _open_image(stream)
-                stack.callback(image.close)
-                total_pixels += image.width * image.height
-                if total_pixels > MAX_BUNDLE_PIXELS:
-                    raise ValueError("Слишком большое суммарное разрешение фотографий")
-                if image.mode in ("RGBA", "LA") or "transparency" in image.info:
-                    rgba = image.convert("RGBA")
-                    stack.callback(rgba.close)
-                    converted = Image.new("RGB", image.size, "white")
-                    converted.paste(rgba, mask=rgba.getchannel("A"))
-                else:
-                    converted = image.convert("RGB")
-                stack.callback(converted.close)
-                pages.append(converted)
+                # Retain only the completed RGB pages until PDF encoding.
+                # The decoded source and temporary RGBA copy can be released
+                # before decoding the next member. This avoids accumulating
+                # redundant high-pixel image buffers across the full batch.
+                with ExitStack() as transient:
+                    image = _open_image(stream)
+                    transient.callback(image.close)
+                    total_pixels += image.width * image.height
+                    if total_pixels > MAX_BUNDLE_PIXELS:
+                        raise ValueError("Слишком большое суммарное разрешение фотографий")
+                    if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+                        rgba = image.convert("RGBA")
+                        transient.callback(rgba.close)
+                        converted = Image.new("RGB", image.size, "white")
+                        # Register before paste: a failure during compositing
+                        # must also free the newly allocated RGB canvas.
+                        stack.callback(converted.close)
+                        converted.paste(rgba, mask=rgba.getchannel("A"))
+                    else:
+                        converted = image.convert("RGB")
+                        stack.callback(converted.close)
+                    pages.append(converted)
             # Only publish a complete PDF, preserving an existing result if
             # either the encoder or final publication fails.
             with _atomic_image_output(target) as staged:
