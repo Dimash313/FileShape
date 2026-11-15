@@ -14,6 +14,9 @@ FORMAT_MODULES = {
     "audio_adapter": ROOT / "services" / "audio_module.py",
     "pdf_adapter": ROOT / "services" / "pdf_module.py",
     "pdf_implementation": ROOT / "services" / "pdf_tools.py",
+    "image_adapter": ROOT / "services" / "image_module.py",
+    "image_implementation": ROOT / "services" / "image_tools.py",
+    "image_bundle": ROOT / "services" / "image_bundle.py",
     "archive": ROOT / "services" / "archive_tools.py",
 }
 FORBIDDEN_PREFIXES = (
