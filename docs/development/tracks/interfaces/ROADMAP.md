@@ -9,3 +9,11 @@
 5. Plan independent browser, Android and iOS UIs after their identity/session contracts are approved by API/security. Telegram bot remains first release priority.
 
 Each change is a scoped Issue/PR with UI tests, accessibility review, screenshots where appropriate, and STATUS update. Shared API or bot processing code requires coordination.
+
+
+## Current scoped work (draft; not deployed)
+
+- [#117](https://github.com/Dimash313/FileShape/issues/117) / [Draft PR #118](https://github.com/Dimash313/FileShape/pull/118): correct literal newline sequences in Telegram bot menus and result captions. Stacked on #112.
+- [#122](https://github.com/Dimash313/FileShape/issues/122) / [Draft PR #126](https://github.com/Dimash313/FileShape/pull/126): category-specific native Mini App file pickers, supported DOCX/TXT tool entry and removal of the nonworking Scanner. Stacked on #118. The browser file picker is only a hint; API remains the format/security authority.
+
+**Next candidate:** audit 320–370 px Telegram WebView layout, keyboard/screen-reader focus and file/error recovery (including zero-byte selections) in a new independent Issue after checking PR #46 and the current branch. Do not implement a website or standalone Android/iOS UI in this release. #101 remains a CI execution blocker; a Draft PR or tests written are not evidence of deployment.
