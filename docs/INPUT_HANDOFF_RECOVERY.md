@@ -90,6 +90,14 @@ is separate and must not remove unexpired active jobs.
   claim operation requires a trusted PrivateBlobStore adapter and reads
   a maximum of four candidate inputs while holding the SQLite dispatch
   write lock, so it does not perform an unbounded scan of the queue.
+  Missing/corrupt inputs are demoted from 'ready' to 'suspect' even when
+  found on an expired processing lease; otherwise the first four broken
+  leases could starve all later healthy jobs forever. A subsequent claim
+  can therefore advance to the next healthy set of queued jobs.
+  **IMPORTANT:** processing jobs with demoted inputs are deliberately not
+  auto-refunded or reissued. They require an additional authenticated,
+  lease-fenced, operator-reviewed recovery/refund path before live use;
+  the current offline recovery pass only handles queued jobs.
   The legacy dispatch prototype's API is unchanged.
 - A cancelled or failed job cannot be made ready or resumed by recovery.
 - Historic outbox rows lacking a readiness row are unclaimable when
