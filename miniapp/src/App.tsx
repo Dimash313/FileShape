@@ -75,6 +75,8 @@ function ProgressIndicator({ progress }: { progress: UploadProgress }) {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
+  const previousTabRef = useRef<Tab>('home');
+  const screenTitleRef = useRef<HTMLHeadingElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
@@ -96,6 +98,14 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => { initTelegram(); }, []);
+  // Switching the in-app section does not navigate the browser. Move focus to
+  // the new heading so keyboard and screen-reader users know which page opened.
+  // Do not steal focus on the initial render or on updates within one section.
+  useEffect(() => {
+    if (previousTabRef.current === tab) return;
+    previousTabRef.current = tab;
+    screenTitleRef.current?.focus();
+  }, [tab]);
   // Browser-only preview: never upload just to display an image.
   // Revoke object URLs whenever the file changes or the component unmounts.
   useEffect(() => {
@@ -400,8 +410,9 @@ export default function App() {
   const title = tab === 'home' ? 'Работа с файлами' : tab === 'tools' ? 'Все инструменты' : tab === 'history' ? 'История' : 'Профиль';
 
   return <div className="app-shell">
-    <input ref={inputRef} className="visually-hidden" type="file" onChange={e => acceptFile(e.target.files?.[0])} />
-    <input ref={batchInputRef} className="visually-hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+    <a className="skip-link" href="#main-content">Перейти к содержимому</a>
+    <input ref={inputRef} className="visually-hidden" type="file" tabIndex={-1} aria-hidden="true" onChange={e => acceptFile(e.target.files?.[0])} />
+    <input ref={batchInputRef} className="visually-hidden" type="file" tabIndex={-1} aria-hidden="true" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
       onChange={e => chooseBatch(Array.from(e.target.files ?? []))} />
     <header className="topbar">
       <div className="brand">
@@ -410,9 +421,9 @@ export default function App() {
       </div>
       <button className="icon-button" type="button" aria-label="Профиль" onClick={() => setTab('profile')}><Settings2 size={20} /></button>
     </header>
-    <main>
+    <main id="main-content" tabIndex={-1}>
       <div className="page-kicker">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      <h1>{title}<span className="accent-dot">.</span></h1>
+      <h1 ref={screenTitleRef} id="screen-title" tabIndex={-1}>{title}<span className="accent-dot">.</span></h1>
       {(tab === 'home' || tab === 'history') && <BackgroundJobsPanel jobs={background} busy={busy} />}
       {tab === 'home' && <>
         <p className="lead">Всё необходимое для ваших документов в одном месте.</p>
