@@ -2,6 +2,17 @@
 
 > Status: living engineering plan, reviewed 2026-11-14. **Not** a public launch, payment enablement, deployment or production-readiness declaration. Every change requires its own branch, PR, green checks on the final head commit and a successful push-triggered main CI run after merging.
 
+## Button-first product UX (permanent requirement)
+
+All Telegram bot, Mini App and future web/native user flows must follow the
+[button-first UX standard and audit](BUTTON_FIRST_UX.md), which is also
+mandatory for AI coding agents in [AGENTS.md](../AGENTS.md). Use buttons to
+select actions and fields; reserve text for user-entered content and precise
+values. Include Back/Cancel, honest disabled states, mobile accessibility,
+and menu/callback regression tests. This requirement applies to **all**
+versions, not just the audio editor. Current merged functionality is not
+fully compliant yet; treat the audit as a backlog, not a release claim.
+
 ## Source of truth and agreed business rules
 
 This document supersedes **proposed** prices, quotas and packaging in [BOT_PRODUCT_ROADMAP.md](BOT_PRODUCT_ROADMAP.md) where they disagree. Keep [ROAD_TO_5.md](ROAD_TO_5.md) as historical engineering gates, not an assertion that outdated pending milestones are still current. Source code and merged PRs determine what is actually implemented.
