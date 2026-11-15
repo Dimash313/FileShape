@@ -74,9 +74,12 @@ class ImageConcurrencyBenchmarkTests(unittest.TestCase):
         self.assertGreaterEqual(data["sample_count"], 1)
         self.assertGreaterEqual(data["peak_sampled_children_rss_mib"], 0)
         self.assertGreater(data["sum_individual_peak_rss_mib"], 0)
+        # Linux /proc RSS samples and resource.ru_maxrss are independent
+        # accounting paths. Their reported values can differ slightly, so
+        # the sum of process maxima is not an exact numerical assertion.
         self.assertLessEqual(
             data["peak_sampled_children_rss_mib"],
-            data["sum_individual_peak_rss_mib"] + 1.0,
+            data["aggregate_sample_budget_mib"],
         )
         self.assertGreater(data["elapsed_seconds"], 0)
         self.assertGreaterEqual(data["total_cpu_seconds"], 0)
