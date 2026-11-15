@@ -45,6 +45,11 @@ class Artifact:
     filename: str | None = None
     content_type: str | None = None
     expires_at: float | None = None
+    # An artifact is immutable after publication. Guard later path opens
+    # against a same-owner, same-sized regular-file replacement.
+    result_dev: int | None = None
+    result_ino: int | None = None
+    result_size: int | None = None
     _leases: int = 0
     _discarded: bool = False
 
@@ -252,8 +257,17 @@ class ArtifactStore:
                         if total > item.reserved_bytes:
                             raise ArtifactCapacity()
                 os.fchmod(result, 0o600)
+                published = os.fstat(result)
+                # Reject an output that grew/shrank while the directory
+                # reservation was being audited.
+                if (published.st_dev != info.st_dev or published.st_ino != info.st_ino or
+                        published.st_size != info.st_size):
+                    raise ArtifactUnavailable()
                 item.filename = filename
                 item.content_type = content_type
+                item.result_dev = published.st_dev
+                item.result_ino = published.st_ino
+                item.result_size = published.st_size
                 item.expires_at = time.monotonic() + self.ttl
                 self._reserved -= item.reserved_bytes - total
                 item.reserved_bytes = total
@@ -283,7 +297,9 @@ class ArtifactStore:
                 info = os.fstat(result)
                 if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or
                         info.st_mode & 0o077 or not 0 < info.st_size <= MAX_RESULT_BYTES or
-                        info.st_size > item.reserved_bytes):
+                        info.st_size > item.reserved_bytes or
+                        info.st_dev != item.result_dev or info.st_ino != item.result_ino or
+                        info.st_size != item.result_size):
                     raise ArtifactUnavailable()
                 stream = os.fdopen(result, "rb")
                 result = None
