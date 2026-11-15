@@ -1,6 +1,6 @@
 # API & security — handoff
 
-Updated: 2026-11-15 UTC; verify live GitHub heads, Issues, PR bases and Actions.
+Updated: 2026-11-16 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
 Current Issue: [#169](https://github.com/Dimash313/FileShape/issues/169), remove inherited API environment secrets from untrusted worker subprocesses.
 Current PR: [#170](https://github.com/Dimash313/FileShape/pull/170) (**Draft**, `api-security/169-worker-env-boundary`), targeting `api-security/163-bounded-worker-stdout` / [PR #164](https://github.com/Dimash313/FileShape/pull/164).
@@ -9,13 +9,13 @@ Dependency: PR #164 is **Draft**, itself based on `docs/independent-development-
 ## Current bounded change
 
 - `api/worker_runner.py`: explicitly allowlist only necessary non-secret locale, PATH, temp/cache environment keys for the conversion worker; do not forward parent `BOT_TOKEN`, cloud keys, internal assertions, `PYTHONPATH`, `LD_PRELOAD` etc. Supply `PYTHON_DOTENV_DISABLED=1` plus safe Python process flags to keep the transitively imported `config.py` from reloading `.env`.
-- `tests/test_worker_runner.py`: launch a **real subprocess** with fake sentinel secrets in the parent's environment; assert no inherited secrets and compatible execution. Verify `load_dotenv` refuses to import a fake BOT_TOKEN when the child flag is set.
+- `tests/test_worker_runner.py`: launch a **real subprocess** with fake sentinel secrets in the parent's environment; assert no inherited secrets and compatible execution. Verify `load_dotenv` refuses to import a fake BOT_TOKEN when the child flag is set. Also exercise real TXT → DOCX and probe a generated silent WAV with FFprobe through the actual restricted-environment subprocess; these compatibility regressions are critical because merely echoing sanitized environment variables does not prove conversions still work.
 - `requirements.txt`: raise the existing python-dotenv lower bound from 1.0 to 1.2 because `PYTHON_DOTENV_DISABLED` was only introduced in v1.2.0. No new dependency.
 - No changes to user content, HTTP API routes, authorization, billing, external services or media. Environment minimization is defense-in-depth, **not full sandboxing** of local file parser code.
 
 ## Validation and release gates
 
-Issue [#101](https://github.com/Dimash313/FileShape/issues/101) is **closed**: owner made FileShape public after consuming the entire private-repo included Actions Compute, and genuine hosted runners resumed. Parent PR #164 exact head `bef8fad55ff9e2e5912aa02fb8fa31f5ae772eb8` has actual green Python, Mini App and Docker checks ([run #43726214310](https://github.com/Dimash313/FileShape/actions/runs/43726214310) attempt 2). This **does not validate the new worker-env change**; require new PR exact-head full Python tests, Mini App test/typecheck/build, Docker build, additional real-file smoke and independent security/integration review before merging.
+Issue [#101](https://github.com/Dimash313/FileShape/issues/101) is **closed**: owner made FileShape public after consuming the entire private-repo included Actions Compute, and genuine hosted runners resumed. Parent PR #164 exact head `bef8fad55ff9e2e5912aa02fb8fa31f5ae772eb8` has actual green Python, Mini App and Docker checks ([run #43726214310](https://github.com/Dimash313/FileShape/actions/runs/43726214310) attempt 2). PR #170 earlier exact head `eba144cbbe3c68974db9285d8dff38059197d8dc` passed real hosted Python, Mini App and Docker CI ([run #43730516974](https://github.com/Dimash313/FileShape/actions/runs/43730516974)); after adding **new real-file conversion smoke tests**, another exact-head full CI is necessary. Require latest PR head successful full Python tests including TXT→DOCX and silent WAV/FFprobe, Mini App typecheck/build, Docker build and independent security/integration review before merging. Do not treat passing previous-head checks as validating these new tests.
 
 ## Other unmerged track Draft PRs
 
