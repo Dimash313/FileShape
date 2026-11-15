@@ -631,3 +631,42 @@ CI remains blocked before runner assignment (issue #101); do not merge
 this draft or deploy until full exact-head Python, Mini App and Docker
 checks and real-file smoke tests run and pass.
 
+## Phase F3 — bounded ZIP creation on HTTP via shared ArchiveModulePort (draft)
+
+The existing `ArchiveModulePort.create` is now called from the
+isolated worker for `POST /api/v1/zip/create`. It reuses the exact
+ZIP creation implementation that the Telegram bot already uses
+and does not add archive processing code to either UI.
+
+**Independent HTTP admission**: 2–5 non-empty uploaded files of
+arbitrary extensions, max 20 MiB total and 20 MiB each, enforced
+both while streaming bytes to temporary files and inside the
+worker. The ASGI byte-counting ingress guard prevents unbounded
+multipart bodies, including chunked uploads. Original filename
+strings are bounded metadata only, never output paths. The worker
+constructs only `zip_item_0` ... `zip_item_4` inside the private
+workspace, refuses symlinks and missing/non-regular files and
+delegates name flattening/deduplication to the existing archive
+implementation. Per-user Telegram-signed identity, subscription
+policy, quota/job registration and rate/queue limits precede work.
+Result is `fileshape.zip` with no-store, nosniff and an owner-scoped
+job ID; cleanup follows successful streaming or immediate error/
+cancellation, and orphan reaping recognizes the workspace prefix.
+
+`GET /api/v1/capabilities` advertises this as an independent
+`batch_operations` entry with `input_kind: "any_file"` and
+`accept_any_file_type: true`; it does **not** extend the single-file
+`SUPPORTED` action catalog. `zip:extract` HTTP still does not
+exist and must never be advertised. Bot ZIP features and existing
+archive validation logic remain unchanged.
+
+`tests/test_http_zip_create.py` covers real ZIP payload integrity,
+upload order, path/name sanitation and duplicates, authenticated
+admission, invalid/empty/overlong files, HTTP byte/result limits,
+post-response and failure cleanup, worker count/name validation,
+symlink rejection and fixed workspace paths. Existing archive
+security tests must also run.
+
+This phase is a stacked unmerged **draft**. GitHub Actions issue #101
+still prevents actual CI execution; no release/quality certification
+is implied by adding tests alone.
