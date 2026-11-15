@@ -1,8 +1,18 @@
 # FileShape CI operations and recovery
 
-**Status (2026-11-15): CI is blocked before test execution.** This is a
-diagnostic record, not a claim that any feature, test, or deployment passed.
-Tracking: [issue #101](https://github.com/Dimash313/FileShape/issues/101).
+**Status (2026-11-15): GitHub-hosted runner allocation restored.** The
+owner changed FileShape from private to public after account Actions Compute
+included usage reached $12/$12. Previously blocked jobs now start on real
+GitHub-hosted runners; [issue #101](https://github.com/Dimash313/FileShape/issues/101)
+was closed after observing the recovery. **This does not mean the full Python,
+Mini App, Docker or integration checks have passed on every PR.** Do not
+merge until the exact-head checks and review are green.
+
+Recovery evidence: [PR #164 run #43726214310, attempt 2](https://github.com/Dimash313/FileShape/actions/runs/43726214310)
+allocated runner IDs 1000000948 (tests) and 1000000949 (miniapp). At the
+time recorded, the Mini App test/build job passed and the Python job had
+entered its actual unit tests; Docker was still pending. Re-run checks must
+be inspected until terminal success/failure for each exact PR head.
 
 ## Evidence
 
@@ -19,10 +29,13 @@ Tracking: [issue #101](https://github.com/Dimash313/FileShape/issues/101).
   Do not claim a failing Python test, broken Docker image, or TypeScript
   regression when no job steps have run.
 
-The most likely causes are account-level Actions spending/included-usage
-limits, hosted-runner restrictions or a GitHub-side dispatch issue. The
-exact error annotation and the account billing state **have not been
-observed by the repository integration**, so none is confirmed.
+The owner subsequently supplied a screenshot from GitHub Billing showing
+Actions included Compute $12.00 used of $12.00 included and $0 billable
+after discounts. After the repository became public, the formerly blocked
+runs received real GitHub-hosted runners. The historical failure is strongly
+consistent with exhausted private-repository included Compute. Exact
+check-run annotation text was not retrieved through the connector; do not
+claim more certainty than the evidence supports.
 
 ## Owner's account-side checklist (read-only first)
 
