@@ -5,6 +5,8 @@ import sys
 
 from services.upload_validation import validate_upload
 from services.image_module import image_module
+from services.pdf_module import pdf_module
+from services.pdf_tools import MAX_MERGE_FILES
 
 
 def execute(request: dict) -> dict:
@@ -31,6 +33,16 @@ def execute(request: dict) -> dict:
             validate_upload(path, suffix)
         target = work / "fileshape_photos.pdf"
         image_module.bundle_as_pdf(paths, target)
+    elif operation == "pdf_merge":
+        # Paths are built only from API-owned workspace and bounded indices.
+        count = request.get("count")
+        if type(count) is not int or not 2 <= count <= MAX_MERGE_FILES:
+            raise ValueError("Выбери от 2 до 5 PDF")
+        paths = [work / f"pdf_{index}.pdf" for index in range(count)]
+        for path in paths:
+            validate_upload(path, ".pdf")
+        target = work / "merged.pdf"
+        pdf_module.merge(paths, target)
     else:
         raise ValueError("Недопустимая операция")
     if not target.is_file() or target.stat().st_size == 0:
