@@ -30,6 +30,7 @@ def _probe_pinned_video(pinned_path: str, fd: int) -> float:
             [
                 _program("ffprobe"), "-v", "error",
                 "-protocol_whitelist", "file,pipe",
+                "-enable_drefs", "0", "-use_absolute_path", "0",
                 "-show_entries", "format=format_name,duration:stream=codec_type",
                 "-of", "json", pinned_path,
             ],
@@ -42,6 +43,12 @@ def _probe_pinned_video(pinned_path: str, fd: int) -> float:
         raise ValueError("Не удалось прочитать видеофайл")
     try:
         metadata = json.loads(checked.stdout)
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("format"), dict):
+            raise ValueError("Не удалось проверить дорожки и длительность видео")
+        if not isinstance(metadata.get("streams"), list) or not all(
+            isinstance(stream, dict) for stream in metadata["streams"]
+        ):
+            raise ValueError("Не удалось проверить дорожки и длительность видео")
         if metadata["format"].get("format_name") != VIDEO_DEMUXER:
             raise ValueError("Неподдерживаемый видеоконтейнер")
         kinds = {stream.get("codec_type") for stream in metadata["streams"]}
@@ -96,7 +103,9 @@ def extract_audio_from_video(source: Path, target: Path) -> dict:
             command = [
                 _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel",
                 "error", "-y", "-threads", "1",
-                "-protocol_whitelist", "file,pipe", "-i", pinned_path,
+                "-protocol_whitelist", "file,pipe",
+                "-enable_drefs", "0", "-use_absolute_path", "0",
+                "-i", pinned_path,
                 "-map", "0:a:0", "-vn", "-sn", "-dn",
                 "-map_metadata", "-1", "-map_chapters", "-1",
                 "-c:a", "libmp3lame", "-b:a", "128k",
