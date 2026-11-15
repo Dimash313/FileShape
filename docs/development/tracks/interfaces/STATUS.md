@@ -1,17 +1,27 @@
 # Interfaces & UX — handoff
 
-Updated: 2026-11-15 UTC; branch: `ux/miniapp-tool-pickers`; last code commit: `621da3b4a5e2b7e4808392e59ce46baaa90e0365` (check latest PR HEAD after documentation commits)
+Updated: 2026-11-15 UTC; branch: `ux/miniapp-empty-file-preflight`; last code commit: `36197a3ed8dee096366e93f69bbe951d894eec3e` (recheck exact PR HEAD after this documentation commit)
 Track: interfaces
-Current Issue: [#122](https://github.com/Dimash313/FileShape/issues/122) — Mini App category-specific file selection and truthful tool catalog
-Active PR: [#126](https://github.com/Dimash313/FileShape/pull/126) (draft; base `ux/bot-message-linebreaks`)
-Parent PRs: [#118](https://github.com/Dimash313/FileShape/pull/118) (Telegram bot newline fix) -> [#112](https://github.com/Dimash313/FileShape/pull/112) (track coordination docs)
-Implemented in PR:
-- `miniapp/src/toolCatalog.ts`: typed catalog exposing only implemented PDF, Photo, Audio, DOCX/TXT, ZIP and batch photo-to-PDF options; native accept hints limited to supported single-file types.
-- `miniapp/src/App.tsx`: category-aware picker on both quick tools and Tool list; generic upload resets accept; same-file reselection works; **opening/cancelling a single-file picker does not prematurely discard a selected photo batch** (mode switches only after valid acceptance); unsupported Scanner removed; existing server/API behaviors preserved.
-- `miniapp/tests/toolCatalog.test.mjs` plus TypeScript test config: 3 catalog tests and an added source-level batch-cancellation regression test (not run on full repository).
-- Updated this STATUS and track ROADMAP in the same stacked branch.
+Current Issue: [#131](https://github.com/Dimash313/FileShape/issues/131) — empty and malformed Mini App file selection
+Active PR: [#136](https://github.com/Dimash313/FileShape/pull/136) (Draft, base `ux/miniapp-tool-pickers`)
+Parent stacked PRs: [#126](https://github.com/Dimash313/FileShape/pull/126) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#112](https://github.com/Dimash313/FileShape/pull/112).
 
-Verified: live GitHub file inspection including 7 static checks of cancelled picker/batch preservation; isolated local reconstruction of the tool catalog passed `tsc --strict --target ES2022 --module ES2022 --moduleResolution Bundler` and `node --test` (3/3 passing). **New cancellation source regression test, full repository Mini App npm test/build, Python tests, Docker, 320px/mobile WebView visual checks and exact-head CI NOT EXECUTED.** Isolated results are not proof of full integration.
-Dependencies/blockers: #101 GitHub Actions runner allocation (parent #118 had zero-step failed jobs), #112/#118 review and merge order, #46 long-open App.tsx accessibility changes may conflict, #91 UX policy review. This Draft PR is not release-ready.
-Next unblocked Issue: NONE claimed. Next candidate is focused Mini App responsive/accessibility and empty-file/error-recovery audit; create new Issue after checking latest PRs.
-Risk / cross-track decision needed: `main.py` is a shared surface in PR #118; API/security and format tracks must review the parent. PR #126 changes no API, auth, quota, processing, or new server capabilities. Browser accept filters do not replace server validation.
+Implemented in Draft PR #136:
+- `miniapp/src/filePreflight.ts`: pure preflight validates single-file positive safe-integer size and existing <=20 MiB cap; validates batches of 2–8 supported images with positive sizes and aggregate <=20 MiB.
+- `miniapp/src/App.tsx`: uses preflight before selecting a single file or batch, reports distinct empty/oversized/unsupported errors, and leaves an existing valid selection intact after invalid attempts.
+- `miniapp/tests/filePreflight.test.mjs`: five regression cases for empty/non-finite/invalid sizes, exact 20 MiB boundary, image types and batch count.
+- `miniapp/tsconfig.test.json`: compiles new module into Node test output.
+- No API, quota, auth, server format support, payments or third-party dependencies changed.
+
+Verified:
+- Source from GitHub connector matched intended imports, single/batch call sites, test TypeScript inclusion and removal of old incomplete checks.
+- In a local isolated temporary harness, exact copied source compiled using `tsc --strict --target ES2022 --module ES2022 --moduleResolution bundler --lib ES2022,DOM`.
+- `node --test tests/filePreflight.test.mjs` passed **5/5** cases.
+- Full repository `npm test`, Vite build/typecheck, Python tests, Docker and mobile Telegram WebView/320 px visual tests **NOT EXECUTED**. Local repository cloning blocked by unavailable GitHub DNS. Never treat isolated tests as full integration proof.
+- Exact-head GitHub Actions is pending/failing under [#101](https://github.com/Dimash313/FileShape/issues/101); check latest run and zero-step runner failures before merger.
+
+Dependencies/blockers: #101 Actions runner allocation; #136 is stacked on #126/#118/#112; [#46](https://github.com/Dimash313/FileShape/pull/46) touches App.tsx and requires conflict review. No release or merge readiness claimed.
+Next unblocked Issue: NONE claimed. Next candidate: focused 320–370px responsive/keyboard/screen-reader focus audit of Mini App, with a separately claimed Issue and independent PR after checking overlapping files.
+Risk / cross-track decision needed: no API change in #136; only browser-side preflight hints. Server remains authoritative for malicious files and unsupported content.
+
+Integration checkpoint: incorporated parent Draft PR #126 cancellation-preserving picker patch and added its new regression test via two-parent Draft-branch merge. This is NOT a tested/released integration; CI #101 still blocks validation. Keep PR #136 Draft.

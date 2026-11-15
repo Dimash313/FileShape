@@ -9,6 +9,7 @@ import {
 import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } from './imageTools';
 import { initTelegram, tapFeedback, telegramInitData } from './telegram';
 import { activeTools, acceptForTool, type SingleFileToolKey, type ToolKey } from './toolCatalog';
+import { batchImageSelectionError, singleFileSelectionError } from './filePreflight';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
 import type { QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
@@ -104,8 +105,8 @@ export default function App() {
   const pick = (tool?: SingleFileToolKey) => {
     if (busy) return;
     tapFeedback();
-    // Opening (or cancelling) the native picker must not discard a prepared batch.
-    // Switching modes only happens once acceptFile validates a selected file.
+    // Opening or cancelling the native picker must not discard a prepared batch.
+    // The mode switches only after acceptFile validates a selected file.
     if (!inputRef.current) return;
     inputRef.current.accept = acceptForTool(tool);
     // Re-selecting the same file after cancel/reset must still fire onChange.
@@ -130,16 +131,9 @@ export default function App() {
   };
   const chooseBatch = (files: File[]) => {
     if (busy || !files.length) return;
-    if (files.length < 2 || files.length > 8) {
-      setNotice('Выбери от 2 до 8 фотографий.');
-      return;
-    }
-    if (files.some(file => !/\.(jpg|jpeg|png|webp)$/i.test(file.name) || file.size <= 0)) {
-      setNotice('Поддерживаются только JPG, PNG и WebP.');
-      return;
-    }
-    if (files.reduce((sum, file) => sum + file.size, 0) > 20 * 1024 * 1024) {
-      setNotice('Общий размер выбранных фотографий превышает 20 МБ.');
+    const error = batchImageSelectionError(files);
+    if (error) {
+      setNotice(error);
       return;
     }
     background.releaseInput();
@@ -193,8 +187,9 @@ export default function App() {
   const acceptFile = (next?: File) => {
     if (busy || !next) return;
     tapFeedback();
-    if (next.size > 20 * 1024 * 1024) {
-      setNotice('Максимальный размер файла для этого интерфейса — 20 МБ.');
+    const error = singleFileSelectionError(next);
+    if (error) {
+      setNotice(error);
       return;
     }
     background.releaseInput();
