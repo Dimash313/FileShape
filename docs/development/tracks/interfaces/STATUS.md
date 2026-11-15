@@ -1,29 +1,29 @@
-# Interfaces & UX — handoff
+# Interfaces & UX — current handoff
 
 Updated: 2026-11-15 UTC
-Track: interfaces
-Current Issue: [#172](https://github.com/Dimash313/FileShape/issues/172) — keyboard skip link and navigation heading focus in Mini App.
-Active PR: [#173](https://github.com/Dimash313/FileShape/pull/173), **Draft**, branch `ux/miniapp-keyboard-navigation`, base `ux/miniapp-transfer-status-a11y`.
-Last code commit before this documentation edit: `d16421289e9d263c7cbd74124a7a0bd9a5c0814a`; recheck **exact PR head SHA** after this update.
+Track: `interfaces`
+Current issue: [#172](https://github.com/Dimash313/FileShape/issues/172) — keyboard skip link and section-focus semantics in Mini App.
+Draft PR: [#173](https://github.com/Dimash313/FileShape/pull/173); branch `ux/miniapp-keyboard-navigation`, base `ux/miniapp-transfer-status-a11y`.
 
-## Current implementation (PR #173)
+## Implementation
 
-- `miniapp/src/App.tsx`: first interactive element is a keyboard "Перейти к содержимому" link; focusable `main#main-content`; a `screenTitleRef` H1 receives focus **only after** switching the in-app section, not on first render; the hidden native file picker inputs are removed from sequential keyboard focus and accessibility tree while remaining invokable by buttons.
-- `miniapp/src/styles.css`: high-contrast, focus-revealed skip link; respects top safe area and sticky header when jumping/focusing.
-- `miniapp/tests/navigationA11y.test.mjs`: five source-level Node regression tests cover skip link order/target, hidden file inputs, screen-title navigation focus, visual CSS/safe area, and existing `aria-current` semantics.
-- No API, auth, worker, queue, files, payments, dependency or branding changes. Black/white design remains unchanged.
+- `miniapp/src/App.tsx`: keyboard skip-to-main link; `main#main-content` and dynamic `h1#screen-title` programmatically focusable. On real section change, an effect focuses the new heading; no focus stealing on initial render or same-tab updates.
+- File-picker `input type=file` nodes remain programmatically callable but do not appear in keyboard Tab order/AT tree. Existing valid-file and photo-batch cancellation behavior preserved.
+- `miniapp/src/styles.css`: skip link hidden until focus, then clearly visible; fixed above sticky bar, with monochrome contrast, safe-area and scroll margin.
+- `miniapp/tests/navigationA11y.test.mjs`: five Node source-level regressions; adjusted input scanning for JSX callback `>` characters after a false-positive local source probe.
+- [MOBILE_QA.md](MOBILE_QA.md): acceptance matrix K1–K7 and M1–M8 with explicit unexecuted statuses for keyboard, TalkBack/VoiceOver and 320/360/370 CSS px layouts.
+- No API, conversion code, auth, quotas, payments, new tools, branding images, music or new dependencies.
 
-## Actual verification, not assumptions
+## Verified evidence
 
-- Direct GitHub source inspection: selected App and stylesheet hooks are present. New test file was created; **new tests and final-head full CI NOT YET VERIFIED** at time this handoff was written.
-- Prior Draft PRs [#112](https://github.com/Dimash313/FileShape/pull/112), [#118](https://github.com/Dimash313/FileShape/pull/118), [#126](https://github.com/Dimash313/FileShape/pull/126), [#136](https://github.com/Dimash313/FileShape/pull/136), [#145](https://github.com/Dimash313/FileShape/pull/145), [#152](https://github.com/Dimash313/FileShape/pull/152) each had real **success** in both GitHub Actions jobs (Python/Docker 11 steps, Mini App 9 steps) at their previously validated exact heads on 2026-11-15. This does not prove the new PR #173 is green.
-- Actions runner allocation issue [#101](https://github.com/Dimash313/FileShape/issues/101) was closed after the repo became public. Do not treat previous zero-step failures as code failures.
-- Manual keyboard and TalkBack/VoiceOver on actual Telegram Android WebView, phone layouts 320/360/370px and increased text size: **NOT EXECUTED**. Static source tests do not replace this QA.
+- Actual GitHub Actions [run #43731620408](https://github.com/Dimash313/FileShape/actions/runs/43731620408) completed **success** on PR #173 code/test head `2f22fc66ba6d666b54883de29ddd88c06b71dd60`: `miniapp` job **success** (9 steps, including frontend tests/typecheck/build), `tests` job **success** (11 steps, including Python tests and Docker build).
+- Subsequent documentation commit(s), including this STATUS update, require a fresh exact-head Actions result. Recheck PR head SHA and final run before merge. **Do not claim final head has passed CI until verified.**
+- Real Telegram Android WebView, keyboard, TalkBack/VoiceOver, iOS and increased-text validation: **NOT EXECUTED**. Code/source regressions and CI do not prove accessibility in the device UI.
+- Reviewer approvals: none observed for #173 at previous check. This is **Draft**, not release-ready.
 
-## Dependencies and integration
+## Dependencies, risks, next steps
 
-- Parent order: Draft #173 → #152 → #145 → #136 → #126 → #118 → #112. #112 also depends on an unmerged architectural chain; merge parent-to-child only after separate review and real exact-head checks. No PR in this chain is deployed or merged by this track.
-- Older Draft [#46](https://github.com/Dimash313/FileShape/pull/46) remains conflicting with main and contains old Scanner + a different visual theme. #173 selectively ports *only* keyboard skip and section heading focus. Do not merge stale #46 wholesale.
-- Shared bot `main.py` in #118 needs API/security integration review. All Mini App code here keeps supported tools and client API unchanged.
-
-Next step: check exact-head GitHub Actions for #173, fix real failing tests if any, then complete keyboard/screen-reader and narrow-screen device QA before requesting final review/integration. Avoid more stacked PRs until parent integration.
+- Seven open Drafts stacked in order: [#112](https://github.com/Dimash313/FileShape/pull/112) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#126](https://github.com/Dimash313/FileShape/pull/126) → [#136](https://github.com/Dimash313/FileShape/pull/136) → [#145](https://github.com/Dimash313/FileShape/pull/145) → [#152](https://github.com/Dimash313/FileShape/pull/152) → [#173](https://github.com/Dimash313/FileShape/pull/173). Parent #112 itself depends on unmerged architecture chain. Review owner/cross-track integration before merging, never force merges.
+- Old [#46](https://github.com/Dimash313/FileShape/pull/46) is conflicting and includes an obsolete Scanner and different design. #173 selectively ports its skip link and heading focus ideas only; old PR should not be merged whole.
+- Actions runner blocker [#101](https://github.com/Dimash313/FileShape/issues/101) was fixed by project owner and is closed; all six preceding Interfaces Draft PR heads had successful Actions as of this checkpoint.
+- Next step: exact-final-head CI; manually run `MOBILE_QA.md` with a build of #173; independent review and parent integration. Next unblocked Issue: NONE claimed. Avoid creating further stacked UX PRs before these gates.
