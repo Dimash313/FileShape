@@ -108,6 +108,26 @@ class MP3TagStreamCopyTests(unittest.TestCase):
             edit_mp3_tags(self.mp3, self.mp3, {"title": "X"})
         with self.assertRaises(ValueError):
             edit_mp3_tags(self.mp3, self.folder / "other.mp3", {"unsafe": "X"})
+        occupied = self.folder / "existing.mp3"
+        occupied.write_bytes(b"existing result must not be overwritten")
+        with self.assertRaises(ValueError):
+            edit_mp3_tags(self.mp3, occupied, {"title": "X"})
+        self.assertEqual(occupied.read_bytes(), b"existing result must not be overwritten")
+
+    def test_failed_subprocess_output_is_cleaned_up(self):
+        original = subprocess.run
+        target = self.folder / "partial.mp3"
+
+        def fail_ffmpeg(args, *pargs, **kwargs):
+            if Path(args[0]).name == "ffmpeg":
+                target.write_bytes(b"partial output")
+                return subprocess.CompletedProcess(args, 1, b"", b"error")
+            return original(args, *pargs, **kwargs)
+
+        with patch("services.audio_metadata.subprocess.run", side_effect=fail_ffmpeg):
+            with self.assertRaises(ValueError):
+                edit_mp3_tags(self.mp3, target, {"title": "Test"})
+        self.assertFalse(target.exists())
 
 
 @asynccontextmanager
