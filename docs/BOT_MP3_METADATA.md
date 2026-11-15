@@ -6,32 +6,29 @@ extends the same private-chat audio file action navigation.
 
 ## Available in the proposed bot build
 
-After uploading an **MP3** of at most **20 MiB** and 10 minutes, choose
-`🏷 Теги MP3` and send one text message:
+After uploading an **MP3** of at most **20 MiB** and 10 minutes,
+tap `🏷 Теги MP3`. A compact inline keyboard offers individual choices:
 
-```text
-Название | Исполнитель | Альбом | Год | Жанр
-```
+- ✏️ Название
+- 👤 Исполнитель
+- 💿 Альбом
+- 📅 Год
+- 🏷 Жанр
+- 🖼 Обложка · скоро (informational, **not implemented**)
+- ✖️ Отмена
 
-Example using non-musical general-purpose recording metadata:
-
-```text
-Урок | Автор | Сборник | 2026 | Образование
-```
-
-Five fields are required in that exact order. `-` means **keep existing tag**,
-`~` means **remove existing tag**, and at least one field must be changed.
-Title, artist, album, year/date and genre are supported. Year is exactly four
-ASCII digits. Each text value is at most 120 characters; control characters,
-NUL, newlines, and overlong input are rejected **before** quota reservation.
-The separator character `|` is not supported inside field values.
+Choose one supported field, then send only its replacement value.
+Send `~` to erase the selected tag. Year is exactly four ASCII digits.
+Each value is at most 120 characters; controls, NUL, newlines and
+overlong input are rejected **before** quota reservation. One confirmed
+edit produces one MP3 result, with a fresh menu for further edits.
 
 This stage supports **MP3 only**, not M4A, FLAC, OGG, WAV or MP3 cover
 replacement. The existing embedded **JPEG/PNG** attached picture (if any)
 is copied without recoding along with the original MP3 audio stream. Unknown
 video streams or more than one artwork stream are rejected rather than
-silently discarded. A later distinct scope may add image upload/replace/remove,
-while respecting project-wide restrictions and user-submitted media privacy.
+silently discarded. The cover button clearly states that changing artwork
+is **not yet available**; it does not accept or process a photo.
 
 ## Security, honesty and accounting
 
