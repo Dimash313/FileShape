@@ -54,11 +54,17 @@ class IntakeDispatchStore(FencedDispatchStore):
                         state IN ('ready','suspect','review','failed')
                     ),
                     first_missing_at REAL,
+                    input_expires_at REAL,
                     updated_at REAL NOT NULL,
                     CHECK (
-                        (state IN ('suspect','review') AND first_missing_at IS NOT NULL)
+                        (state IN ('suspect','review') AND first_missing_at IS NOT NULL
+                         AND input_expires_at IS NULL)
                         OR
-                        (state IN ('ready','failed') AND first_missing_at IS NULL)
+                        (state='ready' AND first_missing_at IS NULL
+                         AND input_expires_at IS NOT NULL)
+                        OR
+                        (state='failed' AND first_missing_at IS NULL
+                         AND input_expires_at IS NULL)
                     )
                 )
             """)
@@ -75,7 +81,7 @@ class IntakeDispatchStore(FencedDispatchStore):
         if not _valid_id(job_id):
             raise JobNotFound()
         row = self._db.execute(
-            """SELECT d.envelope,h.state,h.first_missing_at
+            """SELECT d.envelope,h.state,h.first_missing_at,h.input_expires_at
                FROM dispatch_outbox d JOIN jobs j ON j.job_id=d.job_id
                LEFT JOIN input_handoff h ON h.job_id=d.job_id
                WHERE d.job_id=? AND j.owner_id=?
@@ -87,7 +93,7 @@ class IntakeDispatchStore(FencedDispatchStore):
         envelope = SingleFileJobV1.from_json(row[0])
         if envelope.job_id != job_id:
             raise JobStateError()
-        return envelope, row[1], row[2]
+        return envelope, row[1], row[2], row[3]
 
     @serialized
     def input_status(self, owner_id: int, job_id: str):
@@ -95,7 +101,8 @@ class IntakeDispatchStore(FencedDispatchStore):
         return self._get_queued_input(owner_id, job_id)
 
     @serialized
-    def pending_inputs(self, *, limit: int = 100):
+    def pending_inputs(self, *, now: float | None = None, limit: int = 100):
+        timestamp = _now(now)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("Invalid handoff scan limit")
         rows = self._db.execute(
@@ -103,9 +110,12 @@ class IntakeDispatchStore(FencedDispatchStore):
                FROM dispatch_outbox d JOIN jobs j ON j.job_id=d.job_id
                LEFT JOIN input_handoff h ON h.job_id=d.job_id
                WHERE j.state='queued' AND d.state='queued'
-                 AND (h.state IS NULL OR h.state IN ('suspect','review'))
+                 AND (
+                     h.state IS NULL OR h.state IN ('suspect','review')
+                     OR (h.state='ready' AND h.input_expires_at<=?)
+                 )
                ORDER BY COALESCE(h.updated_at,0),d.created_at,d.job_id LIMIT ?""",
-            (limit,),
+            (timestamp, limit,),
         ).fetchall()
         result = []
         for owner_id, payload in rows:
@@ -128,22 +138,26 @@ class IntakeDispatchStore(FencedDispatchStore):
         if not isinstance(blobs, PrivateBlobStore):
             raise TypeError("PrivateBlobStore required")
         with self._transaction():
-            envelope, state, _ = self._get_queued_input(owner_id, job_id)
+            envelope, state, _, _ = self._get_queued_input(owner_id, job_id)
             if envelope.input_ref != input_ref:
                 raise BlobUnavailable()
             if state == "failed":
                 raise JobStateError()
             blobs.read_input(owner_id, job_id, input_ref, now=timestamp)
+            expires = blobs.input_expires_at(
+                owner_id, job_id, input_ref, now=timestamp,
+            )
             if state == "ready":
                 return False
             self._db.execute(
                 """INSERT INTO input_handoff
-                   (job_id,state,first_missing_at,updated_at)
-                   VALUES(?,'ready',NULL,?)
+                   (job_id,state,first_missing_at,input_expires_at,updated_at)
+                   VALUES(?,'ready',NULL,?,?)
                    ON CONFLICT(job_id) DO UPDATE
                    SET state='ready',first_missing_at=NULL,
+                       input_expires_at=excluded.input_expires_at,
                        updated_at=excluded.updated_at""",
-                (job_id, timestamp),
+                (job_id, expires, timestamp),
             )
             return True
 
@@ -164,18 +178,31 @@ class IntakeDispatchStore(FencedDispatchStore):
         if type(review_after_seconds) is not int or not 1 <= review_after_seconds <= 3600:
             raise ValueError("Invalid review interval")
         with self._transaction():
-            envelope, status, missing_since = self._get_queued_input(owner_id, job_id)
+            envelope, status, missing_since, input_until = self._get_queued_input(
+                owner_id, job_id,
+            )
             if envelope.input_ref != input_ref:
                 raise BlobUnavailable()
             if status == "ready":
-                return "ready"
+                # Expired ready inputs must not remain claimable forever.
+                # A live ready file is not demoted on a racing stale scan.
+                if input_until is not None and input_until > timestamp:
+                    return "ready"
+                self._db.execute(
+                    """UPDATE input_handoff
+                       SET state='suspect',first_missing_at=?,
+                           input_expires_at=NULL,updated_at=?
+                       WHERE job_id=? AND state='ready'""",
+                    (timestamp, timestamp, job_id),
+                )
+                return "suspect"
             if status == "failed":
                 raise JobStateError()
             if missing_since is None:
                 self._db.execute(
                     """INSERT INTO input_handoff
-                       (job_id,state,first_missing_at,updated_at)
-                       VALUES(?,'suspect',?,?)""",
+                       (job_id,state,first_missing_at,input_expires_at,updated_at)
+                       VALUES(?,'suspect',?,NULL,?)""",
                     (job_id, timestamp, timestamp),
                 )
                 return "suspect"
@@ -212,11 +239,12 @@ class IntakeDispatchStore(FencedDispatchStore):
                    JOIN jobs j ON j.job_id=d.job_id
                    JOIN input_handoff h
                      ON h.job_id=d.job_id AND h.state='ready'
+                       AND h.input_expires_at>?
                    WHERE d.state='queued'
                       OR (d.state='leased' AND d.lease_until<=?
                           AND d.attempts<?)
                    ORDER BY d.created_at,d.job_id LIMIT 1""",
-                (timestamp, MAX_DELIVERIES),
+                (timestamp, timestamp, MAX_DELIVERIES),
             ).fetchone()
             if row is None:
                 return None
@@ -265,7 +293,7 @@ class IntakeDispatchStore(FencedDispatchStore):
             raise TypeError("PrivateBlobStore required")
         timestamp = _now(now)
         with self._transaction():
-            envelope, status, _ = self._get_queued_input(owner_id, job_id)
+            envelope, status, _, _ = self._get_queued_input(owner_id, job_id)
             if status != "review":
                 raise JobStateError("Input is not pending operator review")
             try:
@@ -289,16 +317,21 @@ class IntakeDispatchStore(FencedDispatchStore):
                 )
                 self._db.execute(
                     """UPDATE input_handoff
-                       SET state='failed',first_missing_at=NULL,updated_at=?
+                       SET state='failed',first_missing_at=NULL,
+                           input_expires_at=NULL,updated_at=?
                        WHERE job_id=? AND state='review'""",
                     (timestamp, job_id),
                 )
                 return True
+            expires = blobs.input_expires_at(
+                owner_id, job_id, envelope.input_ref, now=timestamp,
+            )
             self._db.execute(
                 """UPDATE input_handoff
-                   SET state='ready',first_missing_at=NULL,updated_at=?
+                   SET state='ready',first_missing_at=NULL,
+                       input_expires_at=?,updated_at=?
                    WHERE job_id=? AND state='review'""",
-                (timestamp, job_id),
+                (expires, timestamp, job_id),
             )
             return False
 
@@ -365,12 +398,12 @@ class InputHandoff:
     ) -> str:
         """Rebind the authoritative outbox input after a partial crash."""
         timestamp = _now(now)
-        actual, status, _ = self.dispatch.input_status(
+        actual, status, _, valid_until = self.dispatch.input_status(
             owner_id, envelope.job_id,
         )
         if actual != envelope:
             raise JobStateError("Mismatch with durable dispatch envelope")
-        if status == "ready":
+        if status == "ready" and valid_until is not None and valid_until > timestamp:
             return "ready"
         try:
             self.blobs.bind_input(
@@ -400,7 +433,7 @@ class InputHandoff:
         timestamp = _now(now)
         if type(review_after_seconds) is not int or not 1 <= review_after_seconds <= 3600:
             raise ValueError("Invalid review interval")
-        rows = self.dispatch.pending_inputs(limit=limit)
+        rows = self.dispatch.pending_inputs(now=timestamp, limit=limit)
         ready = suspect = review = skipped = 0
         for owner_id, envelope in rows:
             try:
