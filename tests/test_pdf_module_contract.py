@@ -123,6 +123,23 @@ class PdfModuleContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "cannot remove all"):
                     server._transform(source, directory, "pdf:remove", "1-3")
 
+    def test_image_dispatch_stays_independent_from_pdf_module(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            source = directory / "source.png"
+            with (
+                patch.object(server, "pdf_module") as pdf,
+                patch.object(server, "convert_image") as convert_image,
+            ):
+                target = server._transform(source, directory, "img:PNG", "")
+                self.assertEqual(target, directory / "converted.png")
+                convert_image.assert_called_once_with(source, target, "PNG")
+                pdf.count_pages.assert_not_called()
+                pdf.extract.assert_not_called()
+                pdf.rotate.assert_not_called()
+                pdf.remove.assert_not_called()
+                pdf.merge.assert_not_called()
+
     def test_api_pdf_action_catalog_is_unchanged(self):
         from api.conversion_catalog import SUPPORTED
         self.assertEqual(SUPPORTED["pdf"], {
