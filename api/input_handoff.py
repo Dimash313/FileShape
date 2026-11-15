@@ -252,19 +252,29 @@ class IntakeDispatchStore(FencedDispatchStore):
 
     @serialized
     def claim_next(
-        self, *, now: float | None = None, lease_seconds: int = 60,
+        self, blobs: PrivateBlobStore, *,
+        now: float | None = None, lease_seconds: int = 60,
     ) -> DispatchLease | None:
-        """Only lease jobs with an explicit verified-ready input handoff.
+        """Verify owner-bound input bytes again before every worker lease.
 
-        The transaction is the SAME as the base queue's claim transaction;
-        a missing/uncommitted readiness row is never treated as ready.
+        The dispatch write transaction serializes the readiness re-check and
+        lease issuance. This cannot keep file bytes pinned after the lease,
+        but missing/corrupt files will not be handed to a worker at claim.
+        A missing queued input is marked suspect for recovery; an expired
+        processing lease with missing bytes remains unclaimable pending
+        operator recovery, not silently charged or delivered.
         """
+        if not isinstance(blobs, PrivateBlobStore):
+            raise TypeError("PrivateBlobStore required for verified claims")
         timestamp = _now(now)
         seconds = _lease_seconds(lease_seconds)
         self.expire_exhausted(now=timestamp)
         with self._transaction():
-            row = self._db.execute(
-                """SELECT d.job_id,d.envelope,d.state,d.attempts,j.state
+            # Limit file I/O per claim; never scan a whole large queue while
+            # holding the dispatch database's exclusive write lock.
+            rows = self._db.execute(
+                """SELECT d.job_id,d.envelope,d.state,d.attempts,
+                          j.state,j.owner_id,h.input_expires_at
                    FROM dispatch_outbox d
                    JOIN jobs j ON j.job_id=d.job_id
                    JOIN input_handoff h
@@ -273,39 +283,58 @@ class IntakeDispatchStore(FencedDispatchStore):
                    WHERE d.state='queued'
                       OR (d.state='leased' AND d.lease_until<=?
                           AND d.attempts<?)
-                   ORDER BY d.created_at,d.job_id LIMIT 1""",
+                   ORDER BY d.created_at,d.job_id LIMIT 4""",
                 (timestamp, timestamp, MAX_DELIVERIES),
-            ).fetchone()
-            if row is None:
-                return None
-            job_id, payload, state, attempts, job_state = row
-            if (state == "queued" and job_state != "queued") or (
-                state == "leased" and job_state != "processing"
-            ):
-                raise JobStateError()
-            envelope = SingleFileJobV1.from_json(payload)
-            if envelope.job_id != job_id:
-                raise JobStateError()
-            if state == "queued":
+            ).fetchall()
+            for job_id, payload, state, attempts, job_state, owner_id, expiry in rows:
+                if (state == "queued" and job_state != "queued") or (
+                    state == "leased" and job_state != "processing"
+                ):
+                    raise JobStateError()
+                envelope = SingleFileJobV1.from_json(payload)
+                if envelope.job_id != job_id:
+                    raise JobStateError()
+                try:
+                    blobs.read_input(
+                        owner_id, job_id, envelope.input_ref, now=timestamp,
+                    )
+                    if blobs.input_expires_at(
+                        owner_id, job_id, envelope.input_ref, now=timestamp,
+                    ) != expiry:
+                        raise BlobUnavailable()
+                except BlobUnavailable:
+                    if state == "queued":
+                        self._db.execute(
+                            """UPDATE input_handoff
+                               SET state='suspect',first_missing_at=?,
+                                   input_expires_at=NULL,updated_at=?
+                               WHERE job_id=? AND state='ready'""",
+                            (timestamp, timestamp, job_id),
+                        )
+                    # Expired leased jobs need a separate reviewed failure
+                    # path. Never claim again while input is unavailable.
+                    continue
+                if state == "queued":
+                    changed = self._db.execute(
+                        """UPDATE jobs SET state='processing',updated_at=?
+                           WHERE job_id=? AND state='queued'""",
+                        (timestamp, job_id),
+                    ).rowcount
+                    if changed != 1:
+                        raise JobStateError()
+                token = secrets.token_urlsafe(24)
+                lease_until = timestamp + seconds
                 changed = self._db.execute(
-                    """UPDATE jobs SET state='processing',updated_at=?
-                       WHERE job_id=? AND state='queued'""",
-                    (timestamp, job_id),
+                    """UPDATE dispatch_outbox SET state='leased',
+                       attempts=attempts+1,lease_hash=?,lease_until=?,updated_at=?
+                       WHERE job_id=? AND state=?""",
+                    (hashlib.sha256(token.encode("ascii")).hexdigest(),
+                     lease_until, timestamp, job_id, state),
                 ).rowcount
                 if changed != 1:
-                    raise JobStateError()
-            token = secrets.token_urlsafe(24)
-            expiry = timestamp + seconds
-            changed = self._db.execute(
-                """UPDATE dispatch_outbox SET state='leased',
-                   attempts=attempts+1,lease_hash=?,lease_until=?,updated_at=?
-                   WHERE job_id=? AND state=?""",
-                (hashlib.sha256(token.encode("ascii")).hexdigest(),
-                 expiry, timestamp, job_id, state),
-            ).rowcount
-            if changed != 1:
-                raise DispatchLeaseConflict()
-            return DispatchLease(envelope, token, attempts + 1, expiry)
+                    raise DispatchLeaseConflict()
+                return DispatchLease(envelope, token, attempts + 1, lease_until)
+            return None
 
     @serialized
     def fail_reviewed_input(
