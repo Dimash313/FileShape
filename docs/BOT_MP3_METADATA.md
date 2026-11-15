@@ -14,21 +14,18 @@ tap `🏷 Теги MP3`. A compact inline keyboard offers individual choices:
 - 💿 Альбом
 - 📅 Год
 - 🏷 Жанр
-- 🖼 Обложка · скоро (informational, **not implemented**)
 - ✖️ Отмена
 
 Choose one supported field, then send only its replacement value.
 Send `~` to erase the selected tag. Year is exactly four ASCII digits.
 Each value is at most 120 characters; controls, NUL, newlines and
-overlong input are rejected **before** quota reservation. One confirmed
-edit produces one MP3 result, with a fresh menu for further edits.
+overlong input are rejected **before** quota reservation. A visible **Back to fields** button returns from value entry to the\nfield selector; **Cancel** clears the editor without processing. One\nconfirmed edit produces one MP3 result, with a fresh menu for further edits.
 
 This stage supports **MP3 only**, not M4A, FLAC, OGG, WAV or MP3 cover
 replacement. The existing embedded **JPEG/PNG** attached picture (if any)
 is copied without recoding along with the original MP3 audio stream. Unknown
 video streams or more than one artwork stream are rejected rather than
-silently discarded. The cover button clearly states that changing artwork
-is **not yet available**; it does not accept or process a photo.
+silently discarded. Changing artwork is **not yet available**, so no actionable cover button\nis displayed; the editor does not accept or process a photo.
 
 ## Security, honesty and accounting
 
