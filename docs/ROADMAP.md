@@ -95,3 +95,14 @@ actions, backend resource limits and FFmpeg functions remain unchanged.
 See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md) for the ingress
 inventory, compatibility tests and next migration steps. Do not claim
 runtime parity or merge before exact-head CI and cross-client checks.
+
+### Phase B2 — shared audio adapter in the Telegram bot (draft)
+
+Telegram audio-info and audio-conversion handler paths now use the same
+typed in-process module port as the API. Authorization, Telegram transport,
+usage accounting and output limits stay in their existing owner layers.
+Tests cover callback ownership, supported actions, successful delegation,
+conversion failures and failed delivery with quota refunds.
+See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md). This PR is not
+deployed or verified by exact-head full CI. The other format modules
+and the bot's existing interface remain unchanged.
