@@ -94,6 +94,22 @@ test('job history and status notice use the same API-typed localized labels', ()
     assert.ok(app.includes(state + ": '" + label + "'"), 'Missing localized state ' + state);
   }
   assert.match(app, /showNotice\('Статус задания: ' \+ jobStateLabels\[status\.state\], status\.state === 'failed' \? 'alert' : 'status'\);/);
-  assert.match(app, /\{item\.jobState \? ' · ' \+ jobStateLabels\[item\.jobState\] : ''\}/);
+  assert.match(app, /\{item\.jobState \? jobStateLabels\[item\.jobState\] : 'завершено'\}/);
   assert.doesNotMatch(app, /' · ' \+ item\.jobState\b/);
+});
+
+test('history only shows a completed icon for confirmed completed or local results', () => {
+  assert.match(app, /const historyStateIcons: Record<JobStatus\['state'\], LucideIcon> = \{/);
+  for (const state of ['queued', 'processing']) {
+    assert.match(app, new RegExp(state + ': Clock3,'));
+  }
+  for (const state of ['failed', 'cancelled']) {
+    assert.match(app, new RegExp(state + ': X,'));
+  }
+  assert.match(app, /completed: Check,/);
+  assert.match(app, /const HistoryStateIcon = item\.jobState \? historyStateIcons\[item\.jobState\] : Check;/);
+  assert.match(app, /<HistoryStateIcon size=\{18\} aria-hidden="true" \/>/);
+  assert.doesNotMatch(app, /: <Check size=\{18\}\/>/);
+  assert.match(app, /\{item\.jobState \? jobStateLabels\[item\.jobState\] : 'завершено'\}/);
+  assert.match(app, /aria-label=\{'Скачать ' \+ item\.name\}/);
 });
