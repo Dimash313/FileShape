@@ -99,6 +99,28 @@ class HttpZipCreateTests(unittest.TestCase):
                 "\\" not in name for name in archive.namelist()
             ))
 
+    def test_http_generated_high_compression_zip_roundtrips_in_our_reader(self):
+        from services.archive_tools import inspect_zip, unpack_zip
+        payload = b"A" * 400_000
+        response = self.upload([
+            ("first.txt", payload),
+            ("second.bin", b"normal binary data"),
+        ])
+        self.assertEqual(response.status_code, 200, response.text)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            output = path / "response.zip"
+            output.write_bytes(response.content)
+            self.assertEqual(inspect_zip(output)["files"], 2)
+            with zipfile.ZipFile(output) as archive:
+                self.assertEqual(archive.getinfo("first.txt").compress_type,
+                                 zipfile.ZIP_STORED)
+            extracted = unpack_zip(output, path)
+            self.assertEqual(
+                [p.read_bytes() for p, _ in extracted],
+                [payload, b"normal binary data"],
+            )
+
     def test_exactly_two_and_five_files_supported(self):
         files = [(f"file_{index}.bin", bytes([index + 1])) for index in range(5)]
         for count in (2, 5):
