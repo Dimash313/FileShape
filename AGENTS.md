@@ -188,3 +188,50 @@ fix it before merge. For lower-severity issues, track them transparently
 and do not describe that component as 10/10 until resolved. Do not claim
 that every line has been formally proven perfect; document the checks
 actually performed and what remains unverified.
+
+### Whole-project excellence and adversarial quality review — ALL surfaces
+
+**Non-negotiable scope:** the 10/10 aspiration and all hard gates apply
+to the **entire FileShape system**, including shared libraries, third-party
+dependencies, backend, API, worker, storage, queue, databases, infrastructure,
+CI/CD, deployment, Telegram bot, Telegram Mini App, public website, web app,
+Android and iOS apps, onboarding, navigation, accessibility, localization,
+support, pricing, payments, operations, monitoring, and all interactions
+between them. A channel, feature, or platform is **not exempt** merely
+because it is new, experimental, internal, or developed by a different AI.
+
+**Whole-system rule:** a collection of individually good components is
+insufficient. Their integrations, shared data contracts, cross-platform
+consistency, state transitions, and failure/recovery behavior must also
+meet the same high bar. Review the **entire affected execution path**,
+not just changed lines. Keep the full codebase maintainable: proactively
+track and reduce technical debt, obsolete paths, inconsistent interfaces,
+unnecessary complexity and dependency risks. Do not make cosmetic
+improvements while leaving critical system defects unfixed.
+
+**Think like a demanding user, independent reviewer and adversarial
+tester.** For every feature and release, actively seek:
+- security bypasses, authorization gaps, cross-user leakage, replay,
+  forged inputs, payment/quota abuse, unsafe file parsing and exhaustion;
+- broken cross-client workflows, inconsistent results, races, stale
+  state, partial failures, crashes, restarts and recovery gaps;
+- hidden UX dead ends, confusing controls, inaccessible tasks, clipped
+  layouts, misleading messages and inconsistent behavior on narrow phones;
+- corrupted or degraded output, metadata loss, incorrect file detection,
+  undocumented format limits, privacy leaks and retention mistakes;
+- maintainability risks, duplicated code, weak contracts, missing tests,
+  fragile migrations, unverified deployment claims and ethical-policy gaps.
+
+**No known exploitable loopholes or release-blocking flaws.** Fix and
+retest every confirmed critical/high issue before merge or launch.
+Record all other findings, prioritize remediation, and do not claim
+perfection while material issues are unresolved. Include both
+cross-surface integration tests and negative/adversarial test cases
+where relevant; periodically commission independent reviews when
+feasible. Never interpret “no loopholes” as a promise of absolute
+security or zero unknown bugs.
+
+**Applies permanently** to current and future products and platforms,
+and to every contributor, automation and AI coding agent. A release
+must have evidence-backed PASS for every applicable mandatory gate
+across every shipped surface, not a blended average score.
