@@ -272,9 +272,13 @@ def docx_to_txt(source: Path, target: Path) -> dict:
 
 
 def read_plain_text(source: Path) -> str:
-    if source.stat().st_size > MAX_TEXT_BYTES:
+    # Enforce the byte cap on the actual input, not a pre-read stat result.
+    # Files can grow between stat() and read_bytes(); an unbounded read
+    # could bypass the byte limit and consume arbitrary memory.
+    with source.open("rb") as stream:
+        data = stream.read(MAX_TEXT_BYTES + 1)
+    if len(data) > MAX_TEXT_BYTES:
         raise ValueError("TXT превышает лимит 2 МБ")
-    data = source.read_bytes()
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
