@@ -3,14 +3,14 @@
 Updated: 2026-11-16 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
 Current Issue: [#210](https://github.com/Dimash313/FileShape/issues/210), repeated task cancellation must not abandon subprocess reaping.
-Current branch: `api-security/210-resilient-worker-reap`. PR pending at this status edit; target exactly `api-security/169-worker-env-boundary` / [Draft #170](https://github.com/Dimash313/FileShape/pull/170).
+Current branch: `api-security/210-resilient-worker-reap`. Current PR: [#213](https://github.com/Dimash313/FileShape/pull/213) (**Draft**); target exactly `api-security/169-worker-env-boundary` / [Draft #170](https://github.com/Dimash313/FileShape/pull/170).
 Dependency chain: current branch → #170 (worker env) → #164 (bounded stdout) → `docs/independent-development-tracks` / #112 (unmerged). Never merge out of order or overwrite parent branches.
 
 ## Current issue #210 — bounded fix
 
 - `api/worker_runner.py`: added `_reap_worker` which starts one independent wait task and shields it in a retry loop, preserving the caller's cancellation signal **after** reaping. Previous single `await asyncio.shield(proc.wait())` could be interrupted by repeated `task.cancel()`, completing the caller while the wait remained pending.
 - `tests/test_worker_runner.py`: deterministic actual-child regression: gate `proc.wait()` completion, cancel parent twice, assert it cannot finish before reaping is permitted to complete; retain timeout/normal cancellation tests. Initial local reproduction (Linux/Python) showed old single-shield code exits early on second cancel. No new dependency, HTTP API, billing, platform, user content or domain changes.
-- **No exact-head hosted CI observed for this branch at the time of status edit.** Require real Python suite, Docker and Mini App checks, independent review of process cleanup semantics and integration with parents before merge.
+- GitHub run [#43758544246](https://github.com/Dimash313/FileShape/actions/runs/43758544246), original PR head `cf0ee9b23a34857aad826f84caa852f060070720`, allocated real hosted runners and Mini App passed; Python still executing at that time. This STATUS update advances the branch head, so **recheck the newest exact-head workflow run** before claiming success. Require full Python, Docker and Mini App checks, independent review of process cleanup semantics and integration with parents before merge.
 
 ## Parent issue #169 — isolation of worker secrets
 
