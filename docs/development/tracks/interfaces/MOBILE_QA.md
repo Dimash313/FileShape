@@ -33,6 +33,7 @@
 | M6 | Verify upload versus server-waiting status | Only real transmitted bytes show a numeric percentage. Server processing/validation never claims a fabricated percent | Not run |
 | M7 | Turn on reduced-motion / high-contrast settings if available | Focus remains perceivable and text legible; nonessential animation is suppressed | Not run |
 | M8 | Return to `Главная` from all bottom tabs | No obsolete Scanner or broken tool entry; section changes and files remain coherent | Not run |
+| M9 | Test a wide desktop browser viewport (e.g. 1024 CSS px) and forced-colors mode | Focused skip link aligns with the centered 600px Mini App rather than the window edge, stays fully visible, and uses system focus colors | Not run |
 
 ## Sign-off evidence and stop conditions
 
