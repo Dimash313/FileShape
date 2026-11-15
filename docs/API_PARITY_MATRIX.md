@@ -159,3 +159,22 @@ and their larger independent per-bundle limits are unchanged.
 The PR remains draft because GitHub Actions jobs fail before runner
 allocation (issue #101). Require real exact-head full Python/Mini App/
 Docker checks and ZIP binary smoke tests before merging or releasing.
+
+## Phase F4 — consistent ZIP output limits (draft)
+
+ZIP creation via Telegram now admits up to **50 MiB total
+uncompressed input** (matching its own ZIP reader's limit), versus
+the previous 60 MiB ZIP-bundle selection cap. The separate
+Telegram PDF merge still admits 60 MiB. The HTTP ZIP creation
+route retains its stricter 20 MiB aggregate size limit.
+
+The shared ZIP writer normally DEFLATE-compresses members; only
+members that would violate the unchanged strict reader
+compression-ratio threshold are stored uncompressed in a
+verified staging archive before atomic publication. This
+preserves normal compression and avoids producing a ZIP that
+FileShape itself refuses to extract, without allowing malicious
+high-ratio external ZIP files.
+
+Issue #110 tracks the original regression; CI issue #101 still
+blocks merging this change into `main`.
