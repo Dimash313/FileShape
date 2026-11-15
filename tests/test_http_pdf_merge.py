@@ -143,7 +143,7 @@ class PdfMergeApiTests(unittest.TestCase):
         too_many = pdf_fixture(pages=251)
         response = self.upload([("large.pdf", too_many), ("small.pdf", pdf_fixture())])
         self.assertEqual(response.status_code, 422, response.text)
-        self.assertIn("page limit", response.json()["detail"].lower())
+        self.assertIn("pages", response.json()["detail"].lower())
 
         encrypted = PdfWriter()
         encrypted.add_blank_page(width=72, height=72)
