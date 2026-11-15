@@ -239,6 +239,59 @@ class BotPdfPortTests(unittest.IsolatedAsyncioTestCase):
         state.clear.assert_not_awaited()
         self.assertIn("Bad range", message.answer.await_args_list[-1].args[0])
 
+    async def test_telegram_pdf_delivery_failure_refunds_quota(self):
+        callback, bot, state = self.callback("pdf:rotate")
+        callback.message.answer_document.side_effect = OSError("Telegram unavailable")
+
+        def rotate(source, target, degrees):
+            self.assertEqual(degrees, 90)
+            target.write_bytes(b"mock PDF")
+            return 1
+
+        with (
+            patch.object(main, "Message", SimpleNamespace),
+            patch.object(main, "allow_processing", new_callable=AsyncMock,
+                         return_value=True),
+            patch.object(main, "reserve_bot_operation",
+                         new_callable=AsyncMock, return_value=JOB),
+            patch.object(main, "settle_bot_operation",
+                         new_callable=AsyncMock) as settle,
+            patch.object(main, "pdf_module") as pdf,
+            patch.object(main.logger, "exception"),
+        ):
+            pdf.rotate.side_effect = rotate
+            await main.run_action(callback, bot, state)
+            settle.assert_awaited_once_with(USER, TOKEN, JOB, False)
+        callback.message.answer_document.assert_awaited_once()
+        self.assertIn("Не удалось обработать файл",
+                      callback.message.answer.await_args_list[-1].args[0])
+
+    async def test_denied_pdf_merge_does_not_consume_quota_or_download(self):
+        message = make_message()
+        state = SimpleNamespace(
+            get_state=AsyncMock(return_value=main.MergeState.collecting.state),
+            get_data=AsyncMock(return_value={"pdfs": [
+                {"file_id": "first", "size": 1024},
+                {"file_id": "second", "size": 1024},
+            ]}),
+            clear=AsyncMock(),
+        )
+        bot = make_bot()
+        with (
+            patch.object(main, "allow_processing", new_callable=AsyncMock,
+                         return_value=False) as allow,
+            patch.object(main, "reserve_bot_operation",
+                         new_callable=AsyncMock) as reserve,
+            patch.object(main, "pdf_module") as pdf,
+        ):
+            await main.run_merge(message, bot, state, USER)
+            allow.assert_awaited_once()
+            reserve.assert_not_awaited()
+            pdf.merge.assert_not_called()
+        bot.download.assert_not_awaited()
+        state.clear.assert_not_awaited()
+        message.answer_document.assert_not_awaited()
+
     async def test_foreign_or_unknown_callback_does_not_download_or_reserve(self):
         cases = (
             self.callback("pdf:info", owner=USER + 1),
