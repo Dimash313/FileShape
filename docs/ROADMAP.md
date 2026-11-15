@@ -325,3 +325,28 @@ identity system, payment activation or outside services introduced.
 CI is still blocked before runner allocation (issue #101). This
 stacked PR must stay draft until exact-head tests run and pass.
 
+## Phase F3 — authenticated bounded HTTP ZIP creation (draft)
+
+`POST /api/v1/zip/create` uses the shared ZIP module in the
+isolated worker, with 2–5 client-selected files, original order and
+safe ZIP member naming. HTTP upload limit is 20 MiB total, with
+independently enforced per-file/worker resource limits. The new
+batch route uses existing private workspace lifecycle, Telegram
+Mini App authentication, subscription and quota admission, output
+streaming and cleanup. Existing bot flows remain unchanged.
+
+The v1 HTTP capability manifest describes this real route under
+`batch_operations` as accepting arbitrary file suffixes; it does
+not add `zip:create` to the single-file action allowlist. Real
+ZIP and worker contract tests cover integrity, names, limit and
+failure cases. **ZIP extraction over HTTP remains missing.**
+
+Next work should design secure owner-scoped extraction results
+without treating a multi-file output as an atomic Telegram-style
+message burst. Any web/mobile login needs independently reviewed
+FileShape sessions, not a shared product-wide IhsanSoft account.
+
+No new paid dependency, integration, content or media assets.
+Keep all changes unmerged until exact-head CI completes on real
+GitHub runners and malformed/large ZIP smoke tests pass
+(issue #101).
