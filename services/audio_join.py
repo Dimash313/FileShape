@@ -93,6 +93,7 @@ def join_audio(sources: Sequence[Path], target: Path) -> dict:
         result_info = probe_audio(temp_path)
         if abs(float(result_info["seconds"]) - total_seconds) > 1.0:
             raise ValueError("Не удалось проверить длительность результата")
+        temp_path.chmod(0o600)
         try:
             os.link(temp_path, target)
         except FileExistsError:
