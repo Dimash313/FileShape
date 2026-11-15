@@ -49,6 +49,17 @@ class RealAudioJoinTests(unittest.TestCase):
         self.assertAlmostEqual(info["seconds"], 1.1, delta=0.2)
         self.assertEqual(list(self.dir.glob(".fileshape-audio-join-*")), [])
 
+    def test_five_inputs_at_limit(self):
+        sources = []
+        for index in range(5):
+            part = self.dir / f"segment_{index}.wav"
+            make_silence(part, 0.2, 8000 + index * 2000)
+            sources.append(part)
+        info = join_audio(sources, self.target)
+        self.assertEqual(info["inputs"], 5)
+        self.assertAlmostEqual(probe_audio(self.target)["seconds"], 1.0, delta=0.2)
+        self.assertEqual(list(self.dir.glob(".fileshape-audio-join-*")), [])
+
     def test_reject_invalid_count(self):
         for sources in ([], [self.a], [self.a] * 6):
             with self.subTest(size=len(sources)), self.assertRaisesRegex(ValueError, "от 2 до 5"):
