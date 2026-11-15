@@ -323,3 +323,50 @@ latency improvement or production capacity is claimed until benchmarks.
 then continue to independent document and archive modules. Do not
 advertise a Video API until its full processing and security chain ships.
 
+
+## Phase C5 — Telegram image handlers use the shared image module (draft)
+
+Telegram image conversion and optimization in `main.py` now call the same
+`services.image_module.image_module` port used by the API. The operations
+remain limited to the existing buttons: `img:JPEG`, `img:PNG`,
+`img:WEBP`, `img:PDF`, and `img:compress`.
+
+### Preserved user-visible contract
+
+| Bot callback | Port operation | Bot output name |
+| --- | --- | --- |
+| `img:JPEG` | `convert(source, target, "JPEG")` | `converted.jpg` |
+| `img:PNG` | `convert(source, target, "PNG")` | `converted.png` |
+| `img:WEBP` | `convert(source, target, "WEBP")` | `converted.webp` |
+| `img:PDF` | `convert(source, target, "PDF")` | `converted.pdf` |
+| `img:compress` | `compress(source, target)` | `optimized.webp` |
+
+The bot uses `services.image_tools.IMAGE_FORMATS` for the original format
+extension mapping; no new format is accepted. It retains its existing
+image-document and photo input semantics. The source image remains
+downloaded to a per-operation private temporary directory, while the
+result is delivered through the existing Telegram send mechanism.
+
+**Ownership and billing remain outside the port:** the existing private
+chat/user callback checks, allowed-action validation, input size checks,
+FSM busy state, entitlement checks, quota reservation, concurrent operation
+limit, download, output size checks, Telegram delivery, success/refund
+settlement and directory cleanup are not moved or weakened.
+
+The new `tests/test_bot_image_module.py` covers all five callbacks, exact
+output names and menu categories, photo input, unsupported/foreign/oversized
+requests rejected before processing, entitlement denial, processing failure,
+Telegram send failure and output-too-large failure with quota refunds. The
+real image parser/conversion, API and image-bundle regressions remain in
+the earlier test suites.
+
+The image module's **batch** operation is available to the API worker for
+the existing multiple-photo-to-PDF flow, but the Telegram bot does not
+have an equivalent multi-photo PDF workflow in this phase. Do not claim
+a newly shipped feature.
+
+**Follow-up:** document and archive domain contracts and cross-platform
+capability alignment can proceed in separate PRs. No public endpoints,
+auth mechanism, subscription product, dependency, or size limit was added.
+All required exact-head CI and manual bot checks must pass before merge.
+
