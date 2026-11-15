@@ -7,6 +7,7 @@ import json
 import math
 import os
 import stat
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import subprocess
@@ -23,29 +24,39 @@ SAFE_AUDIO_DEMUXERS = frozenset({
 })
 
 
-def _validate_audio_header(source: Path) -> None:
-    """Reject manifests *before* FFprobe can read external file references."""
+@contextmanager
+def _pinned_audio_source(source: Path):
+    """Keep the *validated inode* open during FFprobe and FFmpeg.
+
+    The backend runs on Linux. /proc/self/fd lets native tools seek within an
+    already-validated regular file, even if its original pathname is swapped
+    later. No fallback to reopening the untrusted pathname is permitted.
+    """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(source, flags)
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError("Нужен обычный аудиофайл")
-            header = os.read(fd, 16)
-        finally:
-            os.close(fd)
     except OSError:
         raise ValueError("Не удалось прочитать аудиофайл") from None
-    is_wav = header[:4] in (b"RIFF", b"RF64") and header[8:12] == b"WAVE"
-    is_mp3 = header.startswith(b"ID3") or (
-        len(header) > 1 and header[0] == 0xFF and header[1] & 0xE0 == 0xE0
-    )
-    is_ogg = header.startswith(b"OggS")
-    is_flac = header.startswith(b"fLaC")
-    is_m4a = len(header) >= 8 and header[4:8] == b"ftyp"
-    if not (is_wav or is_mp3 or is_ogg or is_flac or is_m4a):
-        raise ValueError("Неподдерживаемый аудиоконтейнер")
-
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("Нужен обычный аудиофайл")
+        header = os.pread(fd, 16, 0)
+        is_wav = header[:4] in (b"RIFF", b"RF64") and header[8:12] == b"WAVE"
+        is_mp3 = header.startswith(b"ID3") or (
+            len(header) > 1 and header[0] == 0xFF and header[1] & 0xE0 == 0xE0
+        )
+        is_ogg = header.startswith(b"OggS")
+        is_flac = header.startswith(b"fLaC")
+        is_m4a = len(header) >= 8 and header[4:8] == b"ftyp"
+        if not (is_wav or is_mp3 or is_ogg or is_flac or is_m4a):
+            raise ValueError("Неподдерживаемый аудиоконтейнер")
+        if not os.path.isdir("/proc/self/fd"):
+            raise ValueError("Защищённая обработка аудио недоступна")
+        yield f"/proc/self/fd/{fd}", fd
+    except OSError:
+        raise ValueError("Не удалось прочитать аудиофайл") from None
+    finally:
+        os.close(fd)
 
 def _program(name: str) -> str:
     location = shutil.which(name)
@@ -54,18 +65,18 @@ def _program(name: str) -> str:
     return location
 
 
-def probe_audio(source: Path, *, exact: bool = False) -> dict:
-    """Read metadata from one self-contained, bounded audio file."""
-    _validate_audio_header(source)
+def _probe_pinned_audio(pinned_path: str, fd: int, *, exact: bool) -> dict:
+    """Probe an already authenticated, open regular-file descriptor."""
     try:
         result = subprocess.run(
             [
                 _program("ffprobe"), "-v", "error",
                 "-protocol_whitelist", "file,pipe",
                 "-show_entries", "format=format_name,duration:stream=codec_type,codec_name",
-                "-of", "json", str(source),
+                "-of", "json", pinned_path,
             ],
             capture_output=True, text=True, timeout=12, check=False,
+            pass_fds=(fd,),
         )
     except subprocess.TimeoutExpired:
         raise ValueError("Не удалось проверить аудио за отведённое время") from None
@@ -96,31 +107,39 @@ def probe_audio(source: Path, *, exact: bool = False) -> dict:
     }
 
 
+def probe_audio(source: Path, *, exact: bool = False) -> dict:
+    """Probe only the validated inode, not a potentially replaced filename."""
+    with _pinned_audio_source(source) as (pinned_path, fd):
+        return _probe_pinned_audio(pinned_path, fd, exact=exact)
+
+
 def convert_audio(source: Path, target: Path, output_format: str) -> dict:
     """Transcode to a fixed safe preset, with process and file size caps."""
     fmt = output_format.lower()
     if fmt not in OUTPUT_FORMATS or target.suffix.lower() != OUTPUT_FORMATS[fmt]:
         raise ValueError("Неподдерживаемый формат аудио")
-    info = probe_audio(source)
     presets = {
         "mp3": ["-c:a", "libmp3lame", "-b:a", "128k"],
         "ogg": ["-c:a", "libopus", "-b:a", "64k", "-ar", "48000"],
         "wav": ["-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1"],
     }
-    command = [
-        _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-        "-protocol_whitelist", "file,pipe", "-i", str(source),
-        "-map", "0:a:0", "-vn", "-sn", "-dn",
-        "-map_metadata", "-1", "-map_chapters", "-1",
-        "-t", str(MAX_DURATION_SECONDS), "-fs", str(MAX_AUDIO_OUTPUT_BYTES),
-        *presets[fmt], str(target),
-    ]
-    try:
-        done = subprocess.run(command, capture_output=True, timeout=65, check=False)
-    except subprocess.TimeoutExpired:
-        raise ValueError("Конвертация превысила лимит времени") from None
-    if done.returncode != 0 or not target.exists() or target.stat().st_size == 0:
-        raise ValueError("Не получилось конвертировать аудио в этот формат")
-    if target.stat().st_size > MAX_AUDIO_OUTPUT_BYTES:
-        raise ValueError("Результат превысил допустимый размер")
-    return info
+    with _pinned_audio_source(source) as (pinned_path, fd):
+        info = _probe_pinned_audio(pinned_path, fd, exact=False)
+        command = [
+            _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+            "-protocol_whitelist", "file,pipe", "-i", pinned_path,
+            "-map", "0:a:0", "-vn", "-sn", "-dn",
+            "-map_metadata", "-1", "-map_chapters", "-1",
+            "-t", str(MAX_DURATION_SECONDS), "-fs", str(MAX_AUDIO_OUTPUT_BYTES),
+            *presets[fmt], str(target),
+        ]
+        try:
+            done = subprocess.run(command, capture_output=True, timeout=65, check=False,
+                                  pass_fds=(fd,))
+        except subprocess.TimeoutExpired:
+            raise ValueError("Конвертация превысила лимит времени") from None
+        if done.returncode != 0 or not target.exists() or target.stat().st_size == 0:
+            raise ValueError("Не получилось конвертировать аудио в этот формат")
+        if target.stat().st_size > MAX_AUDIO_OUTPUT_BYTES:
+            raise ValueError("Результат превысил допустимый размер")
+        return info
