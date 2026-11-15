@@ -70,15 +70,25 @@ class RealMediaSafetyTests(unittest.TestCase):
 
 
 class ProbeFailureTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.source = Path(temp.name) / "sample.wav"
+        with wave.open(str(self.source), "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(16000)
+            writer.writeframes(b"\x00\x00" * 160)
+
     def test_overlong_duration_is_rejected(self):
-        payload = {"format": {"duration": "601"}, "streams": [
+        payload = {"format": {"format_name": "wav", "duration": "601"}, "streams": [
             {"codec_type": "audio", "codec_name": "pcm_s16le"}]}
         completed = subprocess.CompletedProcess([], 0, json.dumps(payload), "")
         with patch("services.audio_tools._program", return_value="ffprobe"), patch(
             "services.audio_tools.subprocess.run", return_value=completed
         ):
             with self.assertRaisesRegex(ValueError, "10 минут"):
-                probe_audio(Path("/not-used.wav"))
+                probe_audio(self.source)
 
     def test_probe_timeout_is_reported(self):
         with patch("services.audio_tools._program", return_value="ffprobe"), patch(
@@ -86,7 +96,7 @@ class ProbeFailureTests(unittest.TestCase):
             side_effect=subprocess.TimeoutExpired(["ffprobe"], 12),
         ):
             with self.assertRaisesRegex(ValueError, "отведённое время"):
-                probe_audio(Path("/not-used.wav"))
+                probe_audio(self.source)
 
     def test_ffmpeg_timeout_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
