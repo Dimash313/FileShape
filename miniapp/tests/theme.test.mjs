@@ -28,7 +28,9 @@ function contrast(first, second) {
 }
 
 test('every color in the Mini App stylesheet is achromatic', () => {
-  const colors = [...css.matchAll(/#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b/gi)];
+  // CSS issue references and documentation comments are not rendered colors.
+  const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const colors = [...declarations.matchAll(/#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b/gi)];
   assert.ok(colors.length >= 100, 'Unexpectedly few CSS colors inspected');
   for (const [, raw] of colors) {
     const hex = raw.toLowerCase();
@@ -40,7 +42,7 @@ test('every color in the Mini App stylesheet is achromatic', () => {
       assert.equal(hex.slice(2, 4), hex.slice(4, 6), '#' + hex);
     }
   }
-  assert.doesNotMatch(css, /\b(?:rgba?|hsla?)\s*\(/i, 'Color functions must be reviewed for non-neutral channels');
+  assert.doesNotMatch(declarations, /\b(?:rgba?|hsla?)\s*\(/i, 'Color functions must be reviewed for non-neutral channels');
 });
 
 test('main text and button states retain readable contrast', () => {
@@ -64,7 +66,11 @@ test('complete workflows and mobile accessibility remain covered', () => {
   assert.match(css, /safe-area-inset-bottom/);
   assert.match(app, /aria-current=\{tab === item\.tab \? 'page' : undefined\}/);
   assert.match(app, /aria-pressed=\{format === item\.value\}/);
-  assert.match(app, /progress\.stage === 'upload' && progress\.percent !== null/);
+  // Progress rendering delegates validation to a typed presenter; its cases are
+  // exercised by transferPresentation.test.mjs, not brittle JSX source patterns.
+  assert.match(app, /const view = describeTransfer\(progress\)/);
+  assert.match(app, /view\.uploadPercent !== null/);
+  assert.match(app, /aria-valuenow=\{view\.uploadPercent\}/);
   assert.match(html, /name="theme-color" content="#080808"/);
   assert.doesNotMatch(app, /className="blue-dot"/);
 });
