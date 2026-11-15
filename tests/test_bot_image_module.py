@@ -147,7 +147,7 @@ class BotImagePortTests(unittest.IsolatedAsyncioTestCase):
             settle.assert_awaited_once_with(USER_ID, BOT_TOKEN, JOB_ID, True)
         callback.message.answer_document.assert_awaited_once()
         bot.download.assert_awaited_once()
-        self.assertEqual(callback.message.answer_document.await_args.args[0].path.split("/")[-1],
+        self.assertEqual(Path(callback.message.answer_document.await_args.args[0].path).name,
                          "optimized.webp")
 
     async def test_conversion_failure_refunds_and_reports_error(self):
