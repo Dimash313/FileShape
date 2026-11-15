@@ -69,6 +69,63 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data["padding"]) + len('{"ok": true, "padding": ""}'),
                          WORKER_OUTPUT_LIMIT)
 
+    async def test_worker_subprocess_does_not_inherit_parent_secrets(self):
+        # Exercise an actual child process rather than inspecting only the
+        # keyword arguments passed to create_subprocess_exec.
+        original = asyncio.create_subprocess_exec
+        script = (
+            "import json,os,sys\n"
+            "sys.stdin.buffer.read()\n"
+            "secrets=('BOT_TOKEN','GITHUB_TOKEN','AWS_SECRET_ACCESS_KEY',"
+            "'FILESHAPE_PRIVATE_KEY','PYTHONPATH','PYTHONHOME',"
+            "'PYTHONSTARTUP','LD_PRELOAD','LD_LIBRARY_PATH')\n"
+            "sys.stdout.write(json.dumps({'ok':True,"
+            "'leaked':[key for key in secrets if key in os.environ],"
+            "'path':bool(os.getenv('PATH')),"
+            "'dotenv':os.getenv('PYTHON_DOTENV_DISABLED'),"
+            "'pythonio':os.getenv('PYTHONIOENCODING')}))\n"
+        )
+
+        async def inspect_child(*args, **kwargs):
+            return await original(
+                sys.executable, "-c", script,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
+                env=kwargs["env"],
+            )
+
+        sentinels = {
+            "BOT_TOKEN": "fake_bot_token",
+            "GITHUB_TOKEN": "fake_github_token",
+            "AWS_SECRET_ACCESS_KEY": "fake_aws_key",
+            "FILESHAPE_PRIVATE_KEY": "fake_internal_secret",
+            "PYTHONPATH": "/tmp/hostile",
+            "PYTHONHOME": "/tmp/hostile",
+            "PYTHONSTARTUP": "/tmp/hostile.py",
+            "LD_PRELOAD": "/tmp/hostile.so",
+            "LD_LIBRARY_PATH": "/tmp/hostile",
+        }
+        with patch.dict(os.environ, sentinels):
+            with patch("api.worker_runner.asyncio.create_subprocess_exec", side_effect=inspect_child):
+                response = await run_worker({"operation": "invalid"}, timeout=5)
+        self.assertEqual(response["leaked"], [])
+        self.assertTrue(response["path"])
+        self.assertEqual(response["dotenv"], "1")
+        self.assertEqual(response["pythonio"], "utf-8")
+
+    def test_dotenv_will_not_reload_worker_bot_secret(self):
+        from io import StringIO
+        from dotenv import load_dotenv
+        from api.worker_runner import _worker_environment
+
+        worker_env = _worker_environment()
+        self.assertEqual(worker_env["PYTHON_DOTENV_DISABLED"], "1")
+        with patch.dict(os.environ, worker_env, clear=True):
+            self.assertFalse(load_dotenv(stream=StringIO("BOT_TOKEN=secret_from_dotenv\n")))
+            self.assertNotIn("BOT_TOKEN", os.environ)
+
     async def test_timeout_kills_child(self):
         original = asyncio.create_subprocess_exec
 
