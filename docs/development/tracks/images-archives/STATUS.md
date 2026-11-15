@@ -2,27 +2,25 @@
 
 Updated: 2026-11-15 UTC.
 Track: `images-archives`.
-Branch: `fix/zip-extraction-failure-cleanup-g1`.
-Code + test snapshot head before STATUS update: `602f07da40d062ab6e2d60dd647293b4779987d8`. For the **final** exact head SHA and checks, inspect PR #128 live (this handoff update is itself another commit).
 
-## Current work
-- Issue: [#121 — ZIP extraction staged publication, no-clobber and cleanup](https://github.com/Dimash313/FileShape/issues/121), claimed.
-- Active PR: [#128](https://github.com/Dimash313/FileShape/pull/128), **Draft**, base `docs/independent-development-tracks`.
-- Dependency chain: [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) (Issue [#110](https://github.com/Dimash313/FileShape/issues/110)) → [#109](https://github.com/Dimash313/FileShape/pull/109) → architecture parents. None is merged as of this snapshot. Do **not** merge #128 ahead of its parents.
+## Integration chain (all Draft / NOT merged)
+- [PR #137 — atomic image output integrity](https://github.com/Dimash313/FileShape/pull/137) · branch `fix/image-atomic-output-h2` · base `fix/zip-extraction-failure-cleanup-g1`; Issue [#133](https://github.com/Dimash313/FileShape/issues/133)
+- [PR #128 — staged ZIP extraction with no-clobber rollback](https://github.com/Dimash313/FileShape/pull/128) · Issue [#121](https://github.com/Dimash313/FileShape/issues/121)
+- [PR #112 — independent tracks handoff](https://github.com/Dimash313/FileShape/pull/112) → [PR #111 — ZIP writer/reader compatibility](https://github.com/Dimash313/FileShape/pull/111) (Issue #110) → [PR #109 — HTTP ZIP create](https://github.com/Dimash313/FileShape/pull/109) → earlier architecture parents.
+- Merge only in dependency order, after real **final-head** green CI and review. Do not rebase or independently merge stacked descendants while parents are unverified.
 
-## Proposed implementation in PR #128 (not in main)
-- `services/archive_tools.py`: preflight + validation on the same ZIP object subsequently extracted; private in-output-directory staging; bounded streaming with existing byte/bomb/count/path/encryption checks; hard-link-based non-overwriting publication and rollback on partial publication failure. Preserve 01_/02_ filenames, order and return interface.
-- `tests/test_archive_extraction_cleanup.py`: nine tests for good output, bad second-file CRC, collision with existing file and symlink, failure on second publish, actual-byte overrun, archive replacement between inspect/open, high ratio + count limits, and symlink destination folder.
-- No new HTTP route, format, shared API contract, payment, billing, database, user-facing content, imagery, music or provider integration.
+## PR #137 implementation (NOT in main)
+- `services/image_tools.py`: private same-directory stage output with `mkstemp`, explicit Pillow encoder format for all supported image/PDF conversions and WebP optimization, `os.replace` publication only on success and guaranteed stage removal. Preserve target bytes if encoder fails; stage file permissions 0600; close transient alpha-conversion image buffer.
+- `tests/test_image_atomic_outputs.py`: seven new offline tests for JPEG/PNG/WebP/PDF and optimized WebP, 35m pixel-header rejection, partial save failure, final rename failure, symlink output protection, private permissions, bad source/format.
+- Unchanged: image quality presets, 35,000,000-pixel cap, image module/public API signatures, bot/Mini App processing flow, private owner workspace, quota and API contracts.
+- No new paid services, new imagery/media assets, audio, advertising or payment paths; AGENTS.md still applies.
 
-## Verification (precise)
-- Locally executed on a manually mirrored inspector/extractor + matching focused scenarios (not a full repo checkout): `python -m unittest -v tests.test_archive_extraction_cleanup` — **9/9 passed**, Python 3.13, Linux.
-- This does **not** establish an exact-head PR test pass. Full repo Python suite, Mini App tests/typecheck/build, Docker, production-like Telegram ZIP integration, cross-format and exact-head GitHub Actions: **NOT EXECUTED / NOT VERIFIED** for this PR.
-- GitHub Actions [runner allocation blocker #101](https://github.com/Dimash313/FileShape/issues/101) remains an integration gate. Do not treat zero-step checks as green.
+## Verification and blockers
+- **Executed locally** on a manually mirrored image module, Python 3.13 / Pillow 12.3: actual JPEG, PNG, WebP, PDF and quality-72 optimized WebP outputs, injected partial encoder and failed-rename cleanup, existing result preservation, mode 0600. These probes **passed**, but are NOT exact-head full-repository execution. Committed seven-test suite still requires exact-head run; do not claim those tests were executed unless a run is captured.
+- Earlier PR #128: nine previously mirrored ZIP tests passed locally; full exact-head suite unverified.
+- Required and **NOT VERIFIED**: full Python suite, Mini App test/typecheck/build, Docker, representative bot/API images and ZIP, actual production-like filesystem, exact-head GitHub Actions. [CI blocker #101](https://github.com/Dimash313/FileShape/issues/101) remains a release gate; no merge on zero-step or absent checks.
+- Verify final head SHA from PR #137 live; this STATUS commit updates the branch after the last code commit.
+- ZIP HTTP extraction remains unimplemented: multi-result, owner-scoped retrieval requires `api-security` coordination and separate approved contract.
 
-## Risks and integration checks
-- Output publication uses same-volume hardlinks (no second 50 MiB copy); verify support on the deployment filesystem. Publication is sequential, not simultaneous visibility of an entire multi-file batch; on error the extractor attempts to remove its own published links. Filesystem permissions or a failed unlink can still prevent cleanup; the owner workspace remains the final cleanup boundary.
-- Tests must run against the **exact PR head** and against the full existing ZIP bot + HTTP suite before merge.
-- ZIP HTTP **extraction** remains unimplemented; coordinate owner-scoped multi-file delivery with `api-security` before any shared API change.
-
-Next unblocked Issue: **NONE currently assigned** (review #128 and verify #110 first; further image safety tests can be scoped to a new non-overlapping Issue).
+## Next non-overlapping work
+- Review existing staged PRs and CI first; after image atomic output, independently consider atomic multi-image PDF batch output in `services/image_bundle.py` (requires a new claimed Issue and separate PR). Keep no-code client expansion and image size increases out of scope until measured resource tests.
