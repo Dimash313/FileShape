@@ -2,28 +2,25 @@
 
 Updated: 2026-11-15 UTC
 Track: `images-archives`
-Claimed Issue: [#178 — bounded concurrent image PDF resource measurement](https://github.com/Dimash313/FileShape/issues/178)
-Current branch: `test/image-concurrent-resources-h8`
-Active PR: [#181](https://github.com/Dimash313/FileShape/pull/181), **Draft** based on `test/image-resource-benchmarks-h7` (PR #168). Review live GitHub PR head/CI after documentation changes.
+Claimed Issue: [#186 — close transient PDF image buffers per page](https://github.com/Dimash313/FileShape/issues/186)
+Branch: `fix/image-bundle-eager-buffer-release-h9`
+PR: **Draft pending creation**, base `test/image-concurrent-resources-h8` (PR #181). Inspect live PR for exact final head after docs.
 
-## Work in this branch (not merged)
+## Proposed changes (Draft, not merged)
+- `services/image_bundle.py`: nested short-lived `ExitStack` around each decoded original and temporary RGBA buffer, freeing both before the next image is decoded. Keep outer `ExitStack` for completed RGB PDF page canvases only, so Pillow can safely encode all PDF pages. Register the freshly allocated white RGB canvas for cleanup **before** alpha paste to avoid leaks if paste fails.
+- `tests/test_image_bundle_transient_release.py`: 4 tests for immediate source closure before next decode, RGBA closure, paste-error canvas cleanup and preservation of previous target on corrupt later member.
+- `docs/benchmarks/IMAGE_RESOURCES.md`: local *manually reconstructed* three-run before/after memory figures and methodology; not an exact PR checkout nor production performance claim.
+- No changes to public image module/API, auth, worker scheduling, per-owner quotas, input formats, EXIF, page ordering, source pinning, per-file/bundle pixel limits, target publication or temp stage naming. No extra provider, audio, payments, media assets or images of living beings (AGENTS.md).
 
-- `benchmarks/image_concurrency.py`: opt-in Linux diagnostic for **two or three independent processes** using only synthetic solid/block fixtures and existing `image_module.bundle_as_pdf`, with per-worker private directories. Samples simultaneous child-only RSS from /proc; distinguishes sampled aggregate from sum of individual process peaks, reports CPU, wall time, sampled count, exact input sizes and runtime metadata as JSON. Per-child RLIMIT_AS, a sampled aggregate RSS abort budget, timeout, kill/reap and cleanup on failure. These bounds do not replace kernel-enforced cgroup or real worker admission.
-- `tests/test_image_concurrency_benchmark.py`: lightweight real **two-worker smoke** and error cleanup, procfs sampling and validation of worker/memory/sampling bounds. No default-CI three-worker or near-cap workloads.
-- `docs/benchmarks/IMAGE_CONCURRENCY.md`: exact CLI commands, counter semantics, limitations and opt-in manual workload warning.
-- `docs/development/tracks/images-archives/ROADMAP.md`: this isolated diagnostic follow-up. AGENTS.md respected; no living-being test images, audio, billing or new providers.
+## Verification and evidence
+- Parent [PR #181](https://github.com/Dimash313/FileShape/pull/181), head `12422e4bca5757ef90e321879a941cdfdebd2d12`, passed actual [Actions run #43734472561](https://github.com/Dimash313/FileShape/actions/runs/43734472561): **678 Python tests** passed; Mini App tests/typecheck/build and Docker succeeded. Real 2-worker tiny-block workload: 54.562 MiB sampled aggregate child RSS, 55.688 MiB summed independent peak RSS. These are tiny 15,232-pixel-per-job fixtures and not a near-cap concurrency result.
+- **Current branch exact-head Actions not yet executed/verified.** Tests written on GitHub. A separate local reconstructed-domain smoke check confirmed original close-before-next decode, RGBA close-before-next decode, and canvas close/preservation on injected paste error. This is not full repo CI.
+- Local A/B measured with the same reconstructed-domain benchmark harness, three fresh processes per profile, Python 3.13.5 / Pillow 12.3.0 / pypdf 5.9.0, Linux: near-cap 6×1800² total 19.44m pixels median absolute child peak **306.887 → 195.891 MiB (~36.2% lower)**; typical 1.4784m pixels **114.633 → 105.582 MiB (~7.9% lower)**. These are one-color synthetic files, not actual host or production profile. See `docs/benchmarks/IMAGE_RESOURCES.md`.
+- Remaining: exact-head full Python suite/Mini App/Docker, auth/owner-bound bot/API regression, representative deployment container memory and 2-/3-worker near-cap measurement, security review and main CI after parent integration. Do not change runtime concurrency allowances based on these experimental figures.
 
-## Verification / release gates
+## Integration dependency
+Pending branch → [#181](https://github.com/Dimash313/FileShape/pull/181) → [#168](https://github.com/Dimash313/FileShape/pull/168) → [#162](https://github.com/Dimash313/FileShape/pull/162) → [#159](https://github.com/Dimash313/FileShape/pull/159) → [#153](https://github.com/Dimash313/FileShape/pull/153) → [#144](https://github.com/Dimash313/FileShape/pull/144) → [#137](https://github.com/Dimash313/FileShape/pull/137) → [#128](https://github.com/Dimash313/FileShape/pull/128) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) → [#109](https://github.com/Dimash313/FileShape/pull/109) → earlier architecture parents. All are Draft/unmerged at last branch inspection. Never merge out of dependency order or without real final-head checks/review.
 
-- Parent [PR #168](https://github.com/Dimash313/FileShape/pull/168) **final head before this branch** `4cd324e804eff4990f773abb5c0b963e8c305970` passed actual GitHub Actions [run #43732178535](https://github.com/Dimash313/FileShape/actions/runs/43732178535) including Python, Mini App and Docker.
-- **Current branch exact-head Python / Mini App / Docker has not been verified yet.** Do not claim green until an actual full workflow completes. No new real two/three-worker memory measurements are asserted before the test output is inspected.
-- Previously verified [run #43730150700](https://github.com/Dimash313/FileShape/actions/runs/43730150700) on parent #168 ran 671 Python tests and measured an isolated two-image **single-worker** smoke (15,232 px) at 25.785 MiB child peak RSS / 0.025771 sec wall time. These are single-worker, not aggregate concurrency figures.
-- Three local *manual reconstructed source* measurements per typical/near-cap style are in `docs/benchmarks/IMAGE_RESOURCES.md`; they are **not** exact full-repo deployment performance or multi-worker aggregate measurements.
-- API & Security [Issue #177](https://github.com/Dimash313/FileShape/issues/177) retains ownership of actual concurrent worker admission / per-owner limits. This PR changes no API, queue, quota, worker, payment, bot, Mini App, or Docker code.
-- CI runner blockage [#101](https://github.com/Dimash313/FileShape/issues/101) was closed after the repo became public. Every new exact-head commit still needs real successful CI, review and post-merge main verification.
-
-## Stacked Draft dependency chain
-
-Current branch → [#168](https://github.com/Dimash313/FileShape/pull/168) → [#162](https://github.com/Dimash313/FileShape/pull/162) → [#159](https://github.com/Dimash313/FileShape/pull/159) → [#153](https://github.com/Dimash313/FileShape/pull/153) → [#144](https://github.com/Dimash313/FileShape/pull/144) → [#137](https://github.com/Dimash313/FileShape/pull/137) → [#128](https://github.com/Dimash313/FileShape/pull/128) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) → [#109](https://github.com/Dimash313/FileShape/pull/109) → earlier architecture ancestors.
-
-Do not merge out of order. Next: confirm real two-worker smoke results, verify no false memory claims and exact-head full CI; then coordinate bounded deployment-equivalent memory tests with API/security.
+## Next step
+- Open a Draft PR for #186; verify full exact-head GitHub Actions including new regression cases. Correct any observed test failure without loosening safety.
+- After stable green branch CI, coordinate actual worker concurrency / RSS guardrails with API & Security Issue [#177](https://github.com/Dimash313/FileShape/issues/177). HTTP ZIP extraction remains solely a contract proposal in [Issue #132](https://github.com/Dimash313/FileShape/issues/132).
