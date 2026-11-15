@@ -26,8 +26,9 @@ immediately. The new opt-in IntakeDispatchStore fails closed:
    in the private blob metadata, then verifies its regular inode,
    ownership, permissions, length and SHA-256 through read_input().
 4. Only after successful binding and verification does
-   mark_input_ready() create a durable readiness row. Claims are allowed
-   only when that row says ready.
+   mark_input_ready() re-verify the bound input inside the dispatch
+   transaction and create a readiness row with its recorded expiry.
+   Claims are allowed only when the row says ready and its TTL remains valid.
 5. A duplicate request using the same trusted owner/key/fingerprint
    returns the original job without another charge or changing the
    authoritative reference. A newly staged unused copy is deleted.
@@ -35,9 +36,11 @@ immediately. The new opt-in IntakeDispatchStore fails closed:
    without resurrecting it.
 
 **This is readiness at the moment of verification, not a durable byte
-pin or a guarantee the file survives until processing.** Files can still
-expire, disappear or be corrupted after readiness is recorded. Input
-retention/worker file leases must be designed before live activation.
+pin or a guarantee the file survives until processing.** Inputs that expire
+while still queued become unclaimable and are routed to recovery/review.
+A file may still disappear or become corrupted after readiness but before
+worker acquisition, so input retention, worker-side verification, handling
+of expired processing leases and file leases remain rollout blockers.
 
 ## Offline recovery and operator resolution
 
