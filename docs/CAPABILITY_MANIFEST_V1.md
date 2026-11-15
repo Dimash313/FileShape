@@ -19,10 +19,11 @@ and Mini App processing behavior and authorization remain unchanged.
 - `max_upload_bytes` and `max_result_bytes` refer to the **HTTP API's**
   current maximums, not mobile or bot transport limits.
 - `batch_operations[]` is a **separate route descriptor** for the actually
-  implemented `POST /api/v1/images/pdf` endpoint. It includes the
-  accepted image suffixes, current minimum/maximum count and aggregate
-  upload limit. It is **not** a `/api/v1/convert` action code.
-  API ZIP creation/extraction and PDF merge are not implemented routes.
+  implemented `POST /api/v1/images/pdf` image-batch and
+  `POST /api/v1/pdf/merge` PDF merge endpoints. Each has its own
+  accepted input suffixes, minimum/maximum file count, and aggregate
+  20 MiB HTTP upload limit. Neither is a `/api/v1/convert` action code.
+  API ZIP creation/extraction are not implemented routes.
 
 The endpoint is public, returns no personal/account/payment/job metadata and
 has `Cache-Control: no-store`. It cannot start work, award credits, or
@@ -55,7 +56,7 @@ considering any deployment.
 ## Source and compatibility
 
 This manifest reuses the unmerged design from PR #87 and extends it
-with a separate, strictly declared image-batch route for the current
+with separately declared image-batch and PDF merge routes for the current
 architecture branch. It is a description of HTTP **route availability**
 only, not a promise that files are processable, runtime resources are
 healthy, or a deployment exists. `schema_version: 1` stays stable
@@ -73,3 +74,46 @@ The upload and result caps are enforced per HTTP transport; they are
 not the Telegram Bot API limits or a guarantee of concurrent capacity.
 A capability listing does not reserve a worker, bypass user quota,
 disable subscription access policy or authorize an operation.
+
+
+## Phase F2 — bounded HTTP PDF merge through the shared PDF port (draft)
+
+The new `POST /api/v1/pdf/merge` endpoint exposes the existing PDF
+merge domain operation to authenticated HTTP clients through an
+independent batch route, **not** a new action accepted by
+`POST /api/v1/convert`. It accepts 2–5 PDFs, preserves upload order,
+and uses the existing Telegram initData authentication, per-owner
+accounting, rate limits, admission, subprocess isolation and PDF
+format/page checks. New HTTP aggregate upload cap is 20 MiB and
+merged output is capped at 45 MiB; this differs from the Telegram
+bot's independent 60 MiB PDF bundle budget. No sharing of upload
+paths or session state between users.
+
+`api.worker` recognizes only explicit `pdf_merge` worker operation
+and constructs controlled `pdf_0.pdf` ... `pdf_4.pdf` paths itself.
+The count must be an actual integer between 2 and 5, not a Boolean
+or a client-supplied path. Each source undergoes PDF byte-signature
+validation before the unchanged bounded `PdfModulePort.merge` call.
+
+Workspace prefix `fileshape_batch_pdf_merge_` deliberately matches the
+established crash-recovery orphan cleaner, and normal responses
+schedule temporary-workspace cleanup after streaming. Failed uploads,
+rejected content, cancellation, timeouts and exceptions clean up
+immediately. The route is protected by the existing byte-counting
+ASGI upload guard, not only an untrusted Content-Length header.
+
+The v1 capability manifest now advertises this real route under
+`batch_operations`, alongside existing `/api/v1/images/pdf`.
+It does not claim ZIP extraction/creation or an independent mobile
+login. Real-payload tests in `tests/test_http_pdf_merge.py` cover
+authorization, first-to-last page order, request bounds, bad/mixed
+files, password-protected and over-page PDFs, worker count/path
+validation and success/failure cleanup. Existing backend tests remain
+the release gate.
+
+No dependencies, paid features, advertising, third-party integrations,
+user-facing imagery or religiously sensitive materials are introduced.
+CI remains blocked before runner assignment (issue #101); do not merge
+this draft or deploy until full exact-head Python, Mini App and Docker
+checks and real-file smoke tests run and pass.
+
