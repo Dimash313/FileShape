@@ -30,6 +30,7 @@ from services.bot_operations import (
 from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
 from services.audio_trim import parse_trim_range, trim_audio
+from services.audio_metadata import parse_tag_edits, edit_mp3_tags
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.file_tools import (
@@ -63,6 +64,11 @@ class MergeState(StatesGroup):
 
 class TrimState(StatesGroup):
     waiting_for_range = State()
+
+
+class TagState(StatesGroup):
+    choosing_field = State()
+    waiting_for_fields = State()
 
 
 class ZipState(StatesGroup):
@@ -137,7 +143,7 @@ def back_keyboard() -> InlineKeyboardMarkup:
     return buttons([[("🧰 Все инструменты", "nav:tools"), ("🏠 Главное меню", "nav:home")]])
 
 
-def file_menu(kind: str) -> InlineKeyboardMarkup:
+def file_menu(kind: str, suffix: str = "") -> InlineKeyboardMarkup:
     if kind == "pdf":
         rows = [
             [("📄 Страницы", "pdf:info"), ("✂️ Первая", "pdf:first")],
@@ -155,6 +161,8 @@ def file_menu(kind: str) -> InlineKeyboardMarkup:
             [("→ MP3", "audio:mp3"), ("→ OGG", "audio:ogg"), ("→ WAV", "audio:wav")],
             [("✂️ Обрезать запись", "audio:trim"), ("ℹ️ Об аудио", "audio:info")],
         ]
+        if suffix.lower() == ".mp3":
+            rows.append([("🏷 Теги MP3", "audio:tags")])
     elif kind == "docx":
         rows = [[("📝 → TXT", "docx:txt"), ("ℹ️ О документе", "docx:info")]]
     elif kind == "txt":
@@ -241,7 +249,7 @@ async def send_result(message: Message, path: Path, caption: str = "✅ Гото
         caption="FileShape · " + caption + (
             "" if can_reprocess else "\\n⚠️ Результат больше 20 МБ: повторная обработка недоступна."
         ),
-        reply_markup=file_menu(kind) if can_reprocess else None,
+        reply_markup=file_menu(kind, path.suffix) if can_reprocess else None,
     )
 
 
@@ -699,6 +707,133 @@ async def audio_trim_range(message: Message, bot: Bot, state: FSMContext):
         await remove_status(status)
 
 
+
+TAG_FIELDS = {
+    "title": ("Название", "название"),
+    "artist": ("Исполнитель", "исполнителя"),
+    "album": ("Альбом", "альбом"),
+    "date": ("Год", "год (четыре цифры)"),
+    "genre": ("Жанр", "жанр"),
+}
+
+
+def tag_editor_keyboard() -> InlineKeyboardMarkup:
+    return buttons([
+        [("✏️ Название", "tags:title"), ("👤 Исполнитель", "tags:artist")],
+        [("💿 Альбом", "tags:album"), ("📅 Год", "tags:date")],
+        [("🏷 Жанр", "tags:genre")],
+        [("✖️ Отмена", "tags:cancel")],
+    ])
+
+
+@router.callback_query(F.data.startswith("tags:"))
+async def choose_audio_tag(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        await callback.answer("Открой редактор заново.", show_alert=True)
+        return
+    actor = callback.from_user.id
+    if callback.message.chat.type != "private" or callback.message.chat.id != actor:
+        await callback.answer("Только в личном чате.", show_alert=True)
+        return
+    data = await state.get_data()
+    current = await state.get_state()
+    if (data.get("owner_id") != actor or data.get("suffix") != ".mp3"
+            or not data.get("file_id")
+            or current not in {TagState.choosing_field.state, TagState.waiting_for_fields.state}):
+        await callback.answer("Эта кнопка устарела. Открой редактор заново.", show_alert=True)
+        return
+    choice = (callback.data or "").removeprefix("tags:")
+    if choice == "back":
+        if current != TagState.waiting_for_fields.state:
+            await callback.answer("Ты уже в меню полей.")
+            return
+        await state.update_data(tag_field=None)
+        await state.set_state(TagState.choosing_field)
+        await callback.answer()
+        await callback.message.answer("🏷 Что изменить?", reply_markup=tag_editor_keyboard())
+        return
+    if choice == "cancel":
+        await state.clear()
+        await callback.answer("Отменено")
+        await callback.message.answer("✖️ Редактирование тегов отменено.")
+        return
+    if choice not in TAG_FIELDS or current != TagState.choosing_field.state:
+        await callback.answer("Вернись к выбору поля.", show_alert=True)
+        return
+    await state.update_data(tag_field=choice)
+    await state.set_state(TagState.waiting_for_fields)
+    await callback.answer()
+    await callback.message.answer(
+        f"✏️ {TAG_FIELDS[choice][0]}\n\n"
+        f"Отправь новое значение ({TAG_FIELDS[choice][1]}).\n"
+        "Для удаления тега отправь ~.",
+        reply_markup=buttons([
+            [("↩️ Назад к полям", "tags:back")],
+            [("✖️ Отмена", "tags:cancel")],
+        ]),
+    )
+
+
+@router.message(TagState.waiting_for_fields)
+async def audio_tag_fields(message: Message, bot: Bot, state: FSMContext):
+    """Owner-bound MP3 metadata editing; delivery is one metered operation."""
+    actor_id = message.from_user.id if message.from_user else -1
+    if message.chat.type != "private" or message.chat.id != actor_id:
+        await message.answer("Редактирование тегов доступно только в личном чате.")
+        return
+    data = await state.get_data()
+    file_id = data.get("file_id")
+    if data.get("owner_id") != actor_id or not file_id or data.get("suffix") != ".mp3":
+        await state.clear()
+        await message.answer("Исходный MP3 недоступен. Пришли файл ещё раз.")
+        return
+    field = data.get("tag_field")
+    if field not in TAG_FIELDS:
+        await state.clear()
+        await message.answer("Поле не выбрано. Открой редактор заново.")
+        return
+    value = (message.text or "").strip()
+    try:
+        parts = ["-"] * 5
+        parts[list(TAG_FIELDS).index(field)] = value
+        edits = parse_tag_edits(" | ".join(parts))
+    except ValueError as error:
+        await message.answer(
+            f"{error}. Исправь значение или вернись к выбору поля.",
+            reply_markup=buttons([
+                [("↩️ Назад к полям", "tags:back")],
+                [("✖️ Отмена", "tags:cancel")],
+            ]),
+        )
+        return
+    if not await allow_processing(message, bot, actor_id):
+        return
+    status = await message.answer("⏳ Сохраняю теги MP3…")
+    try:
+        async with processing_slots, metered_bot_work(actor_id, bot):
+            with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
+                folder = Path(directory)
+                source = folder / "source.mp3"
+                await bot.download(file_id, destination=source)
+                check_download(source)
+                target = folder / "tagged.mp3"
+                await asyncio.to_thread(edit_mp3_tags, source, target, edits)
+                await send_result(message, target, "✅ Теги MP3 обновлены")
+        await state.clear()
+    except BotOperationQuotaExceeded:
+        await message.answer("Лимит операций исчерпан или другая операция ещё выполняется.")
+    except BotOperationUnavailable:
+        await message.answer("Учёт операций временно недоступен. Файл не обрабатывался.")
+    except ValueError as error:
+        await message.answer(f"Не удалось изменить теги: {error}. Исправь поля или /cancel.")
+    except Exception:
+        logger.exception("MP3 metadata edit failed")
+        await state.clear()
+        await message.answer("Не удалось изменить MP3. Пришли файл заново.")
+    finally:
+        await remove_status(status)
+
+
 @router.message(F.document | F.photo | F.audio | F.voice)
 async def received_file(message: Message):
     if message.chat.type != "private":
@@ -720,7 +855,7 @@ async def received_file(message: Message):
         f"{label} · {size / 1024 / 1024:.1f} МБ\n"
         f"{received_filename(message)[:70]}\n\n"
         "Выбери действие ↓",
-        reply_markup=file_menu(category),
+        reply_markup=file_menu(category, suffix),
         reply_to_message_id=message.message_id,
     )
 
@@ -758,7 +893,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
     }
     valid_audio = category == "audio" and action in {
         "audio:mp3", "audio:ogg", "audio:wav", "audio:info", "audio:trim"
-    }
+    } or (category == "audio" and suffix == ".mp3" and action == "audio:tags")
     valid_docx = category == "docx" and action in {"docx:info", "docx:txt"}
     valid_txt = category == "txt" and action in {"txt:info", "txt:docx"}
     valid_zip = category == "archive" and action in {"zip:list", "zip:extract"}
@@ -797,6 +932,17 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
             "Отправь начало и конец в формате:\n"
             "00:00:05-00:00:20\n\n"
             "Доступны записи до 10 минут. Отмена: /cancel."
+        )
+        return
+    if action == "audio:tags":
+        await state.set_state(TagState.choosing_field)
+        await state.update_data(
+            file_id=file.file_id, suffix=suffix, owner_id=callback.from_user.id,
+        )
+        await callback.message.answer(
+            "🏷 Редактор MP3 · Что изменить?\n\n"
+            "Выбери одно поле. Аудиодорожка не перекодируется.",
+            reply_markup=tag_editor_keyboard(),
         )
         return
     if action in {"pdf:extract", "pdf:remove"}:

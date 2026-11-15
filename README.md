@@ -1,5 +1,17 @@
 # FileShape
 
+## FileShape 5.0.13 — MP3 tag editor (DRAFT, bot only)
+
+An independent stacked PR proposes a private-chat **MP3-only** metadata editor:
+change or clear title, artist, album, date/year and genre without transcoding,
+retaining the existing supported embedded cover. Five pipe-separated fields
+are validated before quota reservation; successful delivery counts as one
+operation. See [docs/BOT_MP3_METADATA.md](docs/BOT_MP3_METADATA.md).
+**Not deployed, not tested end-to-end in Telegram, and not merged.** The
+parent audio-trim PR #89 and all final-head GitHub checks must pass first.
+No purchases or Stars checkout have been enabled. Existing bot input limit
+remains 20 MiB.
+
 ## FileShape 5.0.12 — Telegram audio trimming (draft PR)
 
 A proposed bot-only `✂️ Обрезать запись` action accepts a bounded
