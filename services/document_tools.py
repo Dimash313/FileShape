@@ -1,5 +1,6 @@
 """Plain-text export/import for Word documents (layout is not preserved)."""
 from pathlib import Path
+import stat
 import zipfile
 
 from docx import Document
@@ -14,7 +15,7 @@ MAX_TEXT_LINES = 5_000
 
 
 def validate_docx(source: Path) -> None:
-    """Reject oversized Office packages before python-docx parses their XML."""
+    """Reject oversized or ambiguous Office ZIP packages before XML parsing."""
     try:
         with zipfile.ZipFile(source) as archive:
             entries = archive.infolist()
@@ -23,8 +24,22 @@ def validate_docx(source: Path) -> None:
                 raise ValueError("Это не документ DOCX")
             if len(entries) > MAX_DOCX_FILES:
                 raise ValueError("Слишком сложный документ")
+            seen_parts: set[str] = set()
             total = 0
             for info in entries:
+                name = info.filename
+                part_name = name[:-1] if name.endswith("/") else name
+                segments = part_name.split("/")
+                if (not part_name or name.startswith("/") or "\\" in name
+                        or ":" in name or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                        or any(segment in ("", ".", "..") for segment in segments)):
+                    raise ValueError("Недопустимый путь элемента DOCX")
+                canonical = part_name.casefold()
+                if canonical in seen_parts:
+                    raise ValueError("Дублирующийся элемент DOCX")
+                seen_parts.add(canonical)
+                if stat.S_IFMT(info.external_attr >> 16) == stat.S_IFLNK:
+                    raise ValueError("Символические ссылки в DOCX запрещены")
                 if info.flag_bits & 1:
                     raise ValueError("Зашифрованный DOCX не поддерживается")
                 if info.file_size > MAX_DOCX_MEMBER:
