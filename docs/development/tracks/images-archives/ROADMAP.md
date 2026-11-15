@@ -52,3 +52,11 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - Regression: replace an already-approved pathname with a disguised GIF (another regular file) during the header pass; PDF must still use the original opened image and retain page geometry. Check FIFO, symlink, corrupt header and descriptor cleanup.
 - **Actual local reconstructed-domain regression:** 35/35 Python tests passed (6 new + 29 existing). This is not full-repo exact-head green CI. GitHub runner issue #101 blocks release.
 - Stack: #162 → #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture parents. Keep Draft and merge in dependency order after real CI/review. In-place inode modifications and platforms without `O_NOFOLLOW` need separate threat-model review; do not overclaim comprehensive TOCTOU prevention.
+
+
+## Measurable image CPU and peak-RSS — opt-in benchmark Draft
+
+- [Issue #166](https://github.com/Dimash313/FileShape/issues/166) / [Draft PR #168](https://github.com/Dimash313/FileShape/pull/168) introduces a reproducible Linux CLI, `python benchmarks/image_resources.py --profile smoke|typical|near-cap` (choose one profile), measuring actual `image_module.bundle_as_pdf` elapsed time, CPU time, and total peak child RSS; bounded subprocess timeout, memory limit and generated synthetic color-block fixtures. It never silently runs near-cap in CI.
+- No benchmark results or 10/10 performance claims until the exact script is executed, host/versions noted and multiple runs compared. Typical and near-limit input sizes stay within 20 MiB/22 million pixels; all private temporary fixtures are removed after running.
+- GitHub Actions runners became active after repository publicity change; parent #162 Mini App job succeeded on manual rerun #43725314168, Python still executing at last inspection. Re-check exact-head branch CI, do not confuse runner allocation with a successful test suite.
+- Stack #168 → #162 → #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture ancestors. All Draft until green exact-head gates/review; no API or billing changes.
