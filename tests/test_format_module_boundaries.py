@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORMAT_MODULES = {
     "audio": ROOT / "services" / "audio_tools.py",
     "audio_adapter": ROOT / "services" / "audio_module.py",
+    "pdf_adapter": ROOT / "services" / "pdf_module.py",
     "archive": ROOT / "services" / "archive_tools.py",
 }
 FORBIDDEN_PREFIXES = (
