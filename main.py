@@ -28,7 +28,8 @@ from services.bot_operations import (
     reserve_bot_operation, settle_bot_operation, fetch_bot_usage,
 )
 from services.campaign_bridge import forward_campaign_join
-from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
+from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
+from services.audio_module import audio_module
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.file_tools import (
@@ -765,7 +766,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                     count = await asyncio.to_thread(pdf_page_count, source)
                     await callback.message.answer(f"📄 В PDF страниц: {count}.")
                 elif action == "audio:info":
-                    info = await asyncio.to_thread(probe_audio, source)
+                    info = await asyncio.to_thread(audio_module.probe, source)
                     await callback.message.answer(
                         f"🎧 Аудио · {info['seconds']:.1f} сек. · "
                         f"кодек {info['codec']}\n"
@@ -807,7 +808,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                     elif action.startswith("audio:"):
                         fmt = action.split(":", 1)[1]
                         target = folder / ("audio" + OUTPUT_FORMATS[fmt])
-                        await asyncio.to_thread(convert_audio, source, target, fmt)
+                        await asyncio.to_thread(audio_module.convert, source, target, fmt)
                     elif action == "docx:txt":
                         target = folder / "document.txt"
                         await asyncio.to_thread(docx_to_txt, source, target)
