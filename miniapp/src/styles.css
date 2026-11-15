@@ -577,3 +577,33 @@ h1 {
   min-width: 44px;
   min-height: 44px;
 }
+
+/* Interfaces UX: in-app section keyboard navigation and skip link (#172). */
+.skip-link {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 16px;
+  z-index: 30;
+  transform: translateY(-200%);
+  opacity: 0;
+  pointer-events: none;
+  padding: 12px 16px;
+  border: 2px solid var(--text-primary);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.skip-link:focus {
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+#main-content,
+#screen-title {
+  scroll-margin-top: calc(90px + env(safe-area-inset-top));
+}
