@@ -47,6 +47,58 @@ class AudioContainerSafetyTests(unittest.TestCase):
                 self.assertGreater(info["seconds"], 0)
                 self.assertEqual(set(info), {"seconds", "codec"})
 
+    def test_probe_source_rename_cannot_replace_validated_inode(self):
+        original_run = subprocess.run
+        original_inode = self.wav.stat().st_ino
+        saved = self.root / "preserved.wav"
+        replaced = False
+
+        def swap_on_probe(command, *args, **kwargs):
+            nonlocal replaced
+            self.assertTrue(command[-1].startswith("/proc/self/fd/"))
+            self.assertEqual(len(kwargs["pass_fds"]), 1)
+            if not replaced:
+                self.wav.rename(saved)
+                self.wav.write_text("ffconcat version 1.0\nfile preserved.wav\n")
+                replaced = True
+            self.assertEqual(os.fstat(kwargs["pass_fds"][0]).st_ino, original_inode)
+            return original_run(command, *args, **kwargs)
+
+        with patch("services.audio_tools.subprocess.run", side_effect=swap_on_probe):
+            info = probe_audio(self.wav)
+        self.assertTrue(replaced)
+        self.assertAlmostEqual(info["seconds"], 1, delta=0.01)
+        self.assertTrue(saved.is_file())
+
+    def test_conversion_pins_same_inode_through_probe_and_transcode(self):
+        original_run = subprocess.run
+        original_inode = self.wav.stat().st_ino
+        saved = self.root / "kept.wav"
+        converted = self.root / "converted.mp3"
+        seen = []
+
+        def swap_after_probe(command, *args, **kwargs):
+            native = Path(command[0]).name
+            self.assertIn(native, ("ffprobe", "ffmpeg"))
+            descriptors = kwargs["pass_fds"]
+            self.assertEqual(len(descriptors), 1)
+            self.assertEqual(os.fstat(descriptors[0]).st_ino, original_inode)
+            seen.append((native, descriptors[0]))
+            if native == "ffprobe":
+                result = original_run(command, *args, **kwargs)
+                self.wav.rename(saved)
+                self.wav.write_text("ffconcat version 1.0\nfile kept.wav\n")
+                return result
+            self.assertIn(f"/proc/self/fd/{descriptors[0]}", command)
+            return original_run(command, *args, **kwargs)
+
+        with patch("services.audio_tools.subprocess.run", side_effect=swap_after_probe):
+            convert_audio(self.wav, converted, "mp3")
+        self.assertEqual([name for name, _ in seen], ["ffprobe", "ffmpeg"])
+        self.assertEqual(seen[0][1], seen[1][1])
+        self.assertTrue(converted.is_file())
+        self.assertAlmostEqual(probe_audio(converted)["seconds"], 1, delta=0.15)
+
     def test_disguised_playlist_does_not_launch_ffprobe_or_ffmpeg(self):
         manifest = self.root / "seems-valid.wav"
         manifest.write_text("ffconcat version 1.0\nfile quiet.wav\nduration 1\n")
