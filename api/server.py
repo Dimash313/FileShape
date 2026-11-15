@@ -52,7 +52,8 @@ from services.archive_tools import inspect_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
 from services.upload_validation import validate_upload
-from services.file_tools import IMAGE_FORMATS, compress_image, convert_image
+from services.image_tools import IMAGE_FORMATS
+from services.image_module import image_module
 from services.pdf_module import pdf_module
 
 logger = logging.getLogger(__name__)
@@ -834,11 +835,11 @@ def _transform(source: Path, output_dir: Path, action: str, pages: str) -> Path:
     if action.startswith("img:"):
         if action == "img:compress":
             target = output_dir / "optimized.webp"
-            compress_image(source, target)
+            image_module.compress(source, target)
         else:
             fmt = action.split(":", 1)[1]
             target = output_dir / ("converted" + IMAGE_FORMATS[fmt])
-            convert_image(source, target, fmt)
+            image_module.convert(source, target, fmt)
     elif action.startswith("audio:"):
         fmt = action.split(":", 1)[1]
         target = output_dir / ("converted" + OUTPUT_FORMATS[fmt])
