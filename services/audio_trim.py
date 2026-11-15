@@ -7,12 +7,14 @@ this helper verifies the actual stream with ffprobe and runs bounded FFmpeg.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import re
 import subprocess
+import tempfile
 
 from services.audio_tools import (
     AUDIO_EXTENSIONS, MAX_AUDIO_OUTPUT_BYTES, MAX_DURATION_SECONDS,
-    _program, probe_audio,
+    _pinned_audio_source, _probe_pinned_audio, _program, probe_audio,
 )
 
 MAX_AUDIO_INPUT_BYTES = 20 * 1024 * 1024
@@ -39,10 +41,11 @@ def parse_trim_range(spec: str) -> tuple[int, int]:
 
 
 def trim_audio(source: Path, target: Path, spec: str) -> dict:
-    """Accurate decoded trim to MP3 128k; verified bounds and safe cleanup.
+    """Accurate MP3 trim using one validated, pinned input file descriptor.
 
-    Input/output paths must come from the server's own temporary directory.
-    Never accept a client URL, command, filename or option as FFmpeg flags.
+    Sources and destinations must live in the calling service's private
+    workspace. Never use a URL, client-provided flags or filename as FFmpeg
+    options. Failed jobs cannot overwrite or leave a partial final result.
     """
     start, end = parse_trim_range(spec)
     if (
@@ -51,51 +54,64 @@ def trim_audio(source: Path, target: Path, spec: str) -> dict:
         or source.resolve() == target.resolve()
     ):
         raise ValueError("Неподдерживаемый путь или формат аудио")
-    if (
-        source.is_symlink() or not source.is_file()
-        or not 0 < source.stat().st_size <= MAX_AUDIO_INPUT_BYTES
-    ):
-        raise ValueError("Аудиофайл отсутствует или превышает лимит 20 МБ")
+    if target.exists() or target.is_symlink():
+        raise ValueError("Файл результата уже существует")
+    if not target.parent.is_dir() or target.parent.is_symlink():
+        raise ValueError("Недопустимый каталог результата")
 
-    # probe_audio rejects any video track and input duration > 10 min.
-    # exact=True avoids rounding up the source duration when checking the end.
-    input_info = probe_audio(source, exact=True)
-    if end > input_info["seconds"]:
-        raise ValueError("Конец отрезка выходит за длительность аудиофайла")
+    # Opening once prevents a path substitution between validation and the
+    # native tools. fstat verifies the size of exactly the inode FFmpeg sees.
+    with _pinned_audio_source(source) as (pinned_path, fd):
+        if not 0 < os.fstat(fd).st_size <= MAX_AUDIO_INPUT_BYTES:
+            raise ValueError("Аудиофайл отсутствует или превышает лимит 20 МБ")
 
-    # Output is MP3 intentionally: codec/container behavior is predictable
-    # for Telegram voice/FLAC/WAV/M4A sources, with no stream-copy seek drift.
-    command = [
-        _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-        "-protocol_whitelist", "file,pipe", "-i", str(source),
-        "-ss", str(start), "-t", str(end - start),
-        "-map", "0:a:0", "-vn", "-sn", "-dn",
-        "-map_metadata", "-1", "-map_chapters", "-1",
-        "-c:a", "libmp3lame", "-b:a", "128k",
-        "-fs", str(MAX_AUDIO_OUTPUT_BYTES), str(target),
-    ]
-    success = False
-    try:
+        input_info = _probe_pinned_audio(pinned_path, fd, exact=True)
+        if end > input_info["seconds"]:
+            raise ValueError("Конец отрезка выходит за длительность аудиофайла")
+
+        # Encode inside the target directory. A hard-link installs the final
+        # result only if its name still does not exist. The scratch file is
+        # always unlinked, whether conversion, validation or linking fails.
+        handle, scratch_name = tempfile.mkstemp(
+            prefix=".fileshape-audio-trim-", suffix=".mp3", dir=target.parent
+        )
+        os.close(handle)
+        scratch = Path(scratch_name)
         try:
-            result = subprocess.run(
-                command, capture_output=True, timeout=65, check=False,
-            )
-        except subprocess.TimeoutExpired:
-            raise ValueError("Обрезка аудио превысила лимит времени") from None
-        if result.returncode != 0 or not target.is_file():
-            raise ValueError("Не удалось обрезать запись")
-        if not 0 < target.stat().st_size <= MAX_AUDIO_OUTPUT_BYTES:
-            raise ValueError("Результат обрезки пустой или слишком большой")
-        actual = probe_audio(target, exact=True)["seconds"]
-        if not 0 < actual <= end - start + 0.35:
-            raise ValueError("Не удалось подтвердить длительность результата")
-        success = True
-        return {
-            "start_seconds": start,
-            "end_seconds": end,
-            "actual_seconds": round(actual, 2),
-            "output_format": "mp3",
-        }
-    finally:
-        if not success:
-            target.unlink(missing_ok=True)
+            command = [
+                _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                "-protocol_whitelist", "file,pipe", "-i", pinned_path,
+                "-ss", str(start), "-t", str(end - start),
+                "-map", "0:a:0", "-vn", "-sn", "-dn",
+                "-map_metadata", "-1", "-map_chapters", "-1",
+                "-c:a", "libmp3lame", "-b:a", "128k",
+                "-fs", str(MAX_AUDIO_OUTPUT_BYTES), str(scratch),
+            ]
+            try:
+                result = subprocess.run(
+                    command, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=65, check=False, pass_fds=(fd,),
+                )
+            except subprocess.TimeoutExpired:
+                raise ValueError("Обрезка аудио превысила лимит времени") from None
+            if result.returncode != 0 or not scratch.is_file():
+                raise ValueError("Не удалось обрезать запись")
+            if not 0 < scratch.stat().st_size <= MAX_AUDIO_OUTPUT_BYTES:
+                raise ValueError("Результат обрезки пустой или слишком большой")
+            actual = probe_audio(scratch, exact=True)["seconds"]
+            if not 0 < actual <= end - start + 0.35:
+                raise ValueError("Не удалось подтвердить длительность результата")
+            scratch.chmod(0o600)
+            try:
+                os.link(scratch, target)
+            except FileExistsError:
+                raise ValueError("Файл результата уже существует") from None
+            return {
+                "start_seconds": start,
+                "end_seconds": end,
+                "actual_seconds": round(actual, 2),
+                "output_format": "mp3",
+            }
+        finally:
+            scratch.unlink(missing_ok=True)
