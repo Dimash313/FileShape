@@ -80,6 +80,11 @@ class AudioContainerSafetyTests(unittest.TestCase):
         def swap_after_probe(command, *args, **kwargs):
             native = Path(command[0]).name
             self.assertIn(native, ("ffprobe", "ffmpeg"))
+            # The converter now validates its newly encoded scratch result
+            # with a separate FFprobe call. Only the original input's probe
+            # and FFmpeg must share the pinned *source* inode.
+            if native == "ffprobe" and len(seen) == 2:
+                return original_run(command, *args, **kwargs)
             descriptors = kwargs["pass_fds"]
             self.assertEqual(len(descriptors), 1)
             self.assertEqual(os.fstat(descriptors[0]).st_ino, original_inode)
