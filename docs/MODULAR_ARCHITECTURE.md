@@ -670,3 +670,46 @@ security tests must also run.
 This phase is a stacked unmerged **draft**. GitHub Actions issue #101
 still prevents actual CI execution; no release/quality certification
 is implied by adding tests alone.
+
+## Phase F4 — writer/reader ZIP self-compatibility without relaxing bomb defenses (draft)
+
+Issue #110 exposed a real conflict: the writer used DEFLATE for all
+members while the reader rejected high compression ratios from
+**any** ZIP. A valid large, repetitive document could produce an
+archive FileShape itself could not inspect or extract.
+
+The writer now preflights per-member and total uncompressed bytes
+against the same existing reader limits, sanitizes member names
+once, writes normally into a same-directory private staging file,
+and checks the *actual* per-member compression ratio. Only when a
+DEFLATE member exceeds the unchanged ZIP-bomb ratio threshold is
+the temporary archive rebuilt, with those specific members using
+`ZIP_STORED`. Unaffected members remain compressed. The result
+is validated by `inspect_zip` before an atomic `os.replace`
+publishes the target; stage files are deleted on error. Existing
+targets are preserved on failed writes. Normal inputs need no
+second compression pass.
+
+**Crucially:** the reader's checks for compression ratios, ZIP
+entry count, symlinks, traversal, encryption, per-member size and
+total unpacked size are **not** weakened. External high-ratio ZIP
+bombs are still rejected.
+
+The Telegram ZIP bundle intake is now **50 MiB total**, matching
+`MAX_UNCOMPRESSED_TOTAL`, rather than previously advertising
+60 MiB even though generated archives over 50 MiB were unreadable.
+The separate PDF merge intake remains **60 MiB**. HTTP ZIP creation
+continues to enforce its stricter **20 MiB** aggregate upload cap.
+ZIP file count remains 2–5, with 20 MiB per member.
+
+Real-file regression tests verify very high compression payloads
+round-trip through `ArchiveModulePort`, unrelated members remain
+DEFLATED, external bombs remain blocked, over-budget archives
+are rejected before writing, and failed writes leave prior output
+intact without leaking stage files. The HTTP ZIP create and bot
+collection tests cover integration.
+
+Release gate: standalone **draft**, stacked on PR #109 and its
+parents. Issue #101 still blocks Python/Mini App/Docker CI before
+runner allocation. Do not close #110 or deploy based solely on
+static code or tests that have not actually executed.
