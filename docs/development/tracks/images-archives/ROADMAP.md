@@ -16,3 +16,10 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - [Issue #121](https://github.com/Dimash313/FileShape/issues/121) / [Draft PR #128](https://github.com/Dimash313/FileShape/pull/128): stage bounded extracted files, reject overwrites/symlink destinations, roll back partially published output after CRC or filesystem failures. Add adversarial tests for archive swapping, actual byte limits, corrupt CRC and ZIP bombs.
 - PR #128 is stacked on documentation PR #112, itself based on ZIP compatibility PR #111 and HTTP ZIP creation PR #109; **none of this is merged or deployed** as of 2026-11-15. Do not merge out of order or without successful exact-head CI. See `STATUS.md`.
 - This is domain-only work; the owner-scoped multi-result HTTP ZIP extraction contract must be coordinated with `api-security` in a separate Issue/PR.
+
+
+## Atomic image outputs — active stacked draft
+
+- [Issue #133](https://github.com/Dimash313/FileShape/issues/133) / [Draft PR #137](https://github.com/Dimash313/FileShape/pull/137): ensure JPG, PNG, WebP, PDF conversion and WebP compression publish only a completed result. Private same-directory staging, atomic rename and staged cleanup on encode or publication failure; regression tests for real formats, oversized image headers, corrupted inputs, target preservation, symlinks and permissions.
+- PR #137 is based on ZIP cleanup PR #128 (and thus #112 → #111 → #109 → architecture parents). These are **draft/unmerged**, not delivered or deployed. Final-head GitHub CI and integration review are required; blocker #101 remains open.
+- Follow-up candidate (not started): `services/image_bundle.py` batch PDF output atomicity; create an independent Issue before implementing. Keep public HTTP/image contract ownership with `api-security`.
