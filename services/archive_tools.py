@@ -2,11 +2,14 @@
 
 Never use ZipFile.extractall() on user archives; user paths are untrusted.
 """
+from contextlib import ExitStack, contextmanager
+import errno
 from pathlib import Path, PurePosixPath
 import os
 import tempfile
 import re
 import stat
+import time
 import zipfile
 
 MAX_ARCHIVE_ENTRIES = 100
@@ -170,65 +173,123 @@ def _archive_name(name: str, used: set[str]) -> str:
     return result
 
 
+@contextmanager
+def _open_zip_source(source: Path):
+    """Pin a regular source without following a final symlink or blocking FIFO."""
+    if source.is_symlink():
+        raise ValueError("Файл не найден или недоступен")
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        descriptor = os.open(source, flags)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENXIO):
+            raise ValueError("Файл не найден или недоступен") from None
+        raise
+    try:
+        stream = os.fdopen(descriptor, "rb")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Файл не найден или недоступен")
+        yield stream, info
+
+
+def _write_pinned_zip_members(
+    archive: zipfile.ZipFile,
+    members: list[tuple],
+    stored: set[str],
+) -> set[str]:
+    """Stream bytes from approved descriptors; never reopen source path.
+
+    Detect changes to the declared length or aggregate limits, including
+    growth while writing, and keep the same ZIP name/permissions/timestamps.
+    """
+    total_written = 0
+    high_ratio: set[str] = set()
+    for stream, metadata, name in members:
+        actual_metadata = os.fstat(stream.fileno())
+        if actual_metadata.st_size != metadata.st_size:
+            raise ValueError("Исходный файл изменился во время создания ZIP")
+        stream.seek(0)
+        date_time = time.localtime(metadata.st_mtime)[:6]
+        if date_time[0] < 1980:
+            date_time = (1980, 1, 1, 0, 0, 0)
+        entry = zipfile.ZipInfo(name, date_time)
+        entry.external_attr = (metadata.st_mode & 0xFFFF) << 16
+        entry.create_system = 3 if os.name == "posix" else 0
+        entry.file_size = metadata.st_size
+        entry.compress_type = (
+            zipfile.ZIP_STORED if name in stored else zipfile.ZIP_DEFLATED
+        )
+        entry._compresslevel = 6
+        written = 0
+        with archive.open(entry, "w") as dest:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                total_written += len(chunk)
+                if (written > metadata.st_size or written > MAX_MEMBER_BYTES
+                        or total_written > MAX_UNCOMPRESSED_TOTAL):
+                    raise ValueError("Исходный файл изменился во время создания ZIP")
+                dest.write(chunk)
+        if written != metadata.st_size or os.fstat(stream.fileno()).st_size != metadata.st_size:
+            raise ValueError("Исходный файл изменился во время создания ZIP")
+        if _too_high_compression(archive.getinfo(name)):
+            high_ratio.add(name)
+    return high_ratio
+
+
 def make_zip(inputs: list[tuple[Path, str]], target: Path) -> int:
-    """Create a ZIP that our strict reader can inspect and extract.
+    """Build ZIP from pinned regular input descriptors, with atomic publication.
 
-    Deflate normally. Only if one or more members exceed the reader's
-    compression-ratio threshold, rebuild those members as ZIP_STORED.
-    This preserves compression for normal files and does NOT relax the
-    ZIP-bomb policy for untrusted external archives.
-
-    Staging in the output directory avoids publishing an invalid or
-    partially-written archive and preserves an existing target on errors.
+    Deflate ordinary files. Rebuild extreme-compression members as stored
+    data so the unchanged strict ZIP inspector can read our own ZIPs.
+    Source paths are opened only once and never followed after approval.
     """
     if not 2 <= len(inputs) <= MAX_BUNDLE_FILES:
         raise ValueError("Выбери от 2 до 5 файлов")
-    used: set[str] = set()
-    members: list[tuple[Path, str]] = []
-    total_bytes = 0
-    for source, suggested_name in inputs:
-        if source.is_symlink() or not source.is_file():
-            raise ValueError("Файл не найден или недоступен")
-        size = source.stat().st_size
-        if size > MAX_MEMBER_BYTES:
-            raise ValueError("Один из файлов слишком большой")
-        total_bytes += size
-        if total_bytes > MAX_UNCOMPRESSED_TOTAL:
-            raise ValueError("ZIP после распаковки превышает лимит")
-        members.append((source, _archive_name(suggested_name, used)))
 
-    fd, staging_name = tempfile.mkstemp(
-        prefix=".fileshape_zip_", suffix=".zip", dir=target.parent,
-    )
-    os.close(fd)
-    staging = Path(staging_name)
-    try:
-        store_members: set[str] = set()
-        with zipfile.ZipFile(
-            staging, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6,
-        ) as archive:
-            for source, name in members:
-                archive.write(source, arcname=name)
-                if _too_high_compression(archive.getinfo(name)):
-                    store_members.add(name)
+    with ExitStack() as stack:
+        used: set[str] = set()
+        members: list[tuple] = []
+        total_bytes = 0
+        for source, suggested_name in inputs:
+            stream, metadata = stack.enter_context(_open_zip_source(source))
+            if metadata.st_size > MAX_MEMBER_BYTES:
+                raise ValueError("Один из файлов слишком большой")
+            total_bytes += metadata.st_size
+            if total_bytes > MAX_UNCOMPRESSED_TOTAL:
+                raise ValueError("ZIP после распаковки превышает лимит")
+            members.append((stream, metadata, _archive_name(suggested_name, used)))
 
-        if store_members:
-            # Reuse the same private temporary path: no second on-disk
-            # archive or duplicate data storage is needed.
+        fd, staging_name = tempfile.mkstemp(
+            prefix=".fileshape_zip_", suffix=".zip", dir=target.parent,
+        )
+        os.close(fd)
+        staging = Path(staging_name)
+        try:
             with zipfile.ZipFile(
                 staging, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6,
             ) as archive:
-                for source, name in members:
-                    compression = (
-                        zipfile.ZIP_STORED if name in store_members
-                        else zipfile.ZIP_DEFLATED
-                    )
-                    archive.write(source, arcname=name, compress_type=compression)
+                store_members = _write_pinned_zip_members(archive, members, set())
 
-        # Fail closed if source bytes changed during the optional rebuild,
-        # or if future reader rules become stricter.
-        inspect_zip(staging)
-        os.replace(staging, target)
-    finally:
-        staging.unlink(missing_ok=True)
+            if store_members:
+                # Reuse the private staging path; the same approved file
+                # descriptors can be rewound, even if their names are swapped.
+                with zipfile.ZipFile(
+                    staging, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6,
+                ) as archive:
+                    _write_pinned_zip_members(archive, members, store_members)
+
+            # Keep reader compatibility and existing atomic output behavior.
+            inspect_zip(staging)
+            os.replace(staging, target)
+        finally:
+            staging.unlink(missing_ok=True)
     return len(inputs)
