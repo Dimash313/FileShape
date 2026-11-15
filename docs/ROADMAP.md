@@ -87,3 +87,13 @@ metadata/tag editor, audio joining and video extraction unchanged. The
 This PR must not merge without a working CI runner, exact-head Python and
 Mini App/Docker checks and post-merge CI. All other feature and Stars
 release gates remain unchanged.
+
+## FileShape 5.0.13 — bot MP3 metadata editing (stacked draft)
+
+Following the still-unmerged Telegram audio-trim milestone 5.0.12, the
+separate [MP3 tag editor](BOT_MP3_METADATA.md) proposes a bounded bot-only
+five-field ID3 workflow with audio stream copy, existing-cover preservation,
+owner-scoped FSM and one metered delivery. No other audio containers, cover
+upload/replacement, website or mobile UI are claimed. The stage remains
+pending final-head Python, Mini App, Docker and manual Telegram testing;
+no merge, billing activation or deployment is authorized.
