@@ -6,7 +6,7 @@
 export const activeTools = [
   { key: 'pdf', title: 'PDF', subtitle: 'Страницы и поворот', accept: '.pdf,application/pdf' },
   { key: 'image', title: 'Фото', subtitle: 'JPG, PNG, WebP', accept: '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp' },
-  { key: 'audio', title: 'Аудио', subtitle: 'MP3, OGG, WAV и другие', accept: '.mp3,.ogg,.oga,.wav,.m4a,.flac,audio/*' },
+  { key: 'audio', title: 'Аудио', subtitle: 'MP3, OGG, WAV и другие', accept: '.mp3,.ogg,.oga,.wav,.m4a,.flac,audio/mpeg,audio/ogg,audio/wav,audio/mp4,audio/flac' },
   { key: 'documents', title: 'Документы', subtitle: 'DOCX и TXT', accept: '.docx,.txt' },
   { key: 'archive', title: 'Архивы', subtitle: 'Просмотреть ZIP', accept: '.zip,application/zip' },
   { key: 'batch', title: 'Пакетно', subtitle: '2–8 фото в один PDF', accept: null },
