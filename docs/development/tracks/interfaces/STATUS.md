@@ -23,3 +23,5 @@ Verification:
 
 Next unblocked Issue: NONE claimed. Next candidate: check keyboard focus and active navigation semantics in Mini App (avoid overlapping older #46) or perform real device responsive accessibility audit once a supported runner / browser harness is available; create new Issue after reviewing current code.
 Risk/cross-track coordination: shared style file conflict with #46, stacked PR sequencing and #101 runner failures. No API/security change required for this CSS-only fix.
+
+Integration checkpoint: two-parent merge of Draft #136 incorporated the single-file picker cancellation fix and its regression test into this branch. Exact-head CI and mobile tests remain blocked/unverified under #101; do not merge until real green checks.

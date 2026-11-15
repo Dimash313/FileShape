@@ -105,7 +105,8 @@ export default function App() {
   const pick = (tool?: SingleFileToolKey) => {
     if (busy) return;
     tapFeedback();
-    setBatchMode(false);
+    // Opening or cancelling the native picker must not discard a prepared batch.
+    // The mode switches only after acceptFile validates a selected file.
     if (!inputRef.current) return;
     inputRef.current.accept = acceptForTool(tool);
     // Re-selecting the same file after cancel/reset must still fire onChange.
