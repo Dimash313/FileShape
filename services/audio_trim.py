@@ -14,7 +14,7 @@ import tempfile
 
 from services.audio_tools import (
     AUDIO_EXTENSIONS, MAX_AUDIO_OUTPUT_BYTES, MAX_DURATION_SECONDS,
-    _pinned_audio_source, _probe_pinned_audio, _program, probe_audio,
+    _audio_input_options, _pinned_audio_source, _probe_pinned_audio, _program, probe_audio,
 )
 
 MAX_AUDIO_INPUT_BYTES = 20 * 1024 * 1024
@@ -80,7 +80,8 @@ def trim_audio(source: Path, target: Path, spec: str) -> dict:
         try:
             command = [
                 _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-                "-protocol_whitelist", "file,pipe", "-i", pinned_path,
+                "-protocol_whitelist", "file,pipe",
+                *_audio_input_options(fd), "-i", pinned_path,
                 "-ss", str(start), "-t", str(end - start),
                 "-map", "0:a:0", "-vn", "-sn", "-dn",
                 "-map_metadata", "-1", "-map_chapters", "-1",

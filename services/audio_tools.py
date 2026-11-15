@@ -67,6 +67,18 @@ def _program(name: str) -> str:
     return location
 
 
+def _audio_input_options(fd: int) -> tuple[str, ...]:
+    """Explicitly disable external MOV/M4A data references for pinned inputs.
+
+    These demuxer flags apply only to ISO BMFF containers. Passing them to
+    WAV/MP3/OGG/FLAC causes FFmpeg to reject otherwise valid audio files.
+    Inspect the already-open descriptor, never a mutable filename.
+    """
+    if os.pread(fd, 8, 0)[4:8] == b"ftyp":
+        return ("-enable_drefs", "0", "-use_absolute_path", "0")
+    return ()
+
+
 def _probe_pinned_audio(pinned_path: str, fd: int, *, exact: bool) -> dict:
     """Probe an already authenticated, open regular-file descriptor."""
     try:
@@ -74,6 +86,7 @@ def _probe_pinned_audio(pinned_path: str, fd: int, *, exact: bool) -> dict:
             [
                 _program("ffprobe"), "-v", "error",
                 "-protocol_whitelist", "file,pipe",
+                *_audio_input_options(fd),
                 "-show_entries", "format=format_name,duration:stream=codec_type,codec_name",
                 "-of", "json", pinned_path,
             ],
@@ -86,10 +99,16 @@ def _probe_pinned_audio(pinned_path: str, fd: int, *, exact: bool) -> dict:
         raise ValueError("Не удалось прочитать аудиофайл")
     try:
         data = json.loads(result.stdout)
+        if not isinstance(data, dict) or not isinstance(data.get("format"), dict):
+            raise ValueError("Не удалось определить длительность аудио")
         if data["format"].get("format_name") not in SAFE_AUDIO_DEMUXERS:
             raise ValueError("Неподдерживаемый аудиоконтейнер")
         streams = data.get("streams", [])
-        audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+        if not isinstance(streams, list) or any(
+            not isinstance(stream, dict) for stream in streams
+        ):
+            raise ValueError("Не удалось определить длительность аудио")
+        audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
         if not audio_streams or any(s.get("codec_type") == "video" for s in streams):
             raise ValueError("Нужен аудиофайл без видеодорожки")
         duration = float(data["format"]["duration"])
@@ -150,7 +169,8 @@ def convert_audio(source: Path, target: Path, output_format: str) -> dict:
             command = [
                 _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel",
                 "error", "-y",
-                "-protocol_whitelist", "file,pipe", "-i", pinned_path,
+                "-protocol_whitelist", "file,pipe",
+                *_audio_input_options(source_fd), "-i", pinned_path,
                 "-map", "0:a:0", "-vn", "-sn", "-dn",
                 "-map_metadata", "-1", "-map_chapters", "-1",
                 "-t", str(MAX_DURATION_SECONDS),
