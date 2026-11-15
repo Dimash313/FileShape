@@ -2,11 +2,19 @@
 
 Updated: 2026-11-16 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
-Current Issue: [#169](https://github.com/Dimash313/FileShape/issues/169), remove inherited API environment secrets from untrusted worker subprocesses.
-Current PR: [#170](https://github.com/Dimash313/FileShape/pull/170) (**Draft**, `api-security/169-worker-env-boundary`), targeting `api-security/163-bounded-worker-stdout` / [PR #164](https://github.com/Dimash313/FileShape/pull/164).
-Dependency: PR #164 is **Draft**, itself based on `docs/independent-development-tracks` / unmerged PR #112. Merge in dependency order; never squash this branch directly to `main` before #164 and base stack are ready.
+Current Issue: [#210](https://github.com/Dimash313/FileShape/issues/210), repeated task cancellation must not abandon subprocess reaping.
+Current branch: `api-security/210-resilient-worker-reap`. PR pending at this status edit; target exactly `api-security/169-worker-env-boundary` / [Draft #170](https://github.com/Dimash313/FileShape/pull/170).
+Dependency chain: current branch → #170 (worker env) → #164 (bounded stdout) → `docs/independent-development-tracks` / #112 (unmerged). Never merge out of order or overwrite parent branches.
 
-## Current bounded change
+## Current issue #210 — bounded fix
+
+- `api/worker_runner.py`: added `_reap_worker` which starts one independent wait task and shields it in a retry loop, preserving the caller's cancellation signal **after** reaping. Previous single `await asyncio.shield(proc.wait())` could be interrupted by repeated `task.cancel()`, completing the caller while the wait remained pending.
+- `tests/test_worker_runner.py`: deterministic actual-child regression: gate `proc.wait()` completion, cancel parent twice, assert it cannot finish before reaping is permitted to complete; retain timeout/normal cancellation tests. Initial local reproduction (Linux/Python) showed old single-shield code exits early on second cancel. No new dependency, HTTP API, billing, platform, user content or domain changes.
+- **No exact-head hosted CI observed for this branch at the time of status edit.** Require real Python suite, Docker and Mini App checks, independent review of process cleanup semantics and integration with parents before merge.
+
+## Parent issue #169 — isolation of worker secrets
+
+## Parent #170 worker-environment changes (already in this branch's ancestry)
 
 - `api/worker_runner.py`: explicitly allowlist only necessary non-secret locale, PATH, temp/cache environment keys for the conversion worker; do not forward parent `BOT_TOKEN`, cloud keys, internal assertions, `PYTHONPATH`, `LD_PRELOAD` etc. Supply `PYTHON_DOTENV_DISABLED=1` plus safe Python process flags to keep the transitively imported `config.py` from reloading `.env`.
 - `tests/test_worker_runner.py`: launch a **real subprocess** with fake sentinel secrets in the parent's environment; assert no inherited secrets and compatible execution. Verify `load_dotenv` refuses to import a fake BOT_TOKEN when the child flag is set. Also exercise real TXT → DOCX and probe a generated silent WAV with FFprobe through the actual restricted-environment subprocess; these compatibility regressions are critical because merely echoing sanitized environment variables does not prove conversions still work.
