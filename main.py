@@ -67,6 +67,7 @@ class TrimState(StatesGroup):
 
 
 class TagState(StatesGroup):
+    choosing_field = State()
     waiting_for_fields = State()
 
 
@@ -707,6 +708,62 @@ async def audio_trim_range(message: Message, bot: Bot, state: FSMContext):
 
 
 
+TAG_FIELDS = {
+    "title": ("Название", "название"),
+    "artist": ("Исполнитель", "исполнителя"),
+    "album": ("Альбом", "альбом"),
+    "date": ("Год", "год (четыре цифры)"),
+    "genre": ("Жанр", "жанр"),
+}
+
+
+def tag_editor_keyboard() -> InlineKeyboardMarkup:
+    return buttons([
+        [("✏️ Название", "tags:title"), ("👤 Исполнитель", "tags:artist")],
+        [("💿 Альбом", "tags:album"), ("📅 Год", "tags:date")],
+        [("🏷 Жанр", "tags:genre")],
+        [("🖼 Обложка · скоро", "tags:cover")],
+        [("✖️ Отмена", "tags:cancel")],
+    ])
+
+
+@router.callback_query(F.data.startswith("tags:"))
+async def choose_audio_tag(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        await callback.answer("Открой редактор заново.", show_alert=True)
+        return
+    actor = callback.from_user.id
+    if callback.message.chat.type != "private" or callback.message.chat.id != actor:
+        await callback.answer("Только в личном чате.", show_alert=True)
+        return
+    data = await state.get_data()
+    if (data.get("owner_id") != actor or data.get("suffix") != ".mp3"
+            or not data.get("file_id")
+            or await state.get_state() != TagState.choosing_field.state):
+        await callback.answer("Эта кнопка устарела. Открой редактор заново.", show_alert=True)
+        return
+    choice = (callback.data or "").removeprefix("tags:")
+    if choice == "cover":
+        await callback.answer("Замена обложки появится в следующем обновлении.", show_alert=True)
+        return
+    if choice == "cancel":
+        await state.clear()
+        await callback.answer("Отменено")
+        await callback.message.answer("✖️ Редактирование тегов отменено.")
+        return
+    if choice not in TAG_FIELDS:
+        await callback.answer("Неизвестное поле.", show_alert=True)
+        return
+    await state.update_data(tag_field=choice)
+    await state.set_state(TagState.waiting_for_fields)
+    await callback.answer()
+    await callback.message.answer(
+        f"✏️ {TAG_FIELDS[choice][0]}\n\n"
+        f"Отправь новое значение ({TAG_FIELDS[choice][1]}).\n"
+        "Для удаления тега отправь ~. Отмена: /cancel."
+    )
+
+
 @router.message(TagState.waiting_for_fields)
 async def audio_tag_fields(message: Message, bot: Bot, state: FSMContext):
     """Owner-bound MP3 metadata editing; delivery is one metered operation."""
@@ -720,8 +777,16 @@ async def audio_tag_fields(message: Message, bot: Bot, state: FSMContext):
         await state.clear()
         await message.answer("Исходный MP3 недоступен. Пришли файл ещё раз.")
         return
+    field = data.get("tag_field")
+    if field not in TAG_FIELDS:
+        await state.clear()
+        await message.answer("Поле не выбрано. Открой редактор заново.")
+        return
+    value = (message.text or "").strip()
     try:
-        edits = parse_tag_edits(message.text or "")
+        parts = ["-"] * 5
+        parts[list(TAG_FIELDS).index(field)] = value
+        edits = parse_tag_edits(" | ".join(parts))
     except ValueError as error:
         await message.answer(f"{error}. Исправь значения или отправь /cancel.")
         return
@@ -854,17 +919,14 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         )
         return
     if action == "audio:tags":
-        await state.set_state(TagState.waiting_for_fields)
+        await state.set_state(TagState.choosing_field)
         await state.update_data(
             file_id=file.file_id, suffix=suffix, owner_id=callback.from_user.id,
         )
         await callback.message.answer(
-            "🏷 Изменить теги MP3 без перекодирования\n\n"
-            "Напиши пять значений через знак | :\n"
-            "Название | Исполнитель | Альбом | Год | Жанр\n\n"
-            "Пример: Запись | Автор | Лекция | 2026 | Образование\n"
-            "Знак - оставляет старое поле, ~ удаляет его.\n"
-            "Существующая обложка сохраняется. Отмена: /cancel."
+            "🏷 Редактор MP3 · Что изменить?\n\n"
+            "Выбери одно поле. Аудиодорожка не перекодируется.",
+            reply_markup=tag_editor_keyboard(),
         )
         return
     if action in {"pdf:extract", "pdf:remove"}:
