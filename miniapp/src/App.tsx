@@ -11,6 +11,7 @@ import { initTelegram, tapFeedback, telegramInitData } from './telegram';
 import { activeTools, acceptForTool, type SingleFileToolKey, type ToolKey } from './toolCatalog';
 import { batchImageSelectionError, singleFileSelectionError } from './filePreflight';
 import { describeTransfer } from './transferPresentation';
+import { nextBatchReorderFocus, type BatchReorderFocus, type BatchReorderDirection } from './batchReorderFocus';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
 import type { QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
@@ -77,6 +78,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const previousTabRef = useRef<Tab>('home');
   const screenTitleRef = useRef<HTMLHeadingElement>(null);
+  const pendingBatchFocusRef = useRef<BatchReorderFocus | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [format, setFormat] = useState<ImageFormat>('image/jpeg');
@@ -155,15 +157,32 @@ export default function App() {
     background.releaseInput();
     setBatchFiles(files); setBatchMode(true); setFile(null); setNotice('');
   };
-  const reorderBatch = (index: number, change: number) => {
+  const reorderBatch = (index: number, change: BatchReorderDirection) => {
+    if (busy) return;
+    const target = nextBatchReorderFocus(index, change, batchFiles.length);
+    if (!target) return;
+    // React reuses keyed rows at the old positions. Restore focus to the
+    // moved photo's new row rather than a different photo at the old position.
+    pendingBatchFocusRef.current = target;
     setBatchFiles(files => {
+      if (!nextBatchReorderFocus(index, change, files.length)) return files;
       const next = [...files];
-      const target = index + change;
-      if (target < 0 || target >= next.length) return files;
-      [next[index], next[target]] = [next[target], next[index]];
+      const destination = index + change;
+      [next[index], next[destination]] = [next[destination], next[index]];
       return next;
     });
   };
+  useEffect(() => {
+    const target = pendingBatchFocusRef.current;
+    if (!target) return;
+    pendingBatchFocusRef.current = null;
+    const row = document.querySelector<HTMLElement>(
+      `.batch-row[data-batch-position="${target.index}"]`,
+    );
+    row?.querySelector<HTMLButtonElement>(
+      `button[data-batch-direction="${target.direction}"]`,
+    )?.focus();
+  }, [batchFiles]);
   const remember = (name: string, blob: Blob, jobId?: string) => {
     const task: Task = {
       id: Date.now(), name, jobId, jobState: jobId ? 'completed' : undefined, blob: blob.size <= 20 * 1024 * 1024 ? blob : undefined,
@@ -432,11 +451,11 @@ export default function App() {
           <p className="batch-intro">Выбери от 2 до 8 изображений. Порядок ниже станет порядком страниц PDF.</p>
           <button type="button" className="secondary-button full" disabled={busy} onClick={pickBatch}><UploadCloud size={17}/> Выбрать фотографии</button>
           {batchFiles.length > 0 && <div className="batch-list">
-            {batchFiles.map((photo, index) => <div className="batch-row" key={index}>
+            {batchFiles.map((photo, index) => <div className="batch-row" key={index} data-batch-position={index}>
               <span className="batch-number">{index + 1}</span>
               <div className="batch-file"><strong title={photo.name}>{photo.name}</strong><span>{sizeLabel(photo.size)}</span></div>
-              <button aria-label="Переместить выше" type="button" disabled={index === 0 || busy} onClick={() => reorderBatch(index, -1)}>↑</button>
-              <button aria-label="Переместить ниже" type="button" disabled={index === batchFiles.length - 1 || busy} onClick={() => reorderBatch(index, 1)}>↓</button>
+              <button aria-label={`Переместить фото ${index + 1} (${photo.name}) выше`} data-batch-direction="-1" type="button" disabled={index === 0 || busy} onClick={() => reorderBatch(index, -1)}>↑</button>
+              <button aria-label={`Переместить фото ${index + 1} (${photo.name}) ниже`} data-batch-direction="1" type="button" disabled={index === batchFiles.length - 1 || busy} onClick={() => reorderBatch(index, 1)}>↓</button>
             </div>)}
           </div>}
           <div className="batch-summary">{batchFiles.length} фото · {sizeLabel(batchFiles.reduce((sum, photo) => sum + photo.size, 0))} всего</div>
