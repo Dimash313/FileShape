@@ -31,7 +31,7 @@ from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
-from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
+from services.document_module import document_module
 from services.file_tools import MAX_MERGE_FILES
 from services.image_tools import IMAGE_FORMATS
 from services.image_module import image_module
@@ -767,13 +767,13 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         "Конвертация доступна для записей до 10 минут."
                     )
                 elif action == "docx:info":
-                    _text, info = await asyncio.to_thread(read_docx_text, source)
+                    info = await asyncio.to_thread(document_module.inspect_docx, source)
                     await callback.message.answer(
                         f"📝 DOCX: абзацев {info['paragraphs']}, таблиц {info['tables']}, "
                         f"символов {info['characters']}."
                     )
                 elif action == "txt:info":
-                    info = await asyncio.to_thread(txt_info, source)
+                    info = await asyncio.to_thread(document_module.inspect_text, source)
                     await callback.message.answer(
                         f"📝 TXT: строк {info['lines']}, символов {info['characters']}."
                     )
@@ -805,10 +805,10 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         await asyncio.to_thread(audio_module.convert, source, target, fmt)
                     elif action == "docx:txt":
                         target = folder / "document.txt"
-                        await asyncio.to_thread(docx_to_txt, source, target)
+                        await asyncio.to_thread(document_module.to_text, source, target)
                     elif action == "txt:docx":
                         target = folder / "document.docx"
-                        await asyncio.to_thread(txt_to_docx, source, target)
+                        await asyncio.to_thread(document_module.to_docx, source, target)
                     else:
                         fmt = action.split(":", 1)[1]
                         ext = IMAGE_FORMATS[fmt]
