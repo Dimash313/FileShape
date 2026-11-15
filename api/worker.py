@@ -7,10 +7,12 @@ from services.upload_validation import validate_upload
 from services.image_module import image_module
 from services.pdf_module import pdf_module
 from services.pdf_tools import MAX_MERGE_FILES
+from services.archive_module import archive_module
+from services.archive_tools import MAX_BUNDLE_FILES, MAX_MEMBER_BYTES
 
 
 def execute(request: dict) -> dict:
-    from api.server import _info_action, _transform
+    from api.server import _info_action, _transform, MAX_INPUT_BYTES
 
     operation = request["operation"]
     work = Path(request["work"]).resolve()
@@ -43,6 +45,32 @@ def execute(request: dict) -> dict:
             validate_upload(path, ".pdf")
         target = work / "merged.pdf"
         pdf_module.merge(paths, target)
+    elif operation == "zip_create":
+        # Only private API-generated file paths; names are metadata and
+        # archive_module safely flattens/sanitizes them as ZIP member names.
+        count = request.get("count")
+        names = request.get("names")
+        if type(count) is not int or not 2 <= count <= MAX_BUNDLE_FILES:
+            raise ValueError("Выбери от 2 до 5 файлов")
+        if not isinstance(names, list) or len(names) != count or any(
+            not isinstance(name, str) or not 1 <= len(name) <= 255
+            for name in names
+        ):
+            raise ValueError("Некорректные имена файлов")
+        inputs = []
+        total_size = 0
+        for index, name in enumerate(names):
+            source = work / f"zip_item_{index}"
+            # Workspace files must be ordinary upload files, not symlinks.
+            if source.is_symlink() or not source.is_file():
+                raise ValueError("Файл не найден или недоступен")
+            size = source.stat().st_size
+            total_size += size
+            if not 0 < size <= MAX_MEMBER_BYTES or total_size > MAX_INPUT_BYTES:
+                raise ValueError("Превышен лимит файлов для ZIP")
+            inputs.append((source, name))
+        target = work / "fileshape.zip"
+        archive_module.create(inputs, target)
     else:
         raise ValueError("Недопустимая операция")
     if not target.is_file() or target.stat().st_size == 0:
