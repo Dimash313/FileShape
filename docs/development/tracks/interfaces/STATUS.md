@@ -27,3 +27,13 @@ Next unblocked task: NONE claimed. Candidate: tab heading/focus announcement and
 Risk/cross-track coordination: multiple unmerged stacked drafts, #46 App.tsx overlap, #101 runner allocation. No cross-track API decision required for this presentation-only fix.
 
 Integration checkpoint: two-parent merge of Draft #145 incorporated the single-file picker cancellation fix and its regression test into this branch. Exact-head CI and mobile tests remain blocked/unverified under #101; do not merge until real green checks.
+
+
+## Integration audit — 2026-11-15 UTC
+
+- Audited Draft #46: GitHub currently marks it `mergeable: false` against `main`. It overlaps App.tsx/styles.css, retains an obsolete Scanner entry, but uniquely includes skip-link, screen-title focus on tab navigation, and translated job-state labels. Review/cherry-pick only approved accessibility semantics; **never force-merge #46**.
+- Fixed a real picker cancellation defect within existing Draft #126: starting/cancelling native single-file selection no longer hides the current 2–8 photo batch. Added a fourth source-level test and verified 7 static source invariants. Its new Node test has not executed in complete repo.
+- Safely propagated this fix and the test through **two-parent Draft-branch merge commits**, no force updates: #136 `6a3073f919f9b8165d13e60850b3e43f90ab44b0`; #145 `0ca994fb9551c35a9cc515ddbb6be16240cecdc7`; #152 `0151d899e6f2056445fc6c8164dff89fe402d865` before this documentation update.
+- Re-read each branch by GitHub refs: #126/#136/#145/#152 all preserve the corrected picker and regression test and were reported `mergeable: true` by GitHub (conflict-free **only**, **not** passing CI).
+- Exact-head Actions were run but jobs **never executed a step**: #126 run `43724336682`, #136 `43724570015`, #145 `43724626383`, #152 `43724681493`; both `tests` and `miniapp` jobs per run had 0 steps and no runner. This remains the owner-side release blocker [#101](https://github.com/Dimash313/FileShape/issues/101); cause not confirmed. Do not invent a fix or bypass CI.
+- Next operational priority: account owner checks GitHub Actions annotation, Billing/Actions quota/budgets and repository runner policy as documented in #101. No payment method or paid overage may be changed without approval. After a real runner executes jobs, revalidate the exact final heads in dependency order, then review integration with #46. Do not create additional stacked UX PRs before this gate.
