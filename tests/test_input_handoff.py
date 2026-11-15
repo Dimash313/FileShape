@@ -270,6 +270,66 @@ class InputHandoffTests(unittest.TestCase):
             self.assertEqual(claimed[0].envelope, env)
             self.assertEqual(one.usage_snapshot(OWNER, now=self.now + 3)["daily_used"], 1)
 
+    def test_missing_after_readiness_is_fenced_at_claim(self):
+        with IntakeDispatchStore(self.db_path) as dispatch, \
+                PrivateBlobStore(self.blob_root) as blobs:
+            env, created = self.submit(InputHandoff(dispatch, blobs))
+            self.assertTrue(created)
+            self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "ready")
+            (self.blob_root / env.input_ref).unlink()
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 1))
+            self.assertEqual(dispatch.input_status(OWNER, env.job_id)[1], "suspect")
+            self.assertEqual(dispatch.get(env.job_id, OWNER).state, "queued")
+            self.assertEqual(dispatch.usage_snapshot(
+                OWNER, now=self.now + 2,
+            )["daily_used"], 1)
+            self.assertEqual(InputHandoff(dispatch, blobs).recover(
+                now=self.now + 33,
+            ).needs_review, 1)
+            self.assertTrue(dispatch.fail_reviewed_input(
+                OWNER, env.job_id, blobs, now=self.now + 34,
+            ))
+            self.assertEqual(dispatch.get(env.job_id, OWNER).state, "failed")
+            self.assertEqual(dispatch.usage_snapshot(
+                OWNER, now=self.now + 34,
+            )["daily_used"], 0)
+
+    def test_corrupt_old_ready_input_does_not_block_new_ready_job(self):
+        with IntakeDispatchStore(self.db_path) as dispatch, \
+                PrivateBlobStore(self.blob_root) as blobs:
+            intake = InputHandoff(dispatch, blobs)
+            first, _ = self.submit(intake)
+            second, created = self.submit(intake, key="c" * 64, owner=OTHER)
+            self.assertTrue(created)
+            (self.blob_root / first.input_ref).write_bytes(
+                b"the same number of bytes is not the same digest",
+            )
+            lease = dispatch.claim_next(blobs, now=self.now + 1)
+            self.assertIsNotNone(lease)
+            self.assertEqual(lease.envelope.job_id, second.job_id)
+            self.assertEqual(dispatch.input_status(OWNER, first.job_id)[1], "suspect")
+            self.assertEqual(dispatch.get(first.job_id, OWNER).state, "queued")
+            self.assertEqual(dispatch.get(second.job_id, OTHER).state, "processing")
+            with self.assertRaises(TypeError):
+                dispatch.claim_next(None, now=self.now + 2)
+
+    def test_expired_worker_lease_not_reissued_with_missing_input(self):
+        with IntakeDispatchStore(self.db_path) as dispatch, \
+                PrivateBlobStore(self.blob_root) as blobs:
+            env, _ = self.submit(InputHandoff(dispatch, blobs))
+            old = dispatch.claim_next(blobs, now=self.now + 1, lease_seconds=2)
+            self.assertEqual(old.envelope, env)
+            (self.blob_root / env.input_ref).unlink()
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 4))
+            self.assertEqual(dispatch.get(env.job_id, OWNER).state, "processing")
+            self.assertEqual(dispatch._db.execute(
+                "SELECT attempts FROM dispatch_outbox WHERE job_id=?",
+                (env.job_id,),
+            ).fetchone()[0], 1)
+            # The current prototype intentionally holds a processing
+            # lease with lost input for manual recovery rather than claiming
+            # a job that cannot read its authoritative input bytes.
+
     def test_expired_ready_input_cannot_be_claimed_and_enters_review(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
                 PrivateBlobStore(self.blob_root) as blobs:
