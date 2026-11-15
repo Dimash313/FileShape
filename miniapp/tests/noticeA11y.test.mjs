@@ -65,3 +65,16 @@ test('closing notices and navigating sections clear the current notice', () => {
   assert.match(app, /onClick=\{\(\) => \{ tapFeedback\(\); setTab\(item\.tab\); setNotice\(null\); \}\}/);
   assert.doesNotMatch(app, /setNotice\(''\)/);
 });
+
+test('PDF page input exposes semantic validation error and links its message', () => {
+  const field = app.match(/<input type="text" value=\{pages\}[\s\S]*?\/>/)?.[0];
+  assert.ok(field, 'PDF pages input missing');
+  assert.match(field, /aria-invalid=\{Boolean\(pageSelectionError\)\}/);
+  assert.match(field, /aria-describedby=\{pageSelectionError \? 'pdf-page-selection-error' : undefined\}/);
+  assert.doesNotMatch(field, /aria-invalid=\{!validPageSelection\}/);
+  assert.match(app, /\{selectedOption\?\.pages && pageSelectionError && <div id="pdf-page-selection-error" className="pdf-inline-error" role="alert">/);
+
+  // Range syntax may be valid even though the request itself is invalid.
+  assert.match(app, /selectedPageNumbers\.size > 150 \? 'За одну операцию можно выбрать максимум 150 страниц\.'/);
+  assert.match(app, /selectedAction === 'pdf:remove' && pdfPageCount !== null && selectedPageNumbers\.size === pdfPageCount/);
+});
