@@ -12,6 +12,11 @@ from lxml.etree import XMLSyntaxError
 MAX_DOCX_FILES = 300
 MAX_DOCX_UNPACKED = 40 * 1024 * 1024
 MAX_DOCX_MEMBER = 20 * 1024 * 1024
+# Bound the work performed by python-docx when expanding table grid spans.
+# Totals are per document, not per table, so many small tables are bounded too.
+MAX_DOCX_TABLE_ROWS = 5_000
+MAX_DOCX_TABLE_CELLS = 20_000
+MAX_DOCX_ROW_CELLS = 64
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 MAX_TEXT_CHARS = 700_000
 MAX_TEXT_LINES = 5_000
@@ -70,20 +75,47 @@ def read_docx_text(source: Path) -> tuple[str, dict]:
     paragraphs = 0
     tables = 0
     length = 0
+    total_rows = 0
+    total_cells = 0
     for item in document.iter_inner_content():
         if isinstance(item, Table):
             tables += 1
-            for row in item.rows:
-                line = "\t".join(cell.text.replace("\n", " ") for cell in row.cells)
-                parts.append(line)
-                length += len(line) + 1
+            rows = item.rows
+            row_count = len(rows)
+            if (row_count > MAX_DOCX_TABLE_ROWS - total_rows
+                    or item._column_count > MAX_DOCX_ROW_CELLS):
+                raise ValueError("Слишком сложная таблица DOCX")
+            total_rows += row_count
+            for row in rows:
+                # row.cells expands w:gridSpan into repeated cell references.
+                # Inspect raw OOXML spans first to avoid a huge tuple allocation.
+                grid_cells = 0
+                for tc in row._tr.tc_lst:
+                    span = tc.grid_span
+                    if (span < 1 or span > MAX_DOCX_ROW_CELLS - grid_cells):
+                        raise ValueError("Слишком сложная таблица DOCX")
+                    grid_cells += span
+                if grid_cells > MAX_DOCX_TABLE_CELLS - total_cells:
+                    raise ValueError("Слишком сложная таблица DOCX")
+                total_cells += grid_cells
+
+                cells = []
+                row_chars = 0
+                for cell in row.cells:
+                    text = cell.text.replace("\n", " ")
+                    row_chars += len(text) + (1 if cells else 0)
+                    if length + row_chars + 1 > MAX_TEXT_CHARS:
+                        raise ValueError("Слишком много текста в документе")
+                    cells.append(text)
+                parts.append("\t".join(cells))
+                length += row_chars + 1
         else:
             paragraphs += 1
             line = item.text
-            parts.append(line)
             length += len(line) + 1
-        if length > MAX_TEXT_CHARS:
-            raise ValueError("Слишком много текста в документе")
+            if length > MAX_TEXT_CHARS:
+                raise ValueError("Слишком много текста в документе")
+            parts.append(line)
     return "\n".join(parts), {"paragraphs": paragraphs, "tables": tables, "characters": length}
 
 
