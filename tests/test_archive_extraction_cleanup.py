@@ -2,7 +2,6 @@
 import io
 import os
 from pathlib import Path
-import stat
 import tempfile
 import unittest
 from unittest.mock import patch
