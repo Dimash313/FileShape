@@ -52,10 +52,8 @@ from services.archive_tools import inspect_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
 from services.upload_validation import validate_upload
-from services.file_tools import (
-    IMAGE_FORMATS, compress_image, convert_image, extract_pdf_pages,
-    pdf_page_count, remove_pdf_pages, rotate_pdf,
-)
+from services.file_tools import IMAGE_FORMATS, compress_image, convert_image
+from services.pdf_module import pdf_module
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_BYTES = 20 * 1024 * 1024
@@ -819,7 +817,7 @@ async def run_managed_worker(payload):
 
 def _info_action(source: Path, action: str) -> dict | None:
     if action == "pdf:info":
-        return {"info": {"pages": pdf_page_count(source)}}
+        return {"info": {"pages": pdf_module.count_pages(source)}}
     if action == "audio:info":
         return {"info": audio_module.probe(source)}
     if action == "docx:info":
@@ -847,13 +845,13 @@ def _transform(source: Path, output_dir: Path, action: str, pages: str) -> Path:
         audio_module.convert(source, target, fmt)
     elif action == "pdf:rotate":
         target = output_dir / "rotated.pdf"
-        rotate_pdf(source, target, 90)
+        pdf_module.rotate(source, target, 90)
     elif action in {"pdf:first", "pdf:extract", "pdf:remove"}:
         target = output_dir / "result.pdf"
         if action == "pdf:remove":
-            remove_pdf_pages(source, target, pages)
+            pdf_module.remove(source, target, pages)
         else:
-            extract_pdf_pages(source, target, "1" if action == "pdf:first" else pages)
+            pdf_module.extract(source, target, "1" if action == "pdf:first" else pages)
     elif action == "docx:txt":
         target = output_dir / "converted.txt"
         docx_to_txt(source, target)
