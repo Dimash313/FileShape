@@ -722,7 +722,6 @@ def tag_editor_keyboard() -> InlineKeyboardMarkup:
         [("✏️ Название", "tags:title"), ("👤 Исполнитель", "tags:artist")],
         [("💿 Альбом", "tags:album"), ("📅 Год", "tags:date")],
         [("🏷 Жанр", "tags:genre")],
-        [("🖼 Обложка · скоро", "tags:cover")],
         [("✖️ Отмена", "tags:cancel")],
     ])
 
@@ -737,22 +736,29 @@ async def choose_audio_tag(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Только в личном чате.", show_alert=True)
         return
     data = await state.get_data()
+    current = await state.get_state()
     if (data.get("owner_id") != actor or data.get("suffix") != ".mp3"
             or not data.get("file_id")
-            or await state.get_state() != TagState.choosing_field.state):
+            or current not in {TagState.choosing_field.state, TagState.waiting_for_fields.state}):
         await callback.answer("Эта кнопка устарела. Открой редактор заново.", show_alert=True)
         return
     choice = (callback.data or "").removeprefix("tags:")
-    if choice == "cover":
-        await callback.answer("Замена обложки появится в следующем обновлении.", show_alert=True)
+    if choice == "back":
+        if current != TagState.waiting_for_fields.state:
+            await callback.answer("Ты уже в меню полей.")
+            return
+        await state.update_data(tag_field=None)
+        await state.set_state(TagState.choosing_field)
+        await callback.answer()
+        await callback.message.answer("🏷 Что изменить?", reply_markup=tag_editor_keyboard())
         return
     if choice == "cancel":
         await state.clear()
         await callback.answer("Отменено")
         await callback.message.answer("✖️ Редактирование тегов отменено.")
         return
-    if choice not in TAG_FIELDS:
-        await callback.answer("Неизвестное поле.", show_alert=True)
+    if choice not in TAG_FIELDS or current != TagState.choosing_field.state:
+        await callback.answer("Вернись к выбору поля.", show_alert=True)
         return
     await state.update_data(tag_field=choice)
     await state.set_state(TagState.waiting_for_fields)
@@ -760,7 +766,11 @@ async def choose_audio_tag(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         f"✏️ {TAG_FIELDS[choice][0]}\n\n"
         f"Отправь новое значение ({TAG_FIELDS[choice][1]}).\n"
-        "Для удаления тега отправь ~. Отмена: /cancel."
+        "Для удаления тега отправь ~.",
+        reply_markup=buttons([
+            [("↩️ Назад к полям", "tags:back")],
+            [("✖️ Отмена", "tags:cancel")],
+        ]),
     )
 
 
@@ -788,7 +798,13 @@ async def audio_tag_fields(message: Message, bot: Bot, state: FSMContext):
         parts[list(TAG_FIELDS).index(field)] = value
         edits = parse_tag_edits(" | ".join(parts))
     except ValueError as error:
-        await message.answer(f"{error}. Исправь значения или отправь /cancel.")
+        await message.answer(
+            f"{error}. Исправь значение или вернись к выбору поля.",
+            reply_markup=buttons([
+                [("↩️ Назад к полям", "tags:back")],
+                [("✖️ Отмена", "tags:cancel")],
+            ]),
+        )
         return
     if not await allow_processing(message, bot, actor_id):
         return
