@@ -221,3 +221,54 @@ image module boundaries. Do not rewrite the whole project or enable
 unshipped video operations. No completed CI, real Telegram validation or
 zero-overhead benchmark is claimed until independently verified.
 
+
+## Phase C3 — physical PDF implementation extraction (draft)
+
+This phase **moves**, rather than duplicates, the original PDF logic:
+
+- `services/pdf_tools.py` owns `_reader`, `parse_page_selection`,
+  `pdf_page_count`, `extract_pdf_pages`, `rotate_pdf`, `merge_pdfs`,
+  `remove_pdf_pages` and PDF-specific resource limits.
+- `services/pdf_module.py` delegates **directly** to `pdf_tools`. PDF
+  conversion logic no longer needs to import the image implementation.
+- `services/file_tools.py` still owns the image functions and re-exports
+  the existing PDF functions/constants as a **temporary compatibility
+  facade**. Existing legacy `from services.file_tools import ...` callers
+  remain valid, including third-party integrations and older tests.
+- The original algorithms, error messages, page-count and selection
+  constraints, output names, and upload/quotas/security controls were **not**
+  redesigned. The operation bytes and formats need actual regression
+  verification, not just a code review.
+
+### Compatibility and the remaining coupling
+
+The old PDF function objects are direct re-exports, so normal legacy calls
+and imports preserve their behavior. Mocking/rebinding
+`services.file_tools.pdf_page_count` in a test **does not override** the new
+direct `pdf_module -> pdf_tools` path; tests of the domain adapter must
+patch `services.pdf_tools` instead. This is an internal test seam change,
+not a public file-processing API change.
+
+The compatibility facade still imports PIL and PDF code to retain old
+symbols. It must not be treated as the new domain. Clients should move to
+the typed PDF port or dedicated PDF/image modules in future PRs. Avoid
+cycles and remove the compatibility facade only after auditing callers.
+
+### Required regression evidence
+
+- Source-level dependency checks: PDF implementation does not import PIL,
+  image helpers, Telegram, API or payment modules; no duplicated PDF
+  implementation stays in `file_tools`.
+- Legacy exports are the same underlying PDF function objects.
+- Real generated-PDF extract/merge/rotate/remove tests, including invalid
+  ranges and encrypted/oversized handling from the existing suites.
+- Image conversion/optimization smoke tests demonstrate that the image
+  paths still work.
+- Exact-head full Python, Mini App tests/build, Docker build and
+  production-like bot/API smoke checks before any merge.
+- No capacity or performance improvement is claimed without measurements.
+
+**Next phase C4:** physically extract the image implementation into
+`services/image_tools.py`, retain legacy aliases and introduce an image
+domain port, separately and under equivalent compatibility tests.
+
