@@ -5,9 +5,12 @@ paths; authentication, quotas, cleanup and upload validation belong to
 application/workspace layers.
 """
 from contextlib import contextmanager
+import errno
 import os
 from pathlib import Path
+import stat
 import tempfile
+from typing import BinaryIO
 import warnings
 
 from PIL import Image, ImageOps
@@ -32,6 +35,35 @@ def _validate_image_input_header(image: Image.Image) -> None:
 
 
 @contextmanager
+def _open_regular_image_source(source: Path):
+    """Pin a regular source inode without following final symlinks.
+
+    Nonblocking open prevents FIFOs from hanging before fstat checks. An
+    already-open descriptor remains bound to its original inode even if the
+    pathname is later replaced. This does not prevent in-place mutation.
+    """
+    if source.is_symlink():
+        raise ValueError("Поддерживаются только обычные файлы изображений")
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        descriptor = os.open(source, flags)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENXIO):
+            raise ValueError("Поддерживаются только обычные файлы изображений") from None
+        raise
+    try:
+        stream = os.fdopen(descriptor, "rb")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("Поддерживаются только обычные файлы изображений")
+        yield stream
+
+
+@contextmanager
 def _atomic_image_output(target: Path):
     """Publish only completely encoded output, preserving a previous result.
 
@@ -50,7 +82,11 @@ def _atomic_image_output(target: Path):
         stage.unlink(missing_ok=True)
 
 
-def _open_image(source: Path) -> Image.Image:
+def _open_image(source: Path | BinaryIO) -> Image.Image:
+    """Decode a source Path or a caller-pinned stream without closing it."""
+    if isinstance(source, (str, os.PathLike)):
+        with _open_regular_image_source(Path(source)) as stream:
+            return _open_image(stream)
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         with Image.open(source) as original:
