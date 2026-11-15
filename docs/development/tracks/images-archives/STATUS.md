@@ -15,7 +15,7 @@ Implementation/test commit before docs update: `fcc0e5fb900a27ba4f27f427a9aaae01
 - AGENTS.md respected: only neutral solid-color test fixtures, no depictions of living beings, audio/music, advertising, payments, new third-party integrations or media assets.
 
 ## Verified / unverified
-- **Executed locally** (2026-11-15): Python 3.13.5, Pillow 12.3.0, pypdf 5.9.0 on manually reconstructed domain sources and a lightweight compatibility adapter (not full GitHub checkout). Command `python -m unittest -v tests.test_image_input_preflight tests.test_image_bundle tests.test_image_bundle_preflight`: **20/20 passed** (7 new + 13 existing, 0.479s).
+- **Executed locally** (2026-11-15): Python 3.13.5, Pillow 12.3.0, pypdf 5.9.0 on manually reconstructed domain sources and a lightweight compatibility adapter (not full GitHub checkout). Command `python -m unittest -v tests.test_image_input_preflight tests.test_image_bundle tests.test_image_bundle_atomic tests.test_image_bundle_preflight`: **29/29 passed** (7 new + 22 existing, 0.536s) after adding the 9 existing image-bundle atomic-output tests and using the actual typed `ImageModulePort` source in the local mirror.
 - **NOT EXECUTED / NOT VERIFIED**: exact-head complete Python suite with real full module adapter, Mini App tests/typecheck/build, Docker, live Telegram/API end-to-end, benchmark CPU/RAM, GitHub Actions runner jobs. [CI issue #101](https://github.com/Dimash313/FileShape/issues/101) remains blocking. Empty statuses / 0-step jobs are not proof of a pass.
 - Before merge: verify PR #159 head, changed-file scope, review, actual final-head green CI; after parent integration verify main CI and deployment filesystem.
 
