@@ -60,3 +60,10 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - No benchmark results or 10/10 performance claims until the exact script is executed, host/versions noted and multiple runs compared. Typical and near-limit input sizes stay within 20 MiB/22 million pixels; all private temporary fixtures are removed after running.
 - GitHub Actions runners became active after repository publicity change; parent #162 Mini App job succeeded on manual rerun #43725314168, Python still executing at last inspection. Re-check exact-head branch CI, do not confuse runner allocation with a successful test suite.
 - Stack #168 → #162 → #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture ancestors. All Draft until green exact-head gates/review; no API or billing changes.
+
+
+## Concurrent image PDF resource evidence — stacked diagnostic Draft
+
+- [Issue #178](https://github.com/Dimash313/FileShape/issues/178) follows [Draft PR #168](https://github.com/Dimash313/FileShape/pull/168): add a **manual opt-in** Linux two-/three-worker benchmark using independent synthetic sources and real FileShape image/PDF processors. Report sampled simultaneous child RSS separately from the non-concurrent sum of per-child peak RSS; these are not equivalent to cgroup memory or production service capacity. Ensure group kill/reap, private temporary cleanup and conservative resource caps.
+- CI must run only two tiny smoke workers; 3 near-cap workers are expensive and manual. Distinguish measured results from assumptions; do not introduce application-facing worker admission/quota changes. Actual operational concurrency investigation remains API/security [Issue #177](https://github.com/Dimash313/FileShape/issues/177).
+- Parent #168 exact-head CI run #43732178535 passed Python, Mini App and Docker; **the new child branch requires its own exact-head CI**. All changes remain Draft, stacked onto #168 → #162 → #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 and architecture parents.
