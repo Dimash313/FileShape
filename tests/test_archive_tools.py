@@ -78,7 +78,8 @@ class ZipToolsTests(unittest.TestCase):
         second.write_text("two", encoding="utf-8")
         target = self.folder / "old.zip"
         target.write_bytes(b"existing output must remain unchanged")
-        with patch.object(zipfile.ZipFile, "write", side_effect=OSError("disk failed")):
+        # The ZIP writer now streams pinned inputs through ZipFile.open.
+        with patch.object(zipfile.ZipFile, "open", side_effect=OSError("disk failed")):
             with self.assertRaisesRegex(OSError, "disk failed"):
                 make_zip([(first, "one.txt"), (second, "two.txt")], target)
         self.assertEqual(target.read_bytes(), b"existing output must remain unchanged")
