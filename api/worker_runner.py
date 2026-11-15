@@ -32,6 +32,28 @@ def _resource_limits():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+# File parsers must not inherit the API's Telegram token, cloud credentials,
+# interpreter-injection variables or any other unrelated service environment.
+# Keep the process utilities needed by FFmpeg and the document/image stack.
+_WORKER_ENV_KEYS = (
+    "PATH", "HOME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE",
+    "TZ", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME",
+)
+
+
+def _worker_environment() -> dict[str, str]:
+    env = {key: os.environ[key] for key in _WORKER_ENV_KEYS if key in os.environ}
+    env.update({
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONIOENCODING": "utf-8",
+        # config.py is imported transitively by api.worker. Do not load
+        # the parent application's BOT_TOKEN from a local .env in the child.
+        "PYTHON_DOTENV_DISABLED": "1",
+    })
+    return env
+
+
 async def _communicate_bounded(proc, data: bytes) -> bytes:
     """Read at most 64 KiB + 1 byte, even if a worker floods stdout.
 
@@ -89,7 +111,7 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env=_worker_environment(),
         **kwargs,
     )
     try:
