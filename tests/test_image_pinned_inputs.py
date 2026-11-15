@@ -99,7 +99,7 @@ class PinnedImageSourceTests(unittest.TestCase):
                 image_bundle.images_to_pdf([self.first, self.second], self.output), 2
             )
         self.assertEqual(len(inspected), 2)
-        self.assertTrue(all(signature.startswith(b"\\x89PNG".replace(b"\\x89", bytes([137]))) for _, signature in inspected))
+        self.assertTrue(all(signature == bytes((137, 80, 78, 71, 13, 10, 26, 10)) for _, signature in inspected))
         self.assert_clean()
 
     def test_bad_later_header_leaves_no_results(self):
