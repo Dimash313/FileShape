@@ -20,6 +20,7 @@
     "src/campaignsApi.ts",
     "src/toolCatalog.ts",
     "src/filePreflight.ts",
-    "src/transferPresentation.ts"
+    "src/transferPresentation.ts",
+    "src/batchReorderFocus.ts"
   ]
 }
