@@ -68,6 +68,46 @@ class VideoAudioExtractionTests(unittest.TestCase):
                 self.assertEqual(probe_audio(target)["codec"], "mp3")
                 self.assert_no_staging()
 
+    def test_external_movie_references_explicitly_disabled(self):
+        original_run = subprocess.run
+        with patch("services.video_audio.subprocess.run",
+                   side_effect=original_run) as invoked:
+            extract_audio_from_video(self.source, self.target)
+        video_commands = [
+            call.args[0] for call in invoked.call_args_list
+            if "-enable_drefs" in call.args[0]
+        ]
+        self.assertEqual(len(video_commands), 2)
+        for command in video_commands:
+            with self.subTest(program=Path(command[0]).name):
+                self.assertEqual(command[command.index("-enable_drefs") + 1], "0")
+                self.assertEqual(command[command.index("-use_absolute_path") + 1], "0")
+                self.assertEqual(command[command.index("-protocol_whitelist") + 1],
+                                 "file,pipe")
+        self.assert_no_staging()
+
+    def test_bad_probe_json_shapes_fail_cleanly(self):
+        malformed = (
+            None,
+            [],
+            {"format": None, "streams": []},
+            {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"},
+             "streams": "invalid"},
+            {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"},
+             "streams": [None]},
+        )
+        for payload in malformed:
+            with self.subTest(payload=repr(payload)):
+                checked = subprocess.CompletedProcess(
+                    [], 0, json.dumps(payload), ""
+                )
+                with patch("services.video_audio.subprocess.run",
+                           return_value=checked):
+                    with self.assertRaises(ValueError):
+                        extract_audio_from_video(self.source, self.target)
+                self.assertFalse(self.target.exists())
+                self.assert_no_staging()
+
     def test_no_audio_stream_or_no_video_stream_is_rejected(self):
         for audio, video in ((False, True), (True, False)):
             with self.subTest(audio=audio, video=video):
