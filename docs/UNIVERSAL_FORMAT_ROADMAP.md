@@ -20,6 +20,37 @@ Build one file studio for Telegram bot, Mini App, web, Android and iOS backed by
 | Fonts | TTF, OTF, WOFF, WOFF2 | Inspect, convert compatible formats/subset if license allows | Respect embedding and redistribution rights |
 | Other specialized | CAD, 3D, medical, executable, database, RAW camera | Research individually only after demand and safe parser review | No promise of universal conversion; no arbitrary code execution |
 
+## Cross-media conversion matrix — priority feature
+
+FileShape should expose **verified directional conversions across media families**, not only same-family codecs. Every operation must have explicit input/output constraints, resource caps and an accurate preview; the matrix below is **planned**, not shipped.
+
+| Input | Output | Operation / user controls |
+| --- | --- | --- |
+| GIF / animated WebP / APNG | MP4, WebM | Preserve frame timing where possible; loop handling; choose resolution and codec |
+| MP4 / MOV / MKV / WebM | GIF, animated WebP, APNG | Choose start/end, FPS, width/height, palette/quality and output size |
+| MP4 / MOV / MKV / WebM | MP3, WAV, FLAC, M4A, OGG | Select existing audio track, optionally trim and choose output quality; no audio track → clear error |
+| MP4 / MOV / MKV / WebM | JPG, PNG, WebP | Extract thumbnail at timestamp or selected frames |
+| MP4 / MOV / MKV / WebM | ZIP of numbered images | Extract bounded frames at selected FPS/interval; strict file count and archive limits |
+| Multiple JPG / PNG / WebP | GIF, animated WebP, APNG | User-ordered frames, per-frame delay, repeat count, canvas size |
+| Multiple JPG / PNG / WebP | MP4, WebM | User-ordered slideshow with explicit duration, transitions only when supported |
+| Audio + user-selected static image / solid-color background | MP4, WebM | Create video containing supplied audio; never imply a video can be inferred from audio alone |
+| PDF | JPG, PNG, WebP, ZIP of pages | Render selected pages with bounded DPI, page count and pixel limits |
+| JPG / PNG / WebP | PDF | Single or multi-image PDF, user-selected ordering |
+| PDF | TXT, MD (where meaningful) | Extract embedded text; OCR separately opt-in and only with bounded language packs |
+| EPUB | PDF | Render reflowable content with disclosed layout changes; reject DRM-protected inputs |
+| Images / PDF | searchable PDF | Optional OCR, accuracy disclosure and privacy-safe local processing |
+| Video | audio + optional cover image | Split streams into separate owned downloadable artifacts |
+| Animated GIF | static PNG/JPG/WebP | Choose a specific frame, not arbitrary frame drop without notice |
+| ZIP of images | PDF, GIF or MP4 | Strict archive inspection and user-confirmed order before transformation |
+
+### Cross-media UX
+- **Smart conversion suggestions:** after upload, show only supported transformations for the verified content type. Display format, expected quality loss, and relevant settings (time range, FPS, resolution, bitrate, page range).
+- **Multi-output:** permit an owned result bundle (e.g. extracted audio plus preview frame) only when output quotas, size and storage have been explicitly validated.
+- **Streaming and frame safety:** cap decoded pixels × frames, output bytes, FPS, duration, CPU, RAM, disk and subprocess time. Animated GIFs may be vastly larger than equivalent MP4; show estimated output size as an estimate, not a guarantee.
+- **Audio/video compatibility:** stream-copy audio when the selected output container supports it; otherwise transcode with an explicit quality choice. Preserve variable GIF frame durations where possible and do not invent sound in silent sources.
+- **Security:** no user-supplied FFmpeg filter expressions, protocols, remote URLs, external fonts or untrusted arbitrary command arguments. Use bounded fixed presets, owner isolation, atomic result delivery and temporary-file cleanup.
+- **Priority:** implement GIF → MP4, video → GIF, video → audio and video → frame first; follow with image sequences → GIF/video, PDF → images and other cross-media operations after measured demand and load tests.
+
 ## Audio Studio — full metadata editor (first major expansion)
 
 **Supported tag fields, where available in the container:** title, subtitle, artist, album artist, album, date (full ISO date where supported), year, original release date, genre, composer, lyricist, conductor, arranger, publisher, label, copyright, ISRC, BPM, key, language, track number / total, disc number / total, comment, description, encoder, URL, grouping, compilation flag, lyrics as plain metadata, custom fields and embedded cover art (add/replace/remove). Include explicit **clear field**, preserve unknown tags where possible and show unsupported fields as read-only or unavailable rather than silently discarding them.
