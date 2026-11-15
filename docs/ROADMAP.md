@@ -71,7 +71,7 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 - [ ] Verify tier file size and concurrency claims under expected workload; preserve safe fallbacks.
 - [ ] Perform auth/IDOR, parser/ZIP/PDF, resource exhaustion, SQLite/WAL, queue and data-retention security reviews.
 - [ ] Verify backup, restore, migration rollback, storage deletion and monitoring on production-like Docker host.
-- [ ] Run load tests, end-to-end real Telegram bot/Android Mini App tests, and error-flow regression matrix.
+- [ ] Run representative simulated load tests, mock-backed end-to-end Telegram bot/Mini App tests, and error-flow regression matrix. Real Telegram/Android user-facing testing is deferred until after the owner-authorized public launch (no beta); record this limitation and keep unsafe/unverified features disabled.
 - [ ] Validate product wording, transparent pricing/renewal/refund handling and user privacy disclosures.
 - [ ] Launch only with explicit production authorization and an incident/rollback procedure.
 
