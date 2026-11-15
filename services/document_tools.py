@@ -17,6 +17,8 @@ MAX_DOCX_MEMBER = 20 * 1024 * 1024
 MAX_DOCX_TABLE_ROWS = 5_000
 MAX_DOCX_TABLE_CELLS = 20_000
 MAX_DOCX_ROW_CELLS = 64
+# python-docx follows w:vMerge continuations recursively through prior rows.
+MAX_DOCX_VERTICAL_MERGE_ROWS = 128
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 MAX_TEXT_CHARS = 700_000
 MAX_TEXT_LINES = 5_000
@@ -86,18 +88,50 @@ def read_docx_text(source: Path) -> tuple[str, dict]:
                     or item._column_count > MAX_DOCX_ROW_CELLS):
                 raise ValueError("Слишком сложная таблица DOCX")
             total_rows += row_count
+            # Each grid column remembers (depth, start, end) of its prior
+            # cell. Matching the full span prevents ambiguous continuations.
+            previous_cells: list[tuple[int, int, int] | None] = [
+                None
+            ] * item._column_count
             for row in rows:
-                # row.cells expands w:gridSpan into repeated cell references.
-                # Inspect raw OOXML spans first to avoid a huge tuple allocation.
+                # row.cells recursively follows vertical merge continuations.
+                # Validate the raw grid before python-docx can recurse/expand.
                 grid_cells = 0
+                offset = row.grid_cols_before
+                current_cells: list[tuple[int, int, int] | None] = [
+                    None
+                ] * item._column_count
+                if offset < 0 or offset > item._column_count:
+                    raise ValueError("Повреждённая таблица DOCX")
                 for tc in row._tr.tc_lst:
                     span = tc.grid_span
-                    if (span < 1 or span > MAX_DOCX_ROW_CELLS - grid_cells):
+                    if span < 1 or span > MAX_DOCX_ROW_CELLS - grid_cells:
                         raise ValueError("Слишком сложная таблица DOCX")
+                    start = offset + grid_cells
+                    end = start + span
+                    if end > item._column_count:
+                        raise ValueError("Повреждённая таблица DOCX")
+                    if tc.vMerge == "continue":
+                        prior = previous_cells[start]
+                        if (prior is None or prior[1:] != (start, end)
+                                or any(previous_cells[col] != prior
+                                       for col in range(start, end))):
+                            raise ValueError("Повреждённая таблица DOCX")
+                        depth = prior[0] + 1
+                        if depth > MAX_DOCX_VERTICAL_MERGE_ROWS:
+                            raise ValueError(
+                                "Слишком длинное объединение ячеек DOCX"
+                            )
+                    else:
+                        depth = 1
+                    cell = (depth, start, end)
+                    for col in range(start, end):
+                        current_cells[col] = cell
                     grid_cells += span
                 if grid_cells > MAX_DOCX_TABLE_CELLS - total_cells:
                     raise ValueError("Слишком сложная таблица DOCX")
                 total_cells += grid_cells
+                previous_cells = current_cells
 
                 cells = []
                 row_chars = 0
