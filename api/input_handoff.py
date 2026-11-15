@@ -20,7 +20,9 @@ import secrets
 from api.durable_dispatch import (
     DispatchLease, DispatchLeaseConflict, MAX_DELIVERIES, _lease_seconds, _now,
 )
-from api.durable_jobs import serialized
+from api.durable_jobs import (
+    IdempotencyConflict, IdempotencyPending, serialized,
+)
 from api.fenced_results import FencedDispatchStore
 from api.job_envelope import SingleFileJobV1
 from api.jobs import JobNotFound, JobStateError
@@ -94,6 +96,34 @@ class IntakeDispatchStore(FencedDispatchStore):
         if envelope.job_id != job_id:
             raise JobStateError()
         return envelope, row[1], row[2], row[3]
+
+    @serialized
+    def lookup_admission(
+        self, owner_id: int, key_hash: str, fingerprint: str,
+    ) -> SingleFileJobV1 | None:
+        """Owner-scoped replay without restaging or charging another input.
+
+        This is a fast path, NOT a substitute for the underlying atomic
+        insert's duplicate-key protection when two submissions race.
+        """
+        self._validate_owner(owner_id)
+        self._validate_admission_hash(key_hash)
+        self._validate_admission_hash(fingerprint)
+        row = self._db.execute(
+            """SELECT a.fingerprint,a.accepted,d.envelope
+               FROM admissions a
+               JOIN jobs j ON j.job_id=a.job_id
+               LEFT JOIN dispatch_outbox d ON d.job_id=a.job_id
+               WHERE a.owner_id=? AND a.key_hash=? AND j.owner_id=?""",
+            (owner_id, key_hash, owner_id),
+        ).fetchone()
+        if row is None:
+            return None
+        if row[0] != fingerprint:
+            raise IdempotencyConflict()
+        if not row[1] or row[2] is None:
+            raise IdempotencyPending()
+        return SingleFileJobV1.from_json(row[2])
 
     @serialized
     def input_status(self, owner_id: int, job_id: str):
@@ -362,6 +392,20 @@ class InputHandoff:
         Client idempotency keys MUST be hashed and authenticated by API code.
         """
         timestamp = _now(now)
+        # A true replay must work even if the private blob store has no
+        # capacity for another unused upload. Never replace the original
+        # input reference or spend the operation twice.
+        existing = self.dispatch.lookup_admission(
+            owner_id, key_hash, fingerprint,
+        )
+        if existing is not None:
+            if self.dispatch.get(existing.job_id, owner_id).state == "queued":
+                try:
+                    self.repair_one(owner_id, existing, now=timestamp)
+                except JobNotFound:
+                    if self.dispatch.get(existing.job_id, owner_id).state == "queued":
+                        raise
+            return existing, False
         ref = self.blobs.stage_input(owner_id, data, ttl=ttl, now=timestamp)
         try:
             envelope, created = self.dispatch.admit_staged_single(
