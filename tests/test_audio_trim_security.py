@@ -53,6 +53,10 @@ class TrimPinnedSourceTests(unittest.TestCase):
             return details
 
         def assert_ffmpeg_fd(command, *args, **kwargs):
+            # Both modules share Python's subprocess object; preserve the
+            # real FFprobe calls and inspect only the FFmpeg transcode.
+            if Path(command[0]).name != "ffmpeg":
+                return real_run(command, *args, **kwargs)
             (pinned_path, fd) = inspected[0]
             self.assertIn(pinned_path, command)
             self.assertEqual(kwargs.get("pass_fds"), (fd,))
