@@ -199,3 +199,23 @@ Next separate domain PRs can migrate `services.document_tools` and
 endpoints or supported formats are claimed here. Keep this PR draft
 until parent PRs and full exact-head CI pass.
 
+
+### Phase D1 — typed DOCX/TXT domain port and API integration (draft)
+
+`services/document_module.py` introduces a format-specific interface
+for inspecting DOCX/TXT files and converting DOCX -> TXT and TXT -> DOCX.
+The existing FastAPI request dispatcher now uses it without changing
+public endpoints, actions, output names, quotas or validation.
+`services/document_tools.py` remains the bounded implementation,
+including explicit plain-text-only document semantics; the Telegram
+bot is not yet migrated.
+
+New isolated adapter and real-file tests cover contract parity, parsing
+limits, output filenames and cross-domain isolation. Next phase D2
+should move Telegram DOCX/TXT callbacks behind this port separately.
+The GitHub Actions pre-run infrastructure blockage is tracked as
+[issue #101](https://github.com/Dimash313/FileShape/issues/101), with
+a separate [CI PR #102](https://github.com/Dimash313/FileShape/pull/102).
+These architecture PRs remain drafts until the full exact-head test
+suite and dependent integration checks can execute and pass.
+
