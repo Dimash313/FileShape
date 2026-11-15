@@ -39,14 +39,15 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertNotIn("docx:pdf", all_actions)
         self.assertNotIn("zip:extract", all_actions)
 
-    def test_batch_manifest_lists_only_real_image_pdf_and_merge_routes(self):
+    def test_batch_manifest_lists_only_implemented_image_pdf_merge_zip_routes(self):
         from services.image_bundle import MIN_IMAGES, MAX_IMAGES
         from services.pdf_tools import MAX_MERGE_FILES
+        from services.archive_tools import MAX_BUNDLE_FILES
 
         manifest = build_http_capabilities()
-        self.assertEqual(len(manifest["batch_operations"]), 2)
+        self.assertEqual(len(manifest["batch_operations"]), 3)
         listed = {batch["route"]: batch for batch in manifest["batch_operations"]}
-        self.assertEqual(set(listed), {"/api/v1/images/pdf", "/api/v1/pdf/merge"})
+        self.assertEqual(set(listed), {"/api/v1/images/pdf", "/api/v1/pdf/merge", "/api/v1/zip/create"})
         image = listed["/api/v1/images/pdf"]
         self.assertEqual(image["method"], "POST")
         self.assertEqual(image["input_kind"], "image")
@@ -59,6 +60,14 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(merge["input_extensions"], [".pdf"])
         self.assertEqual((merge["min_files"], merge["max_files"]), (2, MAX_MERGE_FILES))
         self.assertEqual(merge["output_extension"], ".pdf")
+        zip_create = listed["/api/v1/zip/create"]
+        self.assertEqual(zip_create["method"], "POST")
+        self.assertEqual(zip_create["input_kind"], "any_file")
+        self.assertEqual(zip_create["input_extensions"], [])
+        self.assertTrue(zip_create["accept_any_file_type"])
+        self.assertEqual((zip_create["min_files"], zip_create["max_files"]),
+                         (2, MAX_BUNDLE_FILES))
+        self.assertEqual(zip_create["output_extension"], ".zip")
         for batch in manifest["batch_operations"]:
             self.assertTrue(any(
                 route.path == batch["route"] and batch["method"] in route.methods
@@ -70,14 +79,15 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(conversion_catalog.SUPPORTED["archive"], {"zip:list"})
         self.assertNotIn("pdf:merge", conversion_catalog.SUPPORTED["pdf"])
 
-    def test_unsupported_bot_only_tools_are_not_listed_in_http_capabilities(self):
+    def test_unimplemented_tools_are_not_advertised_as_http_actions(self):
         manifest = build_http_capabilities()
         actions = {action for entry in manifest["operations"] for action in entry["actions"]}
         self.assertFalse({"zip:create", "zip:extract", "pdf:merge",
                           "audio:trim", "audio:tags", "video:extract_audio"} & actions)
-        self.assertFalse(any(
-            entry["route"].endswith("/zip") for entry in manifest["batch_operations"]
-        ))
+        self.assertNotIn(
+            "/api/v1/zip/extract",
+            {entry["route"] for entry in manifest["batch_operations"]},
+        )
 
     def test_return_value_is_independent_of_mutable_internal_allowlist(self):
         manifest = build_http_capabilities()
@@ -133,7 +143,7 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(result.headers["x-content-type-options"], "nosniff")
         self.assertEqual(
             {batch["route"] for batch in result.json()["batch_operations"]},
-            {"/api/v1/images/pdf", "/api/v1/pdf/merge"},
+            {"/api/v1/images/pdf", "/api/v1/pdf/merge", "/api/v1/zip/create"},
         )
 
 
