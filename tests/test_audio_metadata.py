@@ -162,14 +162,16 @@ class MP3TagBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("audio:tags", ids("audio", ".ogg"))
         self.assertIn("audio:trim", ids("audio", ".wav"))
 
-    async def test_field_selection_menu_and_cover_not_yet_active(self):
-        from main import tag_editor_keyboard, choose_audio_tag, TagState
+    async def test_field_selection_back_cancel_and_unavailable_cover_hidden(self):
+        from main import tag_editor_keyboard, choose_audio_tag, TagState, Message
         menu = [button.callback_data for row in tag_editor_keyboard().inline_keyboard
                 for button in row]
         self.assertEqual(set(menu), {
             "tags:title", "tags:artist", "tags:album", "tags:date",
-            "tags:genre", "tags:cover", "tags:cancel",
+            "tags:genre", "tags:cancel",
         })
+        # The callback handler explicitly checks aiogram Message instances.
+        # Patch the type guard while keeping the callback and FSM real.
         message = SimpleNamespace(
             chat=SimpleNamespace(type="private", id=111),
             answer=AsyncMock(),
@@ -187,14 +189,28 @@ class MP3TagBotTests(unittest.IsolatedAsyncioTestCase):
             message=message, from_user=SimpleNamespace(id=111),
             data="tags:artist", answer=AsyncMock(),
         )
-        await choose_audio_tag(callback, state)
+        with patch("main.Message", SimpleNamespace):
+            await choose_audio_tag(callback, state)
         state.update_data.assert_awaited_once_with(tag_field="artist")
         state.set_state.assert_awaited_once_with(TagState.waiting_for_fields)
         message.answer.assert_awaited_once()
-        callback.data = "tags:cover"
+
+        state.get_state.return_value = TagState.waiting_for_fields.state
         state.update_data.reset_mock()
-        await choose_audio_tag(callback, state)
-        state.update_data.assert_not_awaited()
+        state.set_state.reset_mock()
+        message.answer.reset_mock()
+        callback.data = "tags:back"
+        with patch("main.Message", SimpleNamespace):
+            await choose_audio_tag(callback, state)
+        state.update_data.assert_awaited_once_with(tag_field=None)
+        state.set_state.assert_awaited_once_with(TagState.choosing_field)
+        self.assertIsNotNone(message.answer.call_args.kwargs.get("reply_markup"))
+
+        state.get_state.return_value = TagState.choosing_field.state
+        callback.data = "tags:cancel"
+        with patch("main.Message", SimpleNamespace):
+            await choose_audio_tag(callback, state)
+        state.clear.assert_awaited_once()
 
     async def test_wrong_owner_cannot_download_or_use_quota(self):
         from main import audio_tag_fields
