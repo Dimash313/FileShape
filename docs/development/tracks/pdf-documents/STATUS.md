@@ -1,25 +1,24 @@
-# PDF & documents — handoff
+# PDF & documents — GitHub-first handoff
 
 Updated: 2026-11-15 UTC. Track: `pdf-documents`.
-Current Issue: [#129 — DOCX malformed OOXML parser failures](https://github.com/Dimash313/FileShape/issues/129).
-Active PR: [#130](https://github.com/Dimash313/FileShape/pull/130) (**Draft**), branch `pdf-documents/129-docx-parse-errors`, base `pdf-documents/119-docx-zip-safety` ([Draft #125](https://github.com/Dimash313/FileShape/pull/125)).
-New code/test commit: `e699795c0429635f23caa572a8dbf900e181002f`. The STATUS update creates a newer PR head; query GitHub for the exact current SHA.
+Current Issue: [#140 — bound DOCX table expansion and text budget](https://github.com/Dimash313/FileShape/issues/140).
+Active PR: [#146](https://github.com/Dimash313/FileShape/pull/146) (**DRAFT**), head branch `pdf-documents/140-bounded-tables`, base `pdf-documents/129-docx-parse-errors` ([Draft #130](https://github.com/Dimash313/FileShape/pull/130)).
+Code/tests commit preceding this STATUS update: `c1d877e87c9215e9ac26fbcf0ffd5eb6b2b5854e`. This file cannot self-record its final SHA; always inspect the latest GitHub branch head before merging.
 
-## What changed (only on unmerged branches)
+## Implemented, not merged
 
-- [#125](https://github.com/Dimash313/FileShape/pull/125) / [Issue #119](https://github.com/Dimash313/FileShape/issues/119): `services/document_tools.py` validates DOCX ZIP member paths, rejects duplicates (including case-insensitive names) and symlinks; `tests/test_docx_container_safety.py` covers malicious ZIP entries and valid roundtrip. Parent #125 is stacked on draft track coordination [#112](https://github.com/Dimash313/FileShape/pull/112).
-- [#130](https://github.com/Dimash313/FileShape/pull/130) / [Issue #129](https://github.com/Dimash313/FileShape/issues/129): `read_docx_text` converts known malformed OOXML parser/ZIP exceptions to stable `ValueError("Повреждённый DOCX")` without leaking parser internals; `tests/test_docx_malformed_xml.py` covers broken OOXML XML parts, exception mapping, OS error propagation and valid text export.
-- No shared API, Telegram or Mini App interface, quotas, storage, payment, additional dependency, or file-format change.
+- PR [#125](https://github.com/Dimash313/FileShape/pull/125), Issue [#119](https://github.com/Dimash313/FileShape/issues/119): reject DOCX ZIP member paths with traversal/noncanonical separators/duplicates and symlinks. Base `docs/independent-development-tracks` ([#112](https://github.com/Dimash313/FileShape/pull/112)).
+- PR [#130](https://github.com/Dimash313/FileShape/pull/130), Issue [#129](https://github.com/Dimash313/FileShape/issues/129): normalize corrupt OOXML parse exceptions to a stable `ValueError` without leaking private paths. Base `pdf-documents/119-docx-zip-safety`.
+- PR **[#146](https://github.com/Dimash313/FileShape/pull/146)**, Issue [#140](https://github.com/Dimash313/FileShape/issues/140): in `services/document_tools.py` enforce 5,000 cumulative table rows / 20,000 expanded grid cells / 64 cells per row; preflight `w:gridSpan` before `row.cells` can allocate excessively; check the 700,000-character budget cell by cell before constructing a large row. `tests/test_docx_table_limits.py` contains six generated DOCX real-file/boundary cases including malicious `w:gridSpan=1000000`; output and existing account semantics unchanged for valid input. These limits intentionally reject unusually complex tables.
 
-## Verification and blockers
+## Verification
 
-- **Executed locally in an isolated reconstructed DOCX subset, NOT a full exact GitHub checkout:** `python -m compileall -q services tests` passed; `python -m unittest discover -s tests -v` passed **11/11 domain tests** (4 existing document tools, 4 from parent PR #125, 3 new in #130) with Python 3.13 and python-docx 1.2.0. Real generated DOCX XML corruption fixtures were exercised.
-- **NOT EXECUTED on the final head:** complete repository unittest suite, Mini App tests/typecheck/build, Docker, real HTTP/bot integration, Telegram.
-- GitHub Actions runner issue [#101](https://github.com/Dimash313/FileShape/issues/101) blocks integration. Runner failures with zero steps do not count as test execution. Leave #125/#130 draft and unmerged pending exact-head successful checks, peer review, parent integration and merged-main CI.
-- Existing PDF tests [#113](https://github.com/Dimash313/FileShape/issues/113)/[Draft #114](https://github.com/Dimash313/FileShape/pull/114) and multi-PDF HTTP [Draft #108](https://github.com/Dimash313/FileShape/pull/108) have separate ownership. Do not duplicate or touch shared API/worker contracts without `api-security` approval.
+- **Executed on local, isolated source-faithful DOCX domain subset (NOT full repo):** `python -m compileall -q services tests` **passed**; `PYTHONPATH=. python -m unittest discover -s tests -p 'test_*doc*.py' -v` **17/17 passed** (6 new #140 + 3 #130 + 4 #125 + 4 original document tests); Python 3 with python-docx 1.2.0. Git blob hashes for source `6696d9cca277cf53ee53d9e14a203dccaf33f227` and new test `214983ea648d2ae3dfeb31f7d91a82aa3c168a74` match the GitHub branch exactly.
+- **NOT EXECUTED:** full exact-head Python suite, Mini App tests/typecheck/build, Docker build, bot/API integration or realistic load/performance. Do not claim 10/10 or launch readiness.
+- GitHub Actions [Issue #101](https://github.com/Dimash313/FileShape/issues/101) remains a CI/merge blocker. Zero runner steps do not count as tests. Keep PRs draft/unmerged and verify exact head after any changes.
 
-## Next unblocked work
+## Dependencies / risk / next tasks
 
-1. When CI runners can start, run full exact-head checks on #125 and #130 and confirm 11 local domain tests against the full repository; inspect possible conflicts with the stacked architecture.
-2. Audit DOCX complex-table/per-document text resource bounds and XML relationship behavior; open a separate Issue for an evidence-backed independent gap only after checking live Issues/PRs.
-3. Merge dependency order (#112 and parents → #125 → #130), only when reviews and CI pass. No claim of production readiness or measured performance.
+- Integrate strictly in parent order: architecture/ZIP/docs stack → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#125](https://github.com/Dimash313/FileShape/pull/125) → [#130](https://github.com/Dimash313/FileShape/pull/130) → [#146](https://github.com/Dimash313/FileShape/pull/146). Require explicit review and successful exact-head CI for each, then main push CI.
+- Other work is owned by PDF regression [#114](https://github.com/Dimash313/FileShape/pull/114) and HTTP PDF merge [#108](https://github.com/Dimash313/FileShape/pull/108). Never modify shared HTTP/auth/quota/worker code without `api-security` coordination.
+- Next unclaimed audit: deeply vertically merged DOCX cells and malicious XML complexity; exercise representative load/memory cases, log an Issue for confirmed gaps, avoid another speculative PR. DOCX still loads the OOXML parser before table guards, so the new table caps do not replace runtime worker resource limits.
