@@ -90,7 +90,9 @@ export default function App() {
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
-  const [notice, setNotice] = useState('');
+  // Keep notice text and severity atomic to avoid stale error announcements.
+  const [notice, setNotice] = useState<{ text: string; kind: 'status' | 'alert' } | null>(null);
+  const showNotice = (text: string, kind: 'status' | 'alert' = 'status') => setNotice({ text, kind });
   const [history, setHistory] = useState<Task[]>([]);
   const [queueInfo, setQueueInfo] = useState<QueueStatus | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -141,7 +143,7 @@ export default function App() {
     if (busy) return;
     background.releaseInput();
     tapFeedback(); setBatchMode(true); setBatchFiles([]); setFile(null);
-    setTab('home'); setNotice(''); setProgress(null);
+    setTab('home'); setNotice(null); setProgress(null);
   };
   const openTool = (key: ToolKey) => {
     if (key === 'batch') showBatch();
@@ -151,11 +153,11 @@ export default function App() {
     if (busy || !files.length) return;
     const error = batchImageSelectionError(files);
     if (error) {
-      setNotice(error);
+      showNotice(error, 'alert');
       return;
     }
     background.releaseInput();
-    setBatchFiles(files); setBatchMode(true); setFile(null); setNotice('');
+    setBatchFiles(files); setBatchMode(true); setFile(null); setNotice(null);
   };
   const reorderBatch = (index: number, change: BatchReorderDirection) => {
     if (busy) return;
@@ -201,11 +203,11 @@ export default function App() {
     });
   };
   const background = useBackgroundJobs(result => {
-    if (result.type === 'info') setNotice(result.text);
+    if (result.type === 'info') showNotice(result.text);
     else {
       downloadBlob(result.blob, result.name);
       remember(result.name, result.blob, result.jobId);
-      setNotice('Результат передан браузеру для сохранения.');
+      showNotice('Результат передан браузеру для сохранения.');
     }
   });
   const busy = requestBusy || background.creating || background.cancelling;
@@ -214,9 +216,9 @@ export default function App() {
     try {
       const status = await getJobStatus(item.jobId);
       setHistory(items => items.map(entry => entry.id === item.id ? { ...entry, jobState: status.state } : entry));
-      setNotice('Статус задания: ' + ({ queued: 'ожидание', processing: 'обработка', completed: 'завершено', failed: 'ошибка', cancelled: 'отменено' }[status.state]));
+      showNotice('Статус задания: ' + ({ queued: 'ожидание', processing: 'обработка', completed: 'завершено', failed: 'ошибка', cancelled: 'отменено' }[status.state]), status.state === 'failed' ? 'alert' : 'status');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось проверить статус.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось проверить статус.', 'alert');
     }
   };
   const acceptFile = (next?: File) => {
@@ -224,7 +226,7 @@ export default function App() {
     tapFeedback();
     const error = singleFileSelectionError(next);
     if (error) {
-      setNotice(error);
+      showNotice(error, 'alert');
       return;
     }
     background.releaseInput();
@@ -235,22 +237,22 @@ export default function App() {
     setBatchMode(false);
     setServerAction('');
     setPages('');
-    setNotice('');
+    setNotice(null);
     setTab('home');
   };
-  const clear = () => { if (busy) return; background.releaseInput(); setFile(null); setPdfPageCount(null); setPdfGridPage(0); setBatchMode(false); setBatchFiles([]); setNotice(''); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
+  const clear = () => { if (busy) return; background.releaseInput(); setFile(null); setPdfPageCount(null); setPdfGridPage(0); setBatchMode(false); setBatchFiles([]); setNotice(null); setProgress(null); if (inputRef.current) inputRef.current.value = ''; };
   const convert = async () => {
     if (!file || !canConvertLocally(file) || busy) return;
     setBusy(true);
-    setNotice('');
+    setNotice(null);
     try {
       const blob = await convertLocalImage(file, format);
       const filename = `${file.name.replace(/\.[^.]+$/, '') || 'image'}_fileshape.${extensionFor(format)}`;
       downloadBlob(blob, filename);
       remember(filename, blob);
-      setNotice('Готово! Файл сохранён на устройство.');
+      showNotice('Готово! Файл сохранён на устройство.');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось обработать файл.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось обработать файл.', 'alert');
     } finally { setBusy(false); }
   };
   const kind = file ? fileCategory(file) : 'other';
@@ -261,7 +263,7 @@ export default function App() {
   const inspectPdf = async () => {
     if (!file || kind !== 'pdf' || busy || !telegramInitData()) return;
     setBusy(true);
-    setNotice('');
+    setNotice(null);
     setProgress({ stage: 'upload', percent: null });
     try {
       const result = await runServerAction(file, 'pdf:info', '', setProgress);
@@ -273,10 +275,10 @@ export default function App() {
       }
       setPdfPageCount(count);
       setPdfGridPage(0);
-      setNotice('Информация о PDF получена.');
+      showNotice('Информация о PDF получена.');
     } catch (error) {
       setPdfPageCount(null);
-      setNotice(error instanceof Error ? error.message : 'Не удалось прочитать PDF.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось прочитать PDF.', 'alert');
     } finally {
       setBusy(false);
       setProgress(null);
@@ -307,27 +309,27 @@ export default function App() {
     if (busy) return;
     if (mode === 'clear') {
       setPages('');
-      setNotice('');
+      setNotice(null);
       return;
     }
     if (pdfPageCount === null || !validPageSelection) return;
     if (mode === 'all') {
       if (pdfPageCount > 150) {
-        setNotice('За одну операцию можно выбрать не более 150 страниц.');
+        showNotice('За одну операцию можно выбрать не более 150 страниц.', 'alert');
         return;
       }
       if (selectedAction === 'pdf:remove') {
-        setNotice('Нельзя удалить все страницы PDF. Оставь хотя бы одну.');
+        showNotice('Нельзя удалить все страницы PDF. Оставь хотя бы одну.', 'alert');
         return;
       }
       setPages('1-' + pdfPageCount);
-      setNotice('');
+      setNotice(null);
       return;
     }
     const inverted = Array.from({ length: pdfPageCount }, (_, index) => index + 1)
       .filter(page => !selectedPageNumbers.has(page));
     if (inverted.length > 150 || (selectedAction === 'pdf:remove' && inverted.length === pdfPageCount)) {
-      setNotice('Такой выбор нельзя выполнить: максимум 150 страниц, и нельзя удалить все страницы.');
+      showNotice('Такой выбор нельзя выполнить: максимум 150 страниц, и нельзя удалить все страницы.', 'alert');
       return;
     }
     const ranges: string[] = [];
@@ -339,11 +341,11 @@ export default function App() {
     }
     const next = ranges.join(',');
     if (next.length > 90) {
-      setNotice('Выбор слишком сложный. Используй диапазоны в поле выше.');
+      showNotice('Выбор слишком сложный. Используй диапазоны в поле выше.', 'alert');
       return;
     }
     setPages(next);
-    setNotice('');
+    setNotice(null);
   };
   const togglePdfPage = (page: number) => {
     if (busy || !validPageSelection) return;
@@ -360,15 +362,15 @@ export default function App() {
     }
     const value = chunks.join(',');
     if (next.size > 150 || (selectedAction === 'pdf:remove' && pdfPageCount !== null && next.size === pdfPageCount)) {
-      setNotice('Максимум 150 страниц; нельзя удалить все страницы PDF.');
+      showNotice('Максимум 150 страниц; нельзя удалить все страницы PDF.', 'alert');
       return;
     }
     if (value.length > 90) {
-      setNotice('Слишком много выбранных страниц. Используй диапазоны в поле выше.');
+      showNotice('Слишком много выбранных страниц. Используй диапазоны в поле выше.', 'alert');
       return;
     }
     setPages(value);
-    setNotice('');
+    setNotice(null);
   };
   const pageSelectionLimit = pdfPageCount ?? 250;
   const gridStart = pdfGridPage * 50 + 1;
@@ -384,31 +386,31 @@ export default function App() {
   const addPageSelection = (value: string) => {
     if (busy) return;
     setPages(current => current.trim() ? current.trim() + ',' + value : value);
-    setNotice('');
+    setNotice(null);
   };
   const serverConvert = async () => {
     if (!file || busy || !selectedAction || !background.canSubmit) return;
-    if (!safePageSelection) { setNotice(pageSelectionError || 'Проверь выбранные страницы.'); return; }
-    setBusy(true); setNotice(''); setProgress({ stage: 'upload', percent: null });
+    if (!safePageSelection) { showNotice(pageSelectionError || 'Проверь выбранные страницы.', 'alert'); return; }
+    setBusy(true); setNotice(null); setProgress({ stage: 'upload', percent: null });
     try {
       await background.create(file, selectedAction, pages.trim(), setProgress);
-      setNotice('Задание принято. Статус и кнопка результата доступны в разделе заданий.');
+      showNotice('Задание принято. Статус и кнопка результата доступны в разделе заданий.');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Номер задания не подтверждён. Автоматическая повторная отправка не выполняется.');
+      showNotice(error instanceof Error ? error.message : 'Номер задания не подтверждён. Автоматическая повторная отправка не выполняется.', 'alert');
     } finally { setBusy(false); setProgress(null); }
   };
   const convertBatch = async () => {
     if (busy || batchFiles.length < 2 || !telegramInitData()) return;
-    setBusy(true); setNotice(''); setProgress({ stage: 'upload', percent: null });
+    setBusy(true); setNotice(null); setProgress({ stage: 'upload', percent: null });
     try {
       const result = await runMultiImagePdf(batchFiles, setProgress);
       if (result.type === 'file') {
         downloadBlob(result.blob, result.name);
         remember(result.name, result.blob);
-        setNotice('Готово! PDF создан из ' + batchFiles.length + ' изображений.');
+        showNotice('Готово! PDF создан из ' + batchFiles.length + ' изображений.');
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Не удалось объединить изображения.');
+      showNotice(error instanceof Error ? error.message : 'Не удалось объединить изображения.', 'alert');
     } finally {
       setBusy(false); setProgress(null);
     }
@@ -504,7 +506,7 @@ export default function App() {
               {serverActions.map(option => <button type="button" key={option.code}
                 className={selectedAction === option.code ? 'server-option active' : 'server-option'}
                 disabled={busy} aria-pressed={selectedAction === option.code}
-                onClick={() => { setServerAction(option.code); setPages(''); setNotice(''); }}>{option.label}</button>)}
+                onClick={() => { setServerAction(option.code); setPages(''); setNotice(null); }}>{option.label}</button>)}
             </div>
             {selectedOption?.pages && <label className="pages-field">Номера страниц
               <input type="text" value={pages} onChange={event => setPages(event.target.value)}
@@ -516,7 +518,7 @@ export default function App() {
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1')}>Первая</button>
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1-3')}>1–3</button>
                 <button type="button" disabled={busy} onClick={() => addPageSelection('1-5')}>1–5</button>
-                <button type="button" disabled={busy} onClick={() => { setPages(''); setNotice(''); }}>Очистить</button>
+                <button type="button" disabled={busy} onClick={() => { setPages(''); setNotice(null); }}>Очистить</button>
               </div>
               <small>Можно объединять: 1,3-5. Диапазоны от 1 до {pdfPageCount ?? 250}. Для точной проверки сначала узнай количество страниц.</small>
             </div>}
@@ -595,8 +597,8 @@ export default function App() {
           <p>Локальные изображения обрабатываются на устройстве. Серверные файлы обрабатываются во временных папках и удаляются. Недавние небольшие результаты доступны для повторного скачивания в текущей сессии. На сервере остаются ограниченные по сроку метаданные заданий. Ссылки без файлов, имён и данных авторизации действуют до часа и очищаются при работе приложения или следующем открытии.</p>
         </div></div>
       </>}
-      {notice && <div className="notice" role="status">{notice}<button aria-label="Закрыть" onClick={() => setNotice('')}><X size={16}/></button></div>}
+      {notice && <div className="notice" role={notice.kind}>{notice.text}<button aria-label="Закрыть" onClick={() => setNotice(null)}><X size={16}/></button></div>}
     </main>
-    <nav className="bottom-nav" aria-label="Основная навигация">{nav.map(item => <button type="button" key={item.tab} aria-current={tab === item.tab ? 'page' : undefined} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(''); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</nav>
+    <nav className="bottom-nav" aria-label="Основная навигация">{nav.map(item => <button type="button" key={item.tab} aria-current={tab === item.tab ? 'page' : undefined} className={`nav-item ${tab === item.tab ? 'active' : ''}`} onClick={() => { tapFeedback(); setTab(item.tab); setNotice(null); }}><item.icon size={21} strokeWidth={tab === item.tab ? 2.3 : 1.8}/><span>{item.label}</span></button>)}</nav>
   </div>;
 }
