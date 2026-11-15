@@ -215,7 +215,7 @@ class InputHandoffTests(unittest.TestCase):
             ).examined, 0)
             with self.assertRaises(JobNotFound):
                 dispatch.mark_input_ready(
-                    OWNER, env.job_id, env.input_ref, now=self.now + 3,
+                    OWNER, env.job_id, env.input_ref, blobs, now=self.now + 3,
                 )
             self.assertIsNone(dispatch.claim_next(now=self.now + 4))
             self.assertEqual(dispatch.usage_snapshot(OWNER, now=self.now + 4)["daily_used"], 0)
@@ -270,13 +270,19 @@ class InputHandoffTests(unittest.TestCase):
         with IntakeDispatchStore(self.db_path) as dispatch, \
                 PrivateBlobStore(self.blob_root) as blobs:
             env = self.simulate_partial_admission(dispatch, blobs)
+            # An outbox reference alone is not proof of staged content.
+            # Directly marking an unbound input as ready must fail.
             with self.assertRaises(BlobUnavailable):
                 dispatch.mark_input_ready(
-                    OWNER, env.job_id, "x" * 32, now=self.now,
+                    OWNER, env.job_id, env.input_ref, blobs, now=self.now,
+                )
+            with self.assertRaises(BlobUnavailable):
+                dispatch.mark_input_ready(
+                    OWNER, env.job_id, "x" * 32, blobs, now=self.now,
                 )
             with self.assertRaises(JobNotFound):
                 dispatch.mark_input_ready(
-                    OTHER, env.job_id, env.input_ref, now=self.now,
+                    OTHER, env.job_id, env.input_ref, blobs, now=self.now,
                 )
             for limit in (0, True, -1, 101):
                 with self.subTest(limit=limit), self.assertRaises(ValueError):
