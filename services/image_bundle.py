@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from services.image_tools import _open_image
+from services.image_tools import _atomic_image_output, _open_image
 
 MIN_IMAGES = 2
 MAX_IMAGES = 8
@@ -41,11 +41,15 @@ def images_to_pdf(sources: list[Path], target: Path) -> int:
                 converted = image.convert("RGB")
             stack.callback(converted.close)
             pages.append(converted)
-        pages[0].save(
-            target,
-            format="PDF",
-            save_all=True,
-            append_images=pages[1:],
-            resolution=96.0,
-        )
+        # Only publish a complete PDF; preserve an existing result if the
+        # encoder or filesystem fails after writing a partial stage file.
+        # This reuses the same image-domain output policy as conversions.
+        with _atomic_image_output(target) as staged:
+            pages[0].save(
+                staged,
+                format="PDF",
+                save_all=True,
+                append_images=pages[1:],
+                resolution=96.0,
+            )
     return len(pages)
