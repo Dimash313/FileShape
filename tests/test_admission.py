@@ -30,6 +30,48 @@ class AdmissionQueueTests(unittest.IsolatedAsyncioTestCase):
                 eleventh.cancel()
                 await asyncio.gather(eleventh, return_exceptions=True)
 
+    async def test_burst_from_free_slot_enforces_waiter_cap(self):
+        # All 8 coroutines start before an internal scheduled acquire task
+        # could consume a slot. Historically they all observed "unlocked",
+        # bypassing max_waiters and waiting uncounted.
+        slots = asyncio.Semaphore(1)
+        gate = AdmissionQueue(max_waiters=1, wait_seconds=1)
+        contenders = [asyncio.create_task(gate.acquire(slots)) for _ in range(8)]
+        try:
+            await self.wait_for_waiters(gate, 1)
+            await asyncio.sleep(0)
+            self.assertTrue(contenders[0].done())
+            self.assertIsNone(contenders[0].result())
+            self.assertFalse(contenders[1].done())
+            for task in contenders[2:]:
+                with self.assertRaises(QueueFull):
+                    await asyncio.wait_for(task, 1)
+            self.assertEqual(gate.waiting, 1)
+            self.assertEqual(slots._value, 0)
+            slots.release()
+            await asyncio.wait_for(contenders[1], 1)
+            self.assertEqual(gate.waiting, 0)
+            self.assertEqual(slots._value, 0)
+            slots.release()
+            self.assertEqual(slots._value, 1)
+        finally:
+            for task in contenders:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*contenders, return_exceptions=True)
+
+    async def test_zero_waiters_allows_only_immediate_permit(self):
+        slots = asyncio.Semaphore(1)
+        gate = AdmissionQueue(max_waiters=0, wait_seconds=1)
+        contenders = [asyncio.create_task(gate.acquire(slots)) for _ in range(8)]
+        results = await asyncio.gather(*contenders, return_exceptions=True)
+        self.assertEqual(sum(result is None for result in results), 1)
+        self.assertEqual(sum(isinstance(result, QueueFull) for result in results), 7)
+        self.assertEqual(gate.waiting, 0)
+        self.assertEqual(slots._value, 0)
+        slots.release()
+        self.assertEqual(slots._value, 1)
+
     async def test_full_queue_refuses_more_requests(self):
         slots = asyncio.Semaphore(1)
         await slots.acquire()
