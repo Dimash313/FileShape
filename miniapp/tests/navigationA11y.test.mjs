@@ -55,3 +55,14 @@ test('navigation remains semantic with a single active section and no stale Scan
   assert.match(app, /aria-current=\{tab === item\.tab \? 'page' : undefined\}/);
   assert.doesNotMatch(app, /Сканер появится позже|ScanLine/);
 });
+
+test('skip link aligns with the centered shell and supports system forced colors', () => {
+  assert.match(css, /\.app-shell\{max-width:600px;/,
+    'Desktop shell width is used by the aligned skip link');
+  const marker = '/* Interfaces UX: in-app section keyboard navigation and skip link (#172). */';
+  const section = css.slice(css.lastIndexOf(marker));
+  assert.match(section, /left:\s*max\(16px,\s*calc\(\(100vw - 600px\) \/ 2 \+ 16px\)\);/);
+  assert.match(section, /max-width:\s*calc\(100vw - 32px\);/);
+  assert.match(section, /box-sizing:\s*border-box;/);
+  assert.match(section, /@media \(forced-colors: active\)\s*\{\s*\.skip-link:focus\s*\{[^}]*background:\s*Canvas;[^}]*color:\s*CanvasText;[^}]*border-color:\s*Highlight;[^}]*outline-color:\s*Highlight;/s);
+});
