@@ -399,6 +399,170 @@ class IntakeDispatchStore(FencedDispatchStore):
             return False
 
 
+    def _get_expired_processing_input(
+        self, owner_id: int, job_id: str, timestamp: float,
+    ):
+        """Only expired, still-processing leases can enter this review path."""
+        self._validate_owner(owner_id)
+        if not _valid_id(job_id):
+            raise JobNotFound()
+        row = self._db.execute(
+            """SELECT d.envelope,h.state,h.first_missing_at
+               FROM dispatch_outbox d
+               JOIN jobs j ON j.job_id=d.job_id
+               JOIN input_handoff h ON h.job_id=d.job_id
+               WHERE d.job_id=? AND j.owner_id=?
+                 AND d.state='leased' AND j.state='processing'
+                 AND d.lease_until<=? AND d.attempts<?""",
+            (job_id, owner_id, timestamp, MAX_DELIVERIES),
+        ).fetchone()
+        if row is None:
+            raise JobNotFound()
+        envelope = SingleFileJobV1.from_json(row[0])
+        if envelope.job_id != job_id or row[1] not in {"suspect", "review"}:
+            raise JobStateError()
+        return envelope, row[1], row[2]
+
+    @serialized
+    def pending_processing_inputs(
+        self, *, now: float | None = None, limit: int = 100,
+    ) -> list[tuple[int, SingleFileJobV1]]:
+        """Trusted bounded scan; no active or healthy worker leases included."""
+        timestamp = _now(now)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("Invalid processing review scan limit")
+        rows = self._db.execute(
+            """SELECT j.owner_id,d.envelope
+               FROM dispatch_outbox d
+               JOIN jobs j ON j.job_id=d.job_id
+               JOIN input_handoff h ON h.job_id=d.job_id
+               WHERE j.state='processing' AND d.state='leased'
+                 AND d.lease_until<=? AND d.attempts<?
+                 AND h.state IN ('suspect','review')
+               ORDER BY h.updated_at,d.job_id LIMIT ?""",
+            (timestamp, MAX_DELIVERIES, limit),
+        ).fetchall()
+        result = []
+        for owner_id, payload in rows:
+            envelope = SingleFileJobV1.from_json(payload)
+            result.append((owner_id, envelope))
+        return result
+
+    @serialized
+    def inspect_expired_processing_input(
+        self, owner_id: int, job_id: str, blobs: PrivateBlobStore, *,
+        now: float | None = None, review_after_seconds: int = 30,
+    ) -> str:
+        """Verify actual input again, with two observations before review.
+
+        This does not grant new worker tokens, settle an operation or stop an
+        active lease. Any recovered input can be retried only by claim_next().
+        """
+        timestamp = _now(now)
+        if not isinstance(blobs, PrivateBlobStore):
+            raise TypeError("PrivateBlobStore required")
+        if type(review_after_seconds) is not int or not 1 <= review_after_seconds <= 3600:
+            raise ValueError("Invalid review interval")
+        with self._transaction():
+            envelope, status, first_missing = self._get_expired_processing_input(
+                owner_id, job_id, timestamp,
+            )
+            try:
+                blobs.read_input(
+                    owner_id, job_id, envelope.input_ref, now=timestamp,
+                )
+                expiry = blobs.input_expires_at(
+                    owner_id, job_id, envelope.input_ref, now=timestamp,
+                )
+                if expiry <= timestamp:
+                    raise BlobUnavailable()
+            except BlobUnavailable:
+                if status == "review" or (
+                    first_missing is not None
+                    and timestamp - first_missing >= review_after_seconds
+                ):
+                    self._db.execute(
+                        """UPDATE input_handoff
+                           SET state='review',updated_at=?
+                           WHERE job_id=? AND state IN ('suspect','review')""",
+                        (timestamp, job_id),
+                    )
+                    return "review"
+                return "suspect"
+            self._db.execute(
+                """UPDATE input_handoff
+                   SET state='ready',first_missing_at=NULL,
+                       input_expires_at=?,updated_at=?
+                   WHERE job_id=? AND state IN ('suspect','review')""",
+                (expiry, timestamp, job_id),
+            )
+            return "ready"
+
+    @serialized
+    def resolve_expired_processing_review(
+        self, owner_id: int, job_id: str, blobs: PrivateBlobStore, *,
+        now: float | None = None,
+    ) -> bool:
+        """Operator-only: refund a reviewed, still-unavailable expired lease.
+
+        A single unavailable read NEVER commits a refund; the separate
+        inspect step already required a second check after a grace period.
+        Recovery, cancellation, and result publication are fenced by the
+        dispatch write transaction and the original expired lease deadline.
+        """
+        timestamp = _now(now)
+        if not isinstance(blobs, PrivateBlobStore):
+            raise TypeError("PrivateBlobStore required")
+        with self._transaction():
+            envelope, status, _ = self._get_expired_processing_input(
+                owner_id, job_id, timestamp,
+            )
+            if status != "review":
+                raise JobStateError("Expired input is not pending operator review")
+            try:
+                blobs.read_input(owner_id, job_id, envelope.input_ref, now=timestamp)
+                expiry = blobs.input_expires_at(
+                    owner_id, job_id, envelope.input_ref, now=timestamp,
+                )
+                if expiry <= timestamp:
+                    raise BlobUnavailable()
+            except BlobUnavailable:
+                changed = self._db.execute(
+                    """UPDATE jobs SET state='failed',updated_at=?
+                       WHERE job_id=? AND owner_id=? AND state='processing'""",
+                    (timestamp, job_id, owner_id),
+                ).rowcount
+                if changed != 1:
+                    raise JobStateError()
+                self._settle_job_operation_in_transaction(
+                    job_id, owner_id, success=False, now=timestamp,
+                )
+                updated = self._db.execute(
+                    """UPDATE dispatch_outbox
+                       SET state='failed',lease_hash=NULL,
+                           lease_until=NULL,updated_at=?
+                       WHERE job_id=? AND state='leased' AND lease_until<=?""",
+                    (timestamp, job_id, timestamp),
+                ).rowcount
+                if updated != 1:
+                    raise DispatchLeaseConflict()
+                self._db.execute(
+                    """UPDATE input_handoff SET state='failed',
+                       first_missing_at=NULL,input_expires_at=NULL,updated_at=?
+                       WHERE job_id=? AND state='review'""",
+                    (timestamp, job_id),
+                )
+                return True
+            self._db.execute(
+                """UPDATE input_handoff
+                   SET state='ready',first_missing_at=NULL,
+                       input_expires_at=?,updated_at=?
+                   WHERE job_id=? AND state='review'""",
+                (expiry, timestamp, job_id),
+            )
+            return False
+
+
 class InputHandoff:
     """Orchestrate staging, dispatch admission, binding and restart repair.
 
