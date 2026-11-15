@@ -510,7 +510,9 @@ export default function App() {
             </div>
             {selectedOption?.pages && <label className="pages-field">Номера страниц
               <input type="text" value={pages} onChange={event => setPages(event.target.value)}
-                placeholder="Например: 1,3-5" maxLength={90} disabled={busy} aria-invalid={!validPageSelection} />
+                placeholder="Например: 1,3-5" maxLength={90} disabled={busy}
+                aria-invalid={Boolean(pageSelectionError)}
+                aria-describedby={pageSelectionError ? 'pdf-page-selection-error' : undefined} />
             </label>}
             {selectedOption?.pages && <div className="page-presets" aria-label="Быстрый выбор страниц">
               <span>Быстрый выбор</span>
@@ -522,7 +524,7 @@ export default function App() {
               </div>
               <small>Можно объединять: 1,3-5. Диапазоны от 1 до {pdfPageCount ?? 250}. Для точной проверки сначала узнай количество страниц.</small>
             </div>}
-            {selectedOption?.pages && pageSelectionError && <div className="pdf-inline-error" role="alert">
+            {selectedOption?.pages && pageSelectionError && <div id="pdf-page-selection-error" className="pdf-inline-error" role="alert">
               <Info size={15}/><span>{pageSelectionError}</span>
             </div>}
             {selectedOption?.pages && pdfPageCount !== null && <div className="pdf-page-picker">
