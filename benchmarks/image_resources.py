@@ -9,7 +9,7 @@ This is an operational measurement tool, not a CI performance gate. The
 reported peak RSS is the child process's total peak, including imports and
 decoder buffers, not an incremental memory measurement. Results vary by OS,
 CPU, Python/Pillow versions and filesystem caching.
-Only neutral solid-color synthetic inputs are generated.
+Only neutral solid-color or abstract colored-block fixtures are generated.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 
-from PIL import Image, __version__ as PILLOW_VERSION
+from PIL import Image, ImageDraw, __version__ as PILLOW_VERSION
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,8 +62,10 @@ def validate_profile(profile: str) -> tuple:
     return specs
 
 
-def create_fixtures(directory: Path, profile: str) -> list[Path]:
+def create_fixtures(directory: Path, profile: str, fixture_style: str = "solid") -> list[Path]:
     """Fixture creation happens in the *parent*, outside measured child RSS."""
+    if fixture_style not in ("solid", "blocks"):
+        raise ValueError("Invalid fixture style")
     sources = []
     for i, (fmt, width, height) in enumerate(validate_profile(profile)):
         path = directory / f"input_{i:02d}{EXTENSIONS[fmt]}"
@@ -71,6 +73,22 @@ def create_fixtures(directory: Path, profile: str) -> list[Path]:
         color = (25 + i * 17, 75, 145, 185) if mode == "RGBA" else (25, 75, 145)
         image = Image.new(mode, (width, height), color)
         try:
+            if fixture_style == "blocks":
+                # Deterministic abstract colored rectangles, not photos or
+                # living subjects. Fixture synthesis is outside child timing.
+                step = max(8, min(width, height) // 24)
+                painter = ImageDraw.Draw(image)
+                for y in range(0, height, step):
+                    for x in range(0, width, step):
+                        r = (25 + (x // step) * 37 + (y // step) * 11) % 256
+                        g = (75 + (x // step) * 7 + (y // step) * 31) % 256
+                        b = (145 + (x // step) * 19 + (y // step) * 13) % 256
+                        shade = (r, g, b, 185) if mode == "RGBA" else (r, g, b)
+                        painter.rectangle(
+                            (x, y, min(x + step - 1, width - 1),
+                             min(y + step - 1, height - 1)),
+                            fill=shade,
+                        )
             image.save(path, format=fmt)
         finally:
             image.close()
@@ -80,7 +98,7 @@ def create_fixtures(directory: Path, profile: str) -> list[Path]:
     return sources
 
 
-def _measure_child(directory: Path, profile: str, memory_mib: int) -> dict:
+def _measure_child(directory: Path, profile: str, memory_mib: int, fixture_style: str) -> dict:
     if sys.platform != "linux":
         raise RuntimeError("Peak RSS and RLIMIT_AS benchmark requires Linux")
     import resource
@@ -110,6 +128,7 @@ def _measure_child(directory: Path, profile: str, memory_mib: int) -> dict:
             raise RuntimeError("Image module produced invalid PDF header")
     result = {
         "profile": profile,
+        "fixture_style": fixture_style,
         "elapsed_seconds": round(elapsed_seconds, 6),
         "cpu_seconds": round(cpu_seconds, 6),
         "peak_rss_mib": round(
@@ -133,6 +152,7 @@ def _measure_child(directory: Path, profile: str, memory_mib: int) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="smoke")
+    parser.add_argument("--fixture-style", choices=("solid", "blocks"), default="solid")
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--memory-mib", type=int, default=1024)
     parser.add_argument("--_child", action="store_true", help=argparse.SUPPRESS)
@@ -145,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     if args._child:
         if args._directory is None:
             parser.error("child mode requires an input directory")
-        print(json.dumps(_measure_child(args._directory, args.profile, args.memory_mib)))
+        print(json.dumps(_measure_child(args._directory, args.profile, args.memory_mib, args.fixture_style)))
         return 0
 
     if sys.platform != "linux":
@@ -153,11 +173,12 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix="fileshape_benchmark_") as dirname:
         directory = Path(dirname)
-        create_fixtures(directory, args.profile)
+        create_fixtures(directory, args.profile, args.fixture_style)
         command = [
             sys.executable, str(Path(__file__).resolve()), "--_child",
             "--_directory", dirname, "--profile", args.profile,
             "--memory-mib", str(args.memory_mib),
+            "--fixture-style", args.fixture_style,
         ]
         try:
             completed = subprocess.run(
