@@ -17,6 +17,7 @@ MAX_IMAGE_PIXELS = 35_000_000
 IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
+
 @contextmanager
 def _atomic_image_output(target: Path):
     """Publish only completely encoded output, preserving a previous result.
@@ -34,7 +35,6 @@ def _atomic_image_output(target: Path):
         os.replace(stage, target)
     finally:
         stage.unlink(missing_ok=True)
-
 
 
 def _open_image(source: Path) -> Image.Image:
@@ -58,8 +58,11 @@ def convert_image(source: Path, target: Path, fmt: str) -> None:
             # Transparent pixels turn white, not black.
             if image.mode in ("RGBA", "LA") or "transparency" in image.info:
                 rgba = image.convert("RGBA")
-                white = Image.new("RGB", rgba.size, "white")
-                white.paste(rgba, mask=rgba.getchannel("A"))
+                try:
+                    white = Image.new("RGB", rgba.size, "white")
+                    white.paste(rgba, mask=rgba.getchannel("A"))
+                finally:
+                    rgba.close()
                 image.close()
                 image = white
             else:
