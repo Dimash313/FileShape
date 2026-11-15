@@ -560,3 +560,31 @@ unmerged architecture PRs. GitHub Actions issue #101 still prevents
 test execution on hosted runners. Do not merge this PR with red or
 unexecuted checks, and do not claim a production-ready release.
 
+## Phase F1 — versioned HTTP capability discovery and real client parity
+
+The public **read-only** `GET /api/v1/capabilities` returns an HTTP
+capability contract derived from the actual `SUPPORTED` allowlist
+and explicit input extension routing. The contract reuses the versioned
+manifest design already proposed in PR #87; this integration extends
+it with an additive `batch_operations` entry describing only the real
+`POST /api/v1/images/pdf` route and its actual image-count limits.
+
+The manifest never marks the Telegram-only `zip:create`,
+`zip:extract` or `pdf:merge` actions as available over HTTP.
+No media or planned processing action can be enabled via discovery.
+The route returns no private user/job/usage/payment data, has
+`Cache-Control: no-store`, and does not accept file uploads or skip
+authentication for conversion routes. User-ownership, quota, rate
+limiting, sandbox validation and temporary storage are unchanged.
+
+`tests/test_capability_manifest.py` covers schema determinism,
+suffix/action parity, image batch route parity, false advertisement
+prohibitions, mutation isolation and read-only unauthenticated
+discovery. See `docs/CAPABILITY_MANIFEST_V1.md` and
+`docs/API_PARITY_MATRIX.md` for current HTTP vs Telegram coverage
+and future standalone identity work. No public website/mobile
+authentication has been implemented by this metadata endpoint.
+
+**CI:** Exact-head Python tests, Mini App tests/typecheck/build and
+Docker are still blocked by runner allocation issue #101; keep this
+change as a draft until all checks execute successfully.
