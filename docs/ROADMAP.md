@@ -159,3 +159,23 @@ are audited. Merge only after all required CI and representative real-file
 regressions pass. No measured speedup or complete production validation
 is claimed in this draft.
 
+
+### Phase C4 — independent images implementation and API port (draft)
+
+The image conversion functions have moved from `services/file_tools.py`
+to `services/image_tools.py`; the old import paths remain as
+backwards-compatible re-exports. `services/image_module.py` supplies
+an in-process typed image interface, and API single-file conversion
+plus the existing multi-image PDF worker route now use that interface.
+No new client-visible actions, endpoint, billing, service or limit.
+
+Dedicated image contract, extraction, worker and dependency tests are
+included, alongside the existing real-file conversion matrix. The
+Telegram bot still uses compatibility imports pending a separate
+small PR. See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md).
+
+A claim of "10/10" readiness requires actual exact-head Python,
+frontend, Docker and real file-processing test evidence. The prior
+GitHub Actions runs failed before executing job steps; do not treat
+them as either successful tests or proof of a code regression.
+
