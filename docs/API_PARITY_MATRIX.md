@@ -1,4 +1,4 @@
-# FileShape API parity inventory — phase F1
+# FileShape API parity inventory — phases F1–F3
 
 **Status:** review-only, not deployed. The current HTTP processing API
 is an existing Telegram Mini App backend. Future standalone website,
@@ -17,7 +17,7 @@ HTTP functionality.
 | Audio | MP3/OGG/WAV conversion, file info | MP3/OGG/WAV conversion, file info | Audio trim, tagging and video-audio extraction are not HTTP actions here; independent draft feature branches may exist |
 | DOCX | info, export plain text | info, export plain text | Not layout-preserving |
 | TXT | info, export DOCX | info, export DOCX | UTF-8 input only |
-| ZIP | list, extract bounded files, create 2–5-file archive | list only | **ZIP extraction and creation are bot-only** |
+| ZIP | list, extract bounded files, create 2–5-file archive | list; create 2–5-file ZIP through separate batch route | **ZIP extraction is still bot-only** |
 | Video | not in this architecture stack | not implemented | Do not advertise |
 | Other formats | scoped to registered operations | not implemented | No guessed formats |
 
@@ -31,6 +31,10 @@ HTTP functionality.
   limit, shared PDF page limits and a private temporary workspace.
   This is a standalone authenticated batch route, not a `pdf:merge`
   action in `/api/v1/convert`.
+- `POST /api/v1/zip/create`: build a ZIP from 2–5 arbitrary uploaded
+  files, preserving order while safely flattening paths and de-duplicating
+  filenames. 20 MiB aggregate HTTP input, bounded worker, private
+  workspace; returns `fileshape.zip`. Not an action in `/api/v1/convert`.
 - `POST /api/v1/images/pdf`: a separate multi-image request,
   **not** a `/api/v1/convert` action and not a generic batch converter
 - `POST /api/v1/jobs`, `GET /api/v1/jobs/{job_id}`,
@@ -39,7 +43,7 @@ HTTP functionality.
   `GET /api/v1/jobs/{job_id}/result`: bounded background work and
   owner-scoped status/download flow for supported single-file actions
 - `GET /api/v1/capabilities`: non-personal discovery describing
-  `/api/v1/convert` actions and the implemented image-batch route
+  `/api/v1/convert` actions and all implemented batch routes
 - `GET /api/v1/usage`, `GET /api/v1/session`,
   `GET /api/v1/queue`: authenticated account/queue state; these
   are not a public provider-agnostic identity API
@@ -55,9 +59,9 @@ supported extension guarantees successful conversion.
 
 ## Next steps for platform parity
 
-1. Review **each remaining missing operation separately**: ZIP
-   extract and ZIP create need safe HTTP upload admission, per-owner
-   job state, bounded multipart intake, result cleanup and storage.
+1. Review **the remaining ZIP extraction gap** separately. Returning
+   multiple extracted files over HTTP needs an authenticated, bounded
+   result protocol with secure per-file delivery and cleanup.
    Do not surface them through the capability manifest before
    implementation, realistic security tests and actual CI success.
 2. Define independent authentication and session adapters for the
@@ -105,7 +109,7 @@ ASGI upload guard, not only an untrusted Content-Length header.
 
 The v1 capability manifest now advertises this real route under
 `batch_operations`, alongside existing `/api/v1/images/pdf`.
-It does not claim ZIP extraction/creation or an independent mobile
+It does not claim ZIP extraction or an independent mobile
 login. Real-payload tests in `tests/test_http_pdf_merge.py` cover
 authorization, first-to-last page order, request bounds, bad/mixed
 files, password-protected and over-page PDFs, worker count/path
@@ -118,3 +122,40 @@ CI remains blocked before runner assignment (issue #101); do not merge
 this draft or deploy until full exact-head Python, Mini App and Docker
 checks and real-file smoke tests run and pass.
 
+
+## Phase F3 — authenticated HTTP ZIP creation (draft)
+
+The new `POST /api/v1/zip/create` mirrors the Telegram bot's existing
+2–5-file ZIP bundle function behind an independent HTTP batch route
+and the shared `ArchiveModulePort.create` worker. The response is
+`application/zip` with filename `fileshape.zip`.
+
+**Security boundaries:**
+
+- Existing signed Telegram initData, entitlement rules, rate limits,
+  per-owner job/quota admission and cancellation semantics apply
+- HTTP multipart body is limited at ingress (including chunked
+  uploads), with an independent 20 MiB **aggregate** input cap and
+  20 MiB per-member ZIP cap; empty uploads are refused
+- Server controls temporary on-disk paths (`zip_item_0` ... `zip_item_4`);
+  client filenames are metadata only and are flattened/sanitized by
+  the existing archive implementation (with duplicate name handling)
+- Worker accepts strictly 2–5 inputs, refuses missing/symlink files,
+  validates names/actual file sizes, runs under existing CPU/memory
+  limits and exits after producing one bounded ZIP result
+- Successful HTTP streaming defers workspace cleanup until send
+  completes; errors, timeouts and cancellation clean up immediately;
+  crashed workspaces match the existing orphan sweeper prefix
+- The v1 read-only capability manifest describes this implemented
+  batch route with `input_kind: "any_file"` and
+  `accept_any_file_type: true`, without inventing a `zip:create`
+  single-file action
+
+Current HTTP ZIP extraction **does not exist** and must not appear
+in the manifest. Standalone website and native app login is also
+not implemented in this phase. Existing Telegram ZIP features
+and their larger independent per-bundle limits are unchanged.
+
+The PR remains draft because GitHub Actions jobs fail before runner
+allocation (issue #101). Require real exact-head full Python/Mini App/
+Docker checks and ZIP binary smoke tests before merging or releasing.
