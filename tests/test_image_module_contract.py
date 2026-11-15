@@ -8,7 +8,7 @@ from PIL import Image
 from pypdf import PdfReader
 
 from api import server
-from services import image_tools
+from services import image_tools, image_bundle
 from services.image_module import ExistingImageModule, ImageModulePort, image_module
 
 
@@ -26,6 +26,9 @@ class ImageModuleContractTests(unittest.TestCase):
         with patch.object(image_tools, "compress_image") as compress:
             adapter.compress(source, target)
             compress.assert_called_once_with(source, target)
+        with patch.object(image_bundle, "images_to_pdf", return_value=2) as bundle:
+            self.assertEqual(adapter.bundle_as_pdf([source, target], target), 2)
+            bundle.assert_called_once_with([source, target], target)
         with patch.object(image_tools, "convert_image",
                           side_effect=ValueError("bad format")):
             with self.assertRaisesRegex(ValueError, "bad format"):
