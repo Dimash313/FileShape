@@ -279,3 +279,25 @@ multi-file endpoints and reconcile all stacked PRs once CI runners
 are restored (issue #101). Exact-head full Python + Mini App + Docker
 CI and real-file smoke tests remain a hard merge requirement.
 
+## Phase F1 — versioned HTTP capability discovery and platform parity (draft)
+
+Introduced the read-only `GET /api/v1/capabilities` endpoint for
+future clients. Its versioned JSON describes only the existing single
+file `/api/v1/convert` action allowlist and, separately, the real
+`/api/v1/images/pdf` batch endpoint. It reuses the original
+capability-manifest proposal in draft PR #87 rather than inventing
+a competing protocol. It does **not** expand server processing,
+authentication or payment behavior.
+
+The documented parity matrix explicitly tracks Telegram-only PDF
+merge and ZIP extraction/creation. Additional HTTP operations will
+require independent authorization, input constraints, worker/batch
+admission, secure result delivery, cleanup and tests, not merely
+publishing a name in the manifest. Future website/Android/iOS
+sessions must be designed independently and must not imply a
+global IhsanSoft ID.
+
+All stacked architecture changes remain draft/unmerged due to
+GitHub Actions runner pre-start failure (issue #101). Full
+exact-head Python, frontend and Docker CI plus integration tests
+must pass before release.
