@@ -17,7 +17,6 @@ from services.audio_tools import (
 
 MAX_AUDIO_INPUT_BYTES = 20 * 1024 * 1024
 MAX_TRIM_SPEC_LENGTH = 40
-_TIME_RE = re.compile(r"([0-9]{2}):([0-5][0-9]):([0-5][0-9])")
 _RANGE_RE = re.compile(
     r"([0-9]{2}):([0-5][0-9]):([0-5][0-9]) *- *"
     r"([0-9]{2}):([0-5][0-9]):([0-5][0-9])"
