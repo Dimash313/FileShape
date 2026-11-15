@@ -22,7 +22,7 @@ def _program(name: str) -> str:
     return location
 
 
-def probe_audio(source: Path) -> dict:
+def probe_audio(source: Path, *, exact: bool = False) -> dict:
     """Read format metadata and reject video, empty or overlong media."""
     try:
         result = subprocess.run(
@@ -55,7 +55,7 @@ def probe_audio(source: Path) -> dict:
             raise
         raise ValueError("Не удалось определить длительность аудио") from None
     return {
-        "seconds": round(duration, 1),
+        "seconds": duration if exact else round(duration, 1),
         "codec": str(audio_streams[0].get("codec_name") or "unknown")[:32],
     }
 
