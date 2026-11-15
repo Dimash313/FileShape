@@ -4,7 +4,7 @@ Updated: 2026-11-15 UTC
 Track: `images-archives`
 Claimed Issue: [#186 — close transient PDF image buffers per page](https://github.com/Dimash313/FileShape/issues/186)
 Branch: `fix/image-bundle-eager-buffer-release-h9`
-PR: **Draft pending creation**, base `test/image-concurrent-resources-h8` (PR #181). Inspect live PR for exact final head after docs.
+PR: [#189](https://github.com/Dimash313/FileShape/pull/189), **Draft**, base `test/image-concurrent-resources-h8` (PR #181). Inspect live PR for exact final head after docs.
 
 ## Proposed changes (Draft, not merged)
 - `services/image_bundle.py`: nested short-lived `ExitStack` around each decoded original and temporary RGBA buffer, freeing both before the next image is decoded. Keep outer `ExitStack` for completed RGB PDF page canvases only, so Pillow can safely encode all PDF pages. Register the freshly allocated white RGB canvas for cleanup **before** alpha paste to avoid leaks if paste fails.
