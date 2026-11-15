@@ -3,7 +3,7 @@
 Updated: 2026-11-15 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
 Current Issue: [#169](https://github.com/Dimash313/FileShape/issues/169), remove inherited API environment secrets from untrusted worker subprocesses.
-Current PR: pending creation on this branch, `api-security/169-worker-env-boundary`, to target `api-security/163-bounded-worker-stdout` / [PR #164](https://github.com/Dimash313/FileShape/pull/164).
+Current PR: [#170](https://github.com/Dimash313/FileShape/pull/170) (**Draft**, `api-security/169-worker-env-boundary`), targeting `api-security/163-bounded-worker-stdout` / [PR #164](https://github.com/Dimash313/FileShape/pull/164).
 Dependency: PR #164 is **Draft**, itself based on `docs/independent-development-tracks` / unmerged PR #112. Merge in dependency order; never squash this branch directly to `main` before #164 and base stack are ready.
 
 ## Current bounded change
