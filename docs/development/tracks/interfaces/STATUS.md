@@ -2,40 +2,28 @@
 
 Updated: 2026-11-15 UTC
 Track: interfaces
-Current Issue: [#149](https://github.com/Dimash313/FileShape/issues/149) — accessible and truthful Mini App transfer progress
-Active PR: [#152](https://github.com/Dimash313/FileShape/pull/152) (Draft; base `ux/miniapp-touch-targets`)
-Branch: `ux/miniapp-transfer-status-a11y`
-Last code commit before documentation: `d052b4628ba07c042ee586c1e5216554e048a521`; **recheck final exact head SHA after this STATUS commit**.
+Current Issue: [#172](https://github.com/Dimash313/FileShape/issues/172) — keyboard skip link and navigation heading focus in Mini App.
+Active PR: [#173](https://github.com/Dimash313/FileShape/pull/173), **Draft**, branch `ux/miniapp-keyboard-navigation`, base `ux/miniapp-transfer-status-a11y`.
+Last code commit before this documentation edit: `d16421289e9d263c7cbd74124a7a0bd9a5c0814a`; recheck **exact PR head SHA** after this update.
 
-Dependencies: Draft [#145](https://github.com/Dimash313/FileShape/pull/145) → [#136](https://github.com/Dimash313/FileShape/pull/136) → [#126](https://github.com/Dimash313/FileShape/pull/126) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#112](https://github.com/Dimash313/FileShape/pull/112). Older [#46](https://github.com/Dimash313/FileShape/pull/46) edits `miniapp/src/App.tsx`; review conflicts before integration.
+## Current implementation (PR #173)
 
-Implemented in Draft #152:
-- `miniapp/src/transferPresentation.ts` pure function distinguishes actual measured browser upload %, background post-upload admission wait and synchronous post-upload server response wait.
-- `miniapp/src/App.tsx` uses this presentation; numbers appear **only** for an integer upload fraction within 0–100, with an accessible progressbar label and value text. Server waiting states show no numeric percent or fictional confirmation.
-- `miniapp/tests/transferPresentation.test.mjs` covers 0–100, malformed/non-numeric progress, background validation wording, synchronous processing wording, and source integration/ARIA.
-- `miniapp/tsconfig.test.json` includes the helper in Node test compilation.
-- No API, auth, quota, backend, payment, new supported media format or additional external service.
+- `miniapp/src/App.tsx`: first interactive element is a keyboard "Перейти к содержимому" link; focusable `main#main-content`; a `screenTitleRef` H1 receives focus **only after** switching the in-app section, not on first render; the hidden native file picker inputs are removed from sequential keyboard focus and accessibility tree while remaining invokable by buttons.
+- `miniapp/src/styles.css`: high-contrast, focus-revealed skip link; respects top safe area and sticky header when jumping/focusing.
+- `miniapp/tests/navigationA11y.test.mjs`: five source-level Node regression tests cover skip link order/target, hidden file inputs, screen-title navigation focus, visual CSS/safe area, and existing `aria-current` semantics.
+- No API, auth, worker, queue, files, payments, dependency or branding changes. Black/white design remains unchanged.
 
-Verification:
-- Exact-copied isolated helper compiled with `tsc --strict --target ES2022 --module ES2022 --moduleResolution bundler`; 4/4 isolated module tests executed successfully using Node v22. **Not full repo testing**.
-- GitHub branch source inspection passed 7 checks: import, callsite, accessible name, valuenow/valuetext binding, old wording removed and TypeScript test inclusion.
-- Fifth Node source-integration test is committed but NOT EXECUTED against complete repo.
-- Full `npm test`, TypeScript/Vite build, Python/Docker, manual Telegram WebView, keyboard/screen reader and exact-head Actions checks **NOT EXECUTED / NOT VERIFIED**. GitHub Actions #101 zero-step runner blocker persists until proven fixed.
-- Real server processing progress is NEVER claimed. The only percent displayed is browser upload bytes measured by XHR.
+## Actual verification, not assumptions
 
-Next unblocked task: NONE claimed. Candidate: tab heading/focus announcement and responsive keyboard QA, but older #46 already addresses skip-link/heading-focus behavior, so coordinate/review #46 before duplicating it. Prefer stabilizing the stacked PR chain / restoring CI before adding more dependent UX features.
-Risk/cross-track coordination: multiple unmerged stacked drafts, #46 App.tsx overlap, #101 runner allocation. No cross-track API decision required for this presentation-only fix.
+- Direct GitHub source inspection: selected App and stylesheet hooks are present. New test file was created; **new tests and final-head full CI NOT YET VERIFIED** at time this handoff was written.
+- Prior Draft PRs [#112](https://github.com/Dimash313/FileShape/pull/112), [#118](https://github.com/Dimash313/FileShape/pull/118), [#126](https://github.com/Dimash313/FileShape/pull/126), [#136](https://github.com/Dimash313/FileShape/pull/136), [#145](https://github.com/Dimash313/FileShape/pull/145), [#152](https://github.com/Dimash313/FileShape/pull/152) each had real **success** in both GitHub Actions jobs (Python/Docker 11 steps, Mini App 9 steps) at their previously validated exact heads on 2026-11-15. This does not prove the new PR #173 is green.
+- Actions runner allocation issue [#101](https://github.com/Dimash313/FileShape/issues/101) was closed after the repo became public. Do not treat previous zero-step failures as code failures.
+- Manual keyboard and TalkBack/VoiceOver on actual Telegram Android WebView, phone layouts 320/360/370px and increased text size: **NOT EXECUTED**. Static source tests do not replace this QA.
 
-Integration checkpoint: two-parent merge of Draft #145 incorporated the single-file picker cancellation fix and its regression test into this branch. Exact-head CI and mobile tests remain blocked/unverified under #101; do not merge until real green checks.
+## Dependencies and integration
 
+- Parent order: Draft #173 → #152 → #145 → #136 → #126 → #118 → #112. #112 also depends on an unmerged architectural chain; merge parent-to-child only after separate review and real exact-head checks. No PR in this chain is deployed or merged by this track.
+- Older Draft [#46](https://github.com/Dimash313/FileShape/pull/46) remains conflicting with main and contains old Scanner + a different visual theme. #173 selectively ports *only* keyboard skip and section heading focus. Do not merge stale #46 wholesale.
+- Shared bot `main.py` in #118 needs API/security integration review. All Mini App code here keeps supported tools and client API unchanged.
 
-## Integration audit — 2026-11-15 UTC
-
-- Audited Draft #46: GitHub currently marks it `mergeable: false` against `main`. It overlaps App.tsx/styles.css, retains an obsolete Scanner entry, but uniquely includes skip-link, screen-title focus on tab navigation, and translated job-state labels. Review/cherry-pick only approved accessibility semantics; **never force-merge #46**.
-- Fixed a real picker cancellation defect within existing Draft #126: starting/cancelling native single-file selection no longer hides the current 2–8 photo batch. Added a fourth source-level test and verified 7 static source invariants. Its new Node test has not executed in complete repo.
-- Safely propagated this fix and the test through **two-parent Draft-branch merge commits**, no force updates: #136 `6a3073f919f9b8165d13e60850b3e43f90ab44b0`; #145 `0ca994fb9551c35a9cc515ddbb6be16240cecdc7`; #152 `0151d899e6f2056445fc6c8164dff89fe402d865` before this documentation update.
-- Re-read each branch by GitHub refs: #126/#136/#145/#152 all preserve the corrected picker and regression test and were reported `mergeable: true` by GitHub (conflict-free **only**, **not** passing CI).
-- Exact-head Actions were run but jobs **never executed a step**: #126 run `43724336682`, #136 `43724570015`, #145 `43724626383`, #152 `43724681493`; both `tests` and `miniapp` jobs per run had 0 steps and no runner. This remains the owner-side release blocker [#101](https://github.com/Dimash313/FileShape/issues/101); cause not confirmed. Do not invent a fix or bypass CI.
-- Next operational priority: account owner checks GitHub Actions annotation, Billing/Actions quota/budgets and repository runner policy as documented in #101. No payment method or paid overage may be changed without approval. After a real runner executes jobs, revalidate the exact final heads in dependency order, then review integration with #46. Do not create additional stacked UX PRs before this gate.
-
-CI recovery checkpoint (2026-11-15): GitHub-hosted runner allocation restored with public repository; old zero-step attempts obsolete. Real miniapp job identified 2 stale source tests in theme.test.mjs: CSS color scan interpreted issue #139 comment as hex and App.tsx progress structure changed to typed presentation helper. Parent #145 now strips CSS comments for token scan; this Draft branch inherits that test fix and replaces the obsolete JSX regex with verified accessible progressbar/presenter checks. Full fresh CI still required; do not merge on prior red runs.
+Next step: check exact-head GitHub Actions for #173, fix real failing tests if any, then complete keyboard/screen-reader and narrow-screen device QA before requesting final review/integration. Avoid more stacked PRs until parent integration.
