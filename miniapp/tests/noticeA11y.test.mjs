@@ -113,3 +113,15 @@ test('history only shows a completed icon for confirmed completed or local resul
   assert.match(app, /\{item\.jobState \? jobStateLabels\[item\.jobState\] : 'завершено'\}/);
   assert.match(app, /aria-label=\{'Скачать ' \+ item\.name\}/);
 });
+
+test('history keys stay unique even if two result callbacks run in the same millisecond', () => {
+  // Date.now() can collide for multiple results and would update both rows
+  // because checkJob matches by the React history key.
+  assert.match(app, /const nextHistoryIdRef = useRef\(0\);/);
+  assert.match(app, /id: \+\+nextHistoryIdRef\.current, name, jobId/);
+  assert.doesNotMatch(app, /id: Date\.now\(\)/);
+  assert.match(app, /setHistory\(items => \{/);
+  assert.match(app, /entry\.id === item\.id \? \{ \.\.\.entry, jobState: status\.state \} : entry/);
+  assert.match(app, /key=\{item\.id\}/);
+  assert.doesNotMatch(app, /nextHistoryIdRef\.current\s*=\s*0/);
+});
