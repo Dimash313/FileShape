@@ -32,16 +32,8 @@ from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
 from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
-from services.file_tools import (
-    MAX_MERGE_FILES,
-    compress_image,
-    convert_image,
-    extract_pdf_pages,
-    merge_pdfs,
-    pdf_page_count,
-    remove_pdf_pages,
-    rotate_pdf,
-)
+from services.file_tools import MAX_MERGE_FILES, compress_image, convert_image
+from services.pdf_module import pdf_module
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -437,7 +429,7 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext, actor_id: int
                     check_download(path)
                     paths.append(path)
                 target = folder / "merged.pdf"
-                pages = await asyncio.to_thread(merge_pdfs, paths, target)
+                pages = await asyncio.to_thread(pdf_module.merge, paths, target)
                 await send_result(message, target, f"✅ {len(paths)} PDF · {pages} стр. | FileShape")
     except BotOperationQuotaExceeded:
         await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
@@ -624,10 +616,10 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
                 target = folder / "pages.pdf"
                 if data.get("pdf_mode") == "pdf:remove":
                     target = folder / "without_pages.pdf"
-                    count = await asyncio.to_thread(remove_pdf_pages, source, target, spec)
+                    count = await asyncio.to_thread(pdf_module.remove, source, target, spec)
                     await send_result(message, target, f"✅ Осталось страниц: {count} | FileShape")
                 else:
-                    count = await asyncio.to_thread(extract_pdf_pages, source, target, spec)
+                    count = await asyncio.to_thread(pdf_module.extract, source, target, spec)
                     await send_result(message, target, f"✅ Извлечено страниц: {count} | FileShape")
         await state.clear()
     except BotOperationQuotaExceeded:
@@ -763,7 +755,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                 await bot.download(file, destination=source)
                 check_download(source)
                 if action == "pdf:info":
-                    count = await asyncio.to_thread(pdf_page_count, source)
+                    count = await asyncio.to_thread(pdf_module.count_pages, source)
                     await callback.message.answer(f"📄 В PDF страниц: {count}.")
                 elif action == "audio:info":
                     info = await asyncio.to_thread(audio_module.probe, source)
@@ -798,10 +790,10 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                 else:
                     if action == "pdf:first":
                         target = folder / "first_page.pdf"
-                        await asyncio.to_thread(extract_pdf_pages, source, target, "1")
+                        await asyncio.to_thread(pdf_module.extract, source, target, "1")
                     elif action == "pdf:rotate":
                         target = folder / "rotated.pdf"
-                        await asyncio.to_thread(rotate_pdf, source, target, 90)
+                        await asyncio.to_thread(pdf_module.rotate, source, target, 90)
                     elif action == "img:compress":
                         target = folder / "optimized.webp"
                         await asyncio.to_thread(compress_image, source, target)
