@@ -123,3 +123,19 @@ the bot's PDF calls in a separately reviewed PR. Do not merge or deploy
 without required exact-head CI and manual verification of the affected
 workflow.
 
+
+### Phase C2 — PDF processing shared by bot and API (draft; not released)
+
+Bot PDF information, first page, rotation, page extraction/removal and
+multi-file merge now use the same in-process PDF port as API dispatch.
+Public callbacks, page-selection FSM, result names, file-size limits,
+quotas, temporary files, access checks and billing behavior are preserved.
+A dedicated regression suite covers routing, error refunds, denied
+access, delivery failure, ordering and filename compatibility.
+
+The underlying PDF code still lives beside image tools in
+`services/file_tools.py`; physical module extraction remains a future
+separately tested phase. See
+[MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md). No production
+readiness or successful full CI is claimed for this draft PR.
+
