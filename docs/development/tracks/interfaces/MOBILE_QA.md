@@ -20,7 +20,7 @@ The batch-reorder focus check K8 is covered by unit and source-level regressions
 | K4 | Repeat for `История`, `Профиль`, `Главная` | Every section's current title is announced, without focus jumping on unrelated updates or initial load | Not run |
 | K5 | Navigate via keyboard / TalkBack through the upload controls | Two invisible native file inputs are **not** tab stops or separately announced; visible buttons remain operable | Not run |
 | K6 | Open and cancel the native file chooser from the Tools tab | No unwanted file/mode change; the previous batch or file remains visible where appropriate | Not run |
-| K7 | Navigate to PDF page selection and notices | All interactive elements expose readable names/selected states, focus is visible, no keyboard trap | Not run |
+| K7 | Enter an impossible PDF range, or more than 150 valid page numbers; then focus the page input | Field exposes `aria-invalid` and its linked explanatory error even for syntactically valid but forbidden operations; focus is visible, no keyboard trap | Not run |
 | K8 | Using a keyboard, select 3 photos and reorder the middle item up/down | The moved photo retains focus on its own control at the new position; at first/last positions focus moves to its enabled opposite-direction control, not to a different photo | Not run |
 
 | K9 | Trigger invalid file selection, an impossible PDF range, and a failed conversion | TalkBack/VoiceOver promptly announces each error as an assertive alert without moving focus; close button works | Not run |
