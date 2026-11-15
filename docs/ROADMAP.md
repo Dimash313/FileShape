@@ -85,3 +85,13 @@ and import-boundary regression checks for existing audio and ZIP services;
 it **does not** migrate runtime code or claim zero overhead. Refactor one
 format at a time after baseline and contract tests; do not activate new
 infrastructure or break existing entry points.
+
+### Phase B1 — typed audio interface (in review; not released)
+
+The audio domain now has an in-process typed port/adapter and the API
+single-file dispatcher calls it. The Telegram bot still calls the existing
+audio service directly; intentionally no bulk refactor. The public audio
+actions, backend resource limits and FFmpeg functions remain unchanged.
+See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md) for the ingress
+inventory, compatibility tests and next migration steps. Do not claim
+runtime parity or merge before exact-head CI and cross-client checks.
