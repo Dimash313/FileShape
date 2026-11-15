@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".oga", ".m4a", ".flac"}
 OUTPUT_FORMATS = {"mp3": ".mp3", "ogg": ".ogg", "wav": ".wav"}
@@ -115,32 +116,72 @@ def probe_audio(source: Path, *, exact: bool = False) -> dict:
 
 
 def convert_audio(source: Path, target: Path, output_format: str) -> dict:
-    """Transcode to a fixed safe preset, with process and file size caps."""
+    """Convert safely to a fixed preset, without overwriting a final result.
+
+    Source is owned by the private caller workspace. A unique 0600 staging
+    output is created in the same directory as target; only a complete,
+    validated result is linked into place. Failures always remove staging.
+    """
     fmt = output_format.lower()
     if fmt not in OUTPUT_FORMATS or target.suffix.lower() != OUTPUT_FORMATS[fmt]:
         raise ValueError("Неподдерживаемый формат аудио")
+    if target.is_symlink() or target.exists():
+        raise ValueError("Файл результата уже существует")
+    if not target.parent.is_dir() or target.parent.is_symlink():
+        raise ValueError("Недопустимый каталог результата")
+
     presets = {
         "mp3": ["-c:a", "libmp3lame", "-b:a", "128k"],
         "ogg": ["-c:a", "libopus", "-b:a", "64k", "-ar", "48000"],
         "wav": ["-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1"],
     }
-    with _pinned_audio_source(source) as (pinned_path, fd):
-        info = _probe_pinned_audio(pinned_path, fd, exact=False)
-        command = [
-            _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-            "-protocol_whitelist", "file,pipe", "-i", pinned_path,
-            "-map", "0:a:0", "-vn", "-sn", "-dn",
-            "-map_metadata", "-1", "-map_chapters", "-1",
-            "-t", str(MAX_DURATION_SECONDS), "-fs", str(MAX_AUDIO_OUTPUT_BYTES),
-            *presets[fmt], str(target),
-        ]
+    expected_codecs = {"mp3": "mp3", "ogg": "opus", "wav": "pcm_s16le"}
+
+    with _pinned_audio_source(source) as (pinned_path, source_fd):
+        info = _probe_pinned_audio(pinned_path, source_fd, exact=False)
+        temporary_fd, temporary_name = tempfile.mkstemp(
+            prefix=".fileshape-audio-convert-",
+            suffix=OUTPUT_FORMATS[fmt],
+            dir=target.parent,
+        )
+        os.close(temporary_fd)
+        stage = Path(temporary_name)
         try:
-            done = subprocess.run(command, capture_output=True, timeout=65, check=False,
-                                  pass_fds=(fd,))
-        except subprocess.TimeoutExpired:
-            raise ValueError("Конвертация превысила лимит времени") from None
-        if done.returncode != 0 or not target.exists() or target.stat().st_size == 0:
-            raise ValueError("Не получилось конвертировать аудио в этот формат")
-        if target.stat().st_size > MAX_AUDIO_OUTPUT_BYTES:
-            raise ValueError("Результат превысил допустимый размер")
-        return info
+            command = [
+                _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel",
+                "error", "-y",
+                "-protocol_whitelist", "file,pipe", "-i", pinned_path,
+                "-map", "0:a:0", "-vn", "-sn", "-dn",
+                "-map_metadata", "-1", "-map_chapters", "-1",
+                "-t", str(MAX_DURATION_SECONDS),
+                "-fs", str(MAX_AUDIO_OUTPUT_BYTES),
+                *presets[fmt], str(stage),
+            ]
+            try:
+                done = subprocess.run(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=65, check=False, pass_fds=(source_fd,),
+                )
+            except subprocess.TimeoutExpired:
+                raise ValueError("Конвертация превысила лимит времени") from None
+            if done.returncode != 0 or stage.is_symlink() or not stage.is_file():
+                raise ValueError("Не получилось конвертировать аудио в этот формат")
+            if not 0 < stage.stat().st_size <= MAX_AUDIO_OUTPUT_BYTES:
+                raise ValueError("Результат превысил допустимый размер")
+            actual = probe_audio(stage, exact=True)
+            if actual["codec"] != expected_codecs[fmt]:
+                raise ValueError("Неверный формат результата конвертации")
+            if abs(float(actual["seconds"]) - float(info["seconds"])) > 0.5:
+                raise ValueError("Не удалось проверить длительность результата")
+
+            stage.chmod(0o600)
+            try:
+                os.link(stage, target)
+            except FileExistsError:
+                raise ValueError("Файл результата уже существует") from None
+            return info
+        finally:
+            stage.unlink(missing_ok=True)
