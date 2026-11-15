@@ -424,3 +424,41 @@ Neither this phase nor the CI configuration PR may be merged solely
 because a static review looks sound. No paid runner or GitHub billing
 change is authorized by this architecture task.
 
+
+## Phase D2 — Telegram document handlers use the shared document port (draft)
+
+All four currently exposed DOCX/TXT Telegram actions now use the
+`services.document_module.document_module` boundary, shared with API:
+
+| Telegram callback | Domain operation | Response |
+| --- | --- | --- |
+| `docx:info` | `inspect_docx(source)` | Text with paragraphs/tables/characters |
+| `txt:info` | `inspect_text(source)` | Text with lines/characters |
+| `docx:txt` | `to_text(source,target)` | `document.txt` |
+| `txt:docx` | `to_docx(source,target)` | `document.docx` |
+
+The existing bot output names are intentionally **different** from the
+single-file API (`converted.txt` and `converted.docx`). No public
+callback or format is added, removed or renamed. Conversion is still a
+bounded **plain-text import/export**; Word styles/layout are not preserved.
+
+**Safety ownership unchanged:** only private-chat actions matching an
+authorized original upload are accepted. File-size and action validation,
+busy-state handling, entitlement checks, quota reservation and final
+settlement, temporary directories, max output size, Telegram file delivery
+and failed-delivery refunds remain at the bot boundary. The domain module
+remains free of bot, API, billing or queue imports.
+
+`tests/test_bot_document_module.py` covers all four actions and exact
+existing responses/filenames, menu continuity, owner/chat/type/size/FSM
+rejections before download or billing, access denial, malformed-document
+errors, Telegram document-delivery failure, and information-message
+delivery failure with quota release. Parser fidelity/limits are still
+covered by existing actual DOCX/TXT regression suites.
+
+**Next phase:** introduce a typed archive module for existing ZIP operations
+without broadening extraction permissions, dangerous path handling or
+resource limits. No new archive types or user features until independently
+verified. This PR remains draft until its parent stack and the exact-head
+CI complete, including tests, TypeScript and Docker.
+
