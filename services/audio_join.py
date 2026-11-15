@@ -14,7 +14,7 @@ from pathlib import Path
 
 from services.audio_tools import (
     MAX_AUDIO_OUTPUT_BYTES, MAX_DURATION_SECONDS, _pinned_audio_source,
-    _probe_pinned_audio, _program, probe_audio,
+    _audio_input_options, _probe_pinned_audio, _program, probe_audio,
 )
 
 MAX_JOIN_INPUTS = 5
@@ -84,8 +84,11 @@ def join_audio(sources: Sequence[Path], target: Path) -> dict:
                 _program("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel",
                 "error", "-y", "-threads", "1", "-filter_complex_threads", "1",
             ]
-            for source in pinned_paths:
-                command.extend(["-protocol_whitelist", "file,pipe", "-i", source])
+            for source, source_fd in zip(pinned_paths, descriptors):
+                command.extend([
+                    "-protocol_whitelist", "file,pipe",
+                    *_audio_input_options(source_fd), "-i", source,
+                ])
             command.extend([
                 "-filter_complex", ";".join(filters), "-map", "[joined]",
                 "-vn", "-sn", "-dn", "-map_metadata", "-1",
