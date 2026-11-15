@@ -59,3 +59,42 @@ A Python package boundary adds negligible overhead relative to FFmpeg/PDF proces
 ## Existing architecture
 
 Read [ARCHITECTURE_5.md](ARCHITECTURE_5.md) for current job/storage/accounting invariants and staged migration gates. This module plan supplements it and does not activate the unmerged distributed architecture, payments or new file size promises.
+
+## Phase B1 — typed audio boundary (proposed PR, not yet merged)
+
+The `services/audio_module.py` port defines `AudioModulePort` with two
+existing operations: `probe(source)` and `convert(source, target, format)`.
+An in-process adapter delegates to unchanged `services.audio_tools` logic.
+`api/server.py` routes its audio-info and audio-convert dispatch via that
+adapter, while preserving public `audio:info`, `audio:mp3`, `audio:ogg`,
+`audio:wav` action names and output filenames. No new queues or microservices.
+
+### Entry-point inventory and current ownership
+
+| Surface / path | Domain calls and status |
+| --- | --- |
+| Telegram bot `main.py` | Direct calls to `services.audio_tools`, `file_tools`, `archive_tools`, `document_tools`. **Not migrated in B1.** |
+| API `api/server.py` | `_info_action`, `_transform`: audio now uses the typed port. Other formats still use existing services. |
+| Worker `api/worker.py` | Validates staged input; delegates single-file dispatch to `api/server.py` functions. |
+| Background jobs `api/background_jobs.py` | Uses the existing worker path and its job/usage controls; no new direct format adapter is introduced. |
+| `api/conversion_catalog.py` | Shared API operation allowlists and suffix routing, **not** trusted content validation. |
+| ZIP, PDF, images, documents | Retain existing modules and entry points; migrate in independently tested releases. |
+| Video | Planned only; do not advertise a working video conversion API. |
+
+### Behavior and compatibility
+
+- Contracts are internal, not a new public endpoint. FFmpeg execution,
+  file validation, upload limits, auth, quota gates, workspace ownership,
+  cancellation, error propagation and cleanup retain their existing owners.
+- Existing `probe_audio` / `convert_audio` functions stay importable
+  for the bot, tests and other legacy call sites. Their return shape,
+  error messages and output naming do not change in this step.
+- Port compliance, delegation, errors, action allowlists and cross-domain
+  dependency isolation have regression tests; real FFmpeg roundtrips are
+  covered by existing `test_audio_tools.py`.
+- Next: migrate the Telegram bot into the same port behind its own
+  compatibility tests, and then introduce common error contracts and
+  reliable output cleanup without changing public behavior in one step.
+- No benchmark or full CI pass is claimed until the exact PR head has
+  executed the required checks.
+
