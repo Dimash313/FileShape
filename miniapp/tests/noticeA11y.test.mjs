@@ -91,7 +91,7 @@ test('job history and status notice use the same API-typed localized labels', ()
     ['failed', 'ошибка'],
     ['cancelled', 'отменено'],
   ]) {
-    assert.match(app, new RegExp('\\b' + state + ': \\'' + label + '\\''));
+    assert.ok(app.includes(state + ": '" + label + "'"), 'Missing localized state ' + state);
   }
   assert.match(app, /showNotice\('Статус задания: ' \+ jobStateLabels\[status\.state\], status\.state === 'failed' \? 'alert' : 'status'\);/);
   assert.match(app, /\{item\.jobState \? ' · ' \+ jobStateLabels\[item\.jobState\] : ''\}/);
