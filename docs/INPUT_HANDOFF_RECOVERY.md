@@ -30,10 +30,12 @@ immediately. The new opt-in IntakeDispatchStore fails closed:
    transaction and create a readiness row with its recorded expiry.
    Claims are allowed only when the row says ready and its TTL remains valid.
 5. A duplicate request using the same trusted owner/key/fingerprint
+   first looks up the original admission **before allocating a new blob**.
+   This makes safe replays possible even with a full staging quota.
+   A racing duplicate that already staged an unused copy deletes it and
    returns the original job without another charge or changing the
-   authoritative reference. A newly staged unused copy is deleted.
-   Replays after the job starts or completes return the existing job
-   without resurrecting it.
+   authoritative reference. Replays after the job starts or completes
+   never resurrect it.
 
 **This is readiness at the moment of verification, not a durable byte
 pin or a guarantee the file survives until processing.** Inputs that expire
