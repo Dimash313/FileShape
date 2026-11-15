@@ -12,7 +12,7 @@ from unittest.mock import patch
 from pypdf import PdfReader, PdfWriter
 
 from api import server
-from services import file_tools
+from services import pdf_tools
 from services.pdf_module import ExistingPdfModule, PdfModulePort, pdf_module
 
 
@@ -42,13 +42,13 @@ class PdfModuleContractTests(unittest.TestCase):
         )
         for legacy, method, args, value in calls:
             with self.subTest(method=method):
-                with patch.object(file_tools, legacy, return_value=value) as fn:
+                with patch.object(pdf_tools, legacy, return_value=value) as fn:
                     self.assertEqual(getattr(adapter, method)(*args), value)
                     fn.assert_called_once_with(*args)
 
     def test_adapter_propagates_validation_errors(self):
         src, dest = Path("/private/source.pdf"), Path("/private/result.pdf")
-        with patch.object(file_tools, "extract_pdf_pages",
+        with patch.object(pdf_tools, "extract_pdf_pages",
                           side_effect=ValueError("Invalid page range")):
             with self.assertRaisesRegex(ValueError, "Invalid page range"):
                 pdf_module.extract(src, dest, "5-1")
