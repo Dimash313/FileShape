@@ -414,15 +414,18 @@ class InputHandoff:
             self.blobs.read_input(
                 owner_id, envelope.job_id, envelope.input_ref, now=timestamp,
             )
+            # This second verification is part of the DB readiness commit.
+            # A loss between the two reads must remain unready and recorded
+            # as suspect rather than escaping the restart sweep.
+            self.dispatch.mark_input_ready(
+                owner_id, envelope.job_id, envelope.input_ref,
+                self.blobs, now=timestamp,
+            )
         except BlobUnavailable:
             return self.dispatch.mark_input_unavailable(
                 owner_id, envelope.job_id, envelope.input_ref,
                 now=timestamp, review_after_seconds=review_after_seconds,
             )
-        self.dispatch.mark_input_ready(
-            owner_id, envelope.job_id, envelope.input_ref,
-            self.blobs, now=timestamp,
-        )
         return "ready"
 
     def recover(
