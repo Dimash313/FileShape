@@ -29,6 +29,7 @@ class ImageConcurrencyBenchmarkTests(unittest.TestCase):
             {"timeout": 0},
             {"interval_ms": 0},
             {"interval_ms": 1001},
+            {"aggregate_memory_mib": 20},
             {"fixture_style": "random"},
         ):
             arguments = {
@@ -38,6 +39,7 @@ class ImageConcurrencyBenchmarkTests(unittest.TestCase):
                 "memory_mib": 512,
                 "timeout": 20,
                 "interval_ms": 25,
+                "aggregate_memory_mib": 1024,
             }
             arguments.update(kwargs)
             with self.subTest(invalid=kwargs):
@@ -68,6 +70,7 @@ class ImageConcurrencyBenchmarkTests(unittest.TestCase):
         self.assertEqual(data["platform"], "Linux")
         self.assertEqual(len(data["results"]), 2)
         self.assertEqual(data["per_child_memory_limit_mib"], 512)
+        self.assertEqual(data["aggregate_sample_budget_mib"], 1024)
         self.assertGreaterEqual(data["sample_count"], 1)
         self.assertGreaterEqual(data["peak_sampled_children_rss_mib"], 0)
         self.assertGreater(data["sum_individual_peak_rss_mib"], 0)
