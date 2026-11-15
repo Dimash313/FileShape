@@ -23,6 +23,9 @@ The batch-reorder focus check K8 is covered by unit and source-level regressions
 | K7 | Navigate to PDF page selection and notices | All interactive elements expose readable names/selected states, focus is visible, no keyboard trap | Not run |
 | K8 | Using a keyboard, select 3 photos and reorder the middle item up/down | The moved photo retains focus on its own control at the new position; at first/last positions focus moves to its enabled opposite-direction control, not to a different photo | Not run |
 
+| K9 | Trigger invalid file selection, an impossible PDF range, and a failed conversion | TalkBack/VoiceOver promptly announces each error as an assertive alert without moving focus; close button works | Not run |
+| K10 | Complete a successful operation and then an error, then the reverse order | Success is politely announced, error assertively; neither inherits the previous message's severity | Not run |
+
 ## Mobile layout and functionality
 
 | Case | Action | Pass condition | Result |
