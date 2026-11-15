@@ -9,6 +9,7 @@ from __future__ import annotations
 from api.conversion_catalog import IMAGE_EXTENSIONS, SUPPORTED
 from services.audio_tools import AUDIO_EXTENSIONS
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES
+from services.pdf_tools import MAX_MERGE_FILES
 
 
 # Keep routing metadata separate from which actions are actually enabled.
@@ -46,7 +47,7 @@ def build_http_capabilities() -> dict:
             for kind in sorted(SUPPORTED)
         ],
         # Explicitly separate multi-file routes from single-file action codes.
-        # No ZIP create/extract or PDF merge is available over HTTP yet.
+        # No ZIP creation/extraction is available over HTTP yet.
         "batch_operations": [
             {
                 "route": "/api/v1/images/pdf",
@@ -55,6 +56,15 @@ def build_http_capabilities() -> dict:
                 "input_extensions": list(_INPUT_SUFFIXES["image"]),
                 "min_files": MIN_IMAGES,
                 "max_files": MAX_IMAGES,
+                "output_extension": ".pdf",
+            },
+            {
+                "route": "/api/v1/pdf/merge",
+                "method": "POST",
+                "input_kind": "pdf",
+                "input_extensions": [".pdf"],
+                "min_files": 2,
+                "max_files": MAX_MERGE_FILES,
                 "output_extension": ".pdf",
             },
         ],
