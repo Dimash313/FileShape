@@ -1055,7 +1055,7 @@ async def multi_pdf_merge(
     async with conversion_job(user_id, uploads) as job_id:
         work = None
         try:
-            work = Workspace(prefix="fileshape_pdf_merge_")
+            work = Workspace(prefix="fileshape_batch_pdf_merge_")
             total_bytes = 0
             for index, upload in enumerate(uploads):
                 target_path = Path(work.name) / f"pdf_{index}.pdf"
