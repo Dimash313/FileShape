@@ -1,6 +1,8 @@
 """Plain-text export/import for Word documents (layout is not preserved)."""
+from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO, Callable
+from typing import BinaryIO, Callable, Iterator
+import errno
 import os
 import stat
 import tempfile
@@ -31,8 +33,42 @@ MAX_TEXT_CHARS = 700_000
 MAX_TEXT_LINES = 5_000
 
 
+@contextmanager
+def _open_regular_input(source: Path) -> Iterator[BinaryIO]:
+    """Pin a regular input, refusing symlink leafs and nonregular files.
+
+    The application must still own the parent directories and protect the
+    already-open inode against in-place modifications.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    elif source.is_symlink():
+        # Best effort only on platforms without a no-follow open flag.
+        raise ValueError("Символическая ссылка на входной файл запрещена")
+    try:
+        fd = os.open(source, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError("Символическая ссылка на входной файл запрещена") from None
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("Поддерживаются только обычные файлы")
+        with os.fdopen(fd, "rb") as stream:
+            fd = -1  # fdopen now owns and closes this descriptor
+            yield stream
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def validate_docx(source: Path | BinaryIO) -> None:
     """Reject unsafe DOCX ZIP parts from a path or an already-open stream."""
+    if isinstance(source, (str, os.PathLike)):
+        with _open_regular_input(Path(source)) as stream:
+            validate_docx(stream)
+        return
     try:
         with zipfile.ZipFile(source) as archive:
             entries = archive.infolist()
@@ -151,7 +187,7 @@ def read_docx_text(source: Path) -> tuple[str, dict]:
     # for parsing allows atomic pathname replacement to bypass ZIP checks.
     # python-docx accepts a seekable binary stream and reads the package
     # eagerly; the descriptor closes on all parsing or validation errors.
-    with source.open("rb") as stream:
+    with _open_regular_input(source) as stream:
         validate_docx(stream)
         stream.seek(0)
         try:
@@ -281,7 +317,7 @@ def read_plain_text(source: Path) -> str:
     # Enforce the byte cap on the actual input, not a pre-read stat result.
     # Files can grow between stat() and read_bytes(); an unbounded read
     # could bypass the byte limit and consume arbitrary memory.
-    with source.open("rb") as stream:
+    with _open_regular_input(source) as stream:
         data = stream.read(MAX_TEXT_BYTES + 1)
     if len(data) > MAX_TEXT_BYTES:
         raise ValueError("TXT превышает лимит 2 МБ")
