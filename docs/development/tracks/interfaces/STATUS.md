@@ -2,24 +2,26 @@
 
 Updated: 2026-11-15 UTC
 Track: interfaces
-Current Issue: [#139](https://github.com/Dimash313/FileShape/issues/139) — Mini App touch targets and narrow-screen notice wrapping
-Active PR: [#145](https://github.com/Dimash313/FileShape/pull/145) (Draft; base `ux/miniapp-empty-file-preflight`)
-Branch: `ux/miniapp-touch-targets`
-Last code commit before this STATUS update: `35dfab939f0274c5f921d2393c5e756b031e1c15`. Recheck **final** PR head SHA after documentation commits.
+Current Issue: [#149](https://github.com/Dimash313/FileShape/issues/149) — accessible and truthful Mini App transfer progress
+Active PR: [#152](https://github.com/Dimash313/FileShape/pull/152) (Draft; base `ux/miniapp-touch-targets`)
+Branch: `ux/miniapp-transfer-status-a11y`
+Last code commit before documentation: `d052b4628ba07c042ee586c1e5216554e048a521`; **recheck final exact head SHA after this STATUS commit**.
 
-Dependencies: stacked on Draft [#136](https://github.com/Dimash313/FileShape/pull/136) → [#126](https://github.com/Dimash313/FileShape/pull/126) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#112](https://github.com/Dimash313/FileShape/pull/112). Older [#46](https://github.com/Dimash313/FileShape/pull/46) changes `miniapp/src/styles.css` and must be reviewed for merge conflicts before integrating #145.
+Dependencies: Draft [#145](https://github.com/Dimash313/FileShape/pull/145) → [#136](https://github.com/Dimash313/FileShape/pull/136) → [#126](https://github.com/Dimash313/FileShape/pull/126) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#112](https://github.com/Dimash313/FileShape/pull/112). Older [#46](https://github.com/Dimash313/FileShape/pull/46) edits `miniapp/src/App.tsx`; review conflicts before integration.
 
-Implemented in #145:
-- `miniapp/src/styles.css`: add explicit 44px clickable dimensions for previously small icon buttons, minimum 44px for text actions, PDF page presets/bulk/pagination, status checks, usage refresh and batch reorder; allow lengthy notice text to break anywhere without horizontal expansion.
-- `miniapp/tests/touchTargets.test.mjs`: five source-level Node regression tests for target sizing, notice wrapping, and preservation of existing focus, reduced-motion, forced-colors and <=370px CSS rules.
-- `docs/development/tracks/interfaces/ROADMAP.md` and this STATUS updated for handoff.
-- No new UI capabilities, content, audio, images, monetization, third-party services, API, auth or processing changes.
+Implemented in Draft #152:
+- `miniapp/src/transferPresentation.ts` pure function distinguishes actual measured browser upload %, background post-upload admission wait and synchronous post-upload server response wait.
+- `miniapp/src/App.tsx` uses this presentation; numbers appear **only** for an integer upload fraction within 0–100, with an accessible progressbar label and value text. Server waiting states show no numeric percent or fictional confirmation.
+- `miniapp/tests/transferPresentation.test.mjs` covers 0–100, malformed/non-numeric progress, background validation wording, synchronous processing wording, and source integration/ARIA.
+- `miniapp/tsconfig.test.json` includes the helper in Node test compilation.
+- No API, auth, quota, backend, payment, new supported media format or additional external service.
 
 Verification:
-- Verified exact CSS source and intended selectors through GitHub connector. Static assertions of target rule values, existing focus and small-screen/reduced-motion rules passed on branch source.
-- New Node test file added but **not executed** in full repository here.
-- Full `npm test`, Vite build/typecheck, Python suite, Docker, mobile Android/iOS Telegram WebView at 320/360/370px, screen-reader/focus-order and large-text verification: **NOT EXECUTED**.
-- [#101](https://github.com/Dimash313/FileShape/issues/101) GitHub Actions runner allocation failures block release verification. Exact-head Actions and zero-step jobs must be checked before merge. Do not claim CI green or released.
+- Exact-copied isolated helper compiled with `tsc --strict --target ES2022 --module ES2022 --moduleResolution bundler`; 4/4 isolated module tests executed successfully using Node v22. **Not full repo testing**.
+- GitHub branch source inspection passed 7 checks: import, callsite, accessible name, valuenow/valuetext binding, old wording removed and TypeScript test inclusion.
+- Fifth Node source-integration test is committed but NOT EXECUTED against complete repo.
+- Full `npm test`, TypeScript/Vite build, Python/Docker, manual Telegram WebView, keyboard/screen reader and exact-head Actions checks **NOT EXECUTED / NOT VERIFIED**. GitHub Actions #101 zero-step runner blocker persists until proven fixed.
+- Real server processing progress is NEVER claimed. The only percent displayed is browser upload bytes measured by XHR.
 
-Next unblocked Issue: NONE claimed. Next candidate: check keyboard focus and active navigation semantics in Mini App (avoid overlapping older #46) or perform real device responsive accessibility audit once a supported runner / browser harness is available; create new Issue after reviewing current code.
-Risk/cross-track coordination: shared style file conflict with #46, stacked PR sequencing and #101 runner failures. No API/security change required for this CSS-only fix.
+Next unblocked task: NONE claimed. Candidate: tab heading/focus announcement and responsive keyboard QA, but older #46 already addresses skip-link/heading-focus behavior, so coordinate/review #46 before duplicating it. Prefer stabilizing the stacked PR chain / restoring CI before adding more dependent UX features.
+Risk/cross-track coordination: multiple unmerged stacked drafts, #46 App.tsx overlap, #101 runner allocation. No cross-track API decision required for this presentation-only fix.
