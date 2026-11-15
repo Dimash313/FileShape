@@ -49,7 +49,7 @@ from config import get_settings
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
 from services.archive_tools import inspect_zip
-from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
+from services.document_module import document_module
 from services.image_bundle import MIN_IMAGES, MAX_IMAGES
 from services.upload_validation import validate_upload
 from services.image_tools import IMAGE_FORMATS
@@ -822,10 +822,9 @@ def _info_action(source: Path, action: str) -> dict | None:
     if action == "audio:info":
         return {"info": audio_module.probe(source)}
     if action == "docx:info":
-        _, info = read_docx_text(source)
-        return {"info": info}
+        return {"info": document_module.inspect_docx(source)}
     if action == "txt:info":
-        return {"info": txt_info(source)}
+        return {"info": document_module.inspect_text(source)}
     if action == "zip:list":
         return {"info": inspect_zip(source)}
     return None
@@ -855,10 +854,10 @@ def _transform(source: Path, output_dir: Path, action: str, pages: str) -> Path:
             pdf_module.extract(source, target, "1" if action == "pdf:first" else pages)
     elif action == "docx:txt":
         target = output_dir / "converted.txt"
-        docx_to_txt(source, target)
+        document_module.to_text(source, target)
     elif action == "txt:docx":
         target = output_dir / "converted.docx"
-        txt_to_docx(source, target)
+        document_module.to_docx(source, target)
     else:
         raise ValueError("Недопустимая операция")
     return target
