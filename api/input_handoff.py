@@ -669,6 +669,45 @@ class InputHandoff:
             )
         return "ready"
 
+    def recover_processing(
+        self, *, now: float | None = None, limit: int = 100,
+        review_after_seconds: int = 30,
+    ) -> IntakeRecoveryReport:
+        """Explicit offline review sweep for *expired* processing leases.
+
+        Never invoked by the current live API or by regular job admission.
+        Merely classifies/reverifies inputs; a reviewed loss requires a
+        separate operator-authenticated resolve_expired_processing_review().
+        """
+        timestamp = _now(now)
+        if type(review_after_seconds) is not int or not 1 <= review_after_seconds <= 3600:
+            raise ValueError("Invalid review interval")
+        rows = self.dispatch.pending_processing_inputs(
+            now=timestamp, limit=limit,
+        )
+        ready = suspect = review = skipped = 0
+        for owner_id, envelope in rows:
+            try:
+                status = self.dispatch.inspect_expired_processing_input(
+                    owner_id, envelope.job_id, self.blobs,
+                    now=timestamp, review_after_seconds=review_after_seconds,
+                )
+            except (JobNotFound, JobStateError):
+                # Cancellation or another trusted reviewer may have made
+                # this stale lease terminal after the scan.
+                skipped += 1
+                continue
+            if status == "ready":
+                ready += 1
+            elif status == "suspect":
+                suspect += 1
+            elif status == "review":
+                review += 1
+        return IntakeRecoveryReport(
+            examined=len(rows), made_ready=ready, suspected=suspect,
+            needs_review=review, skipped=skipped,
+        )
+
     def recover(
         self, *, now: float | None = None, limit: int = 100,
         review_after_seconds: int = 30,
