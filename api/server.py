@@ -56,6 +56,7 @@ from services.upload_validation import validate_upload
 from services.image_tools import IMAGE_FORMATS
 from services.image_module import image_module
 from services.pdf_module import pdf_module
+from services.pdf_tools import MAX_MERGE_FILES
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_BYTES = 20 * 1024 * 1024
@@ -109,7 +110,7 @@ join_replay = JoinReplayGuard()
 api.add_middleware(
     UploadIngressGuard,
     max_bytes=MAX_REQUEST_BYTES,
-    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/jobs"},
+    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/pdf/merge", "/api/v1/jobs"},
 )
 # Outer middleware also observes requests rejected before multipart parsing.
 api.add_middleware(RequestTrace)
@@ -1034,6 +1035,88 @@ async def multi_image_pdf(
                 work.cleanup()
             logger.error("Multi-image PDF failed")
             raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
+
+
+@api.post("/api/v1/pdf/merge")
+async def multi_pdf_merge(
+    uploads: list[UploadFile] = FileField(...),
+    user_id: int = Depends(authorize_new_processing),
+):
+    """Merge 2–5 PDF files in client order, using the bounded parser worker."""
+    if not 2 <= len(uploads) <= MAX_MERGE_FILES:
+        raise HTTPException(status_code=422, detail="Выбери от 2 до 5 PDF")
+    for upload in uploads:
+        kind, suffix = file_kind(upload.filename or "")
+        if kind != "pdf" or suffix != ".pdf":
+            raise HTTPException(status_code=422, detail="Поддерживаются только PDF")
+
+    await enforce_rate_limit(user_id)
+    async with conversion_job(user_id, uploads) as job_id:
+        work = None
+        try:
+            work = Workspace(prefix="fileshape_pdf_merge_")
+            total_bytes = 0
+            for index, upload in enumerate(uploads):
+                target_path = Path(work.name) / f"pdf_{index}.pdf"
+                file_bytes = 0
+                with target_path.open("wb") as output:
+                    while True:
+                        chunk = await upload.read(64 * 1024)
+                        if not chunk:
+                            break
+                        file_bytes += len(chunk)
+                        total_bytes += len(chunk)
+                        if total_bytes > MAX_INPUT_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail="Общий размер файлов превышает 20 МБ",
+                            )
+                        output.write(chunk)
+                if file_bytes == 0:
+                    raise HTTPException(status_code=422, detail="Обнаружен пустой PDF")
+
+            await run_managed_worker({
+                "operation": "pdf_merge", "work": work.name,
+                "count": len(uploads),
+            })
+            merged = Path(work.name) / "merged.pdf"
+            if not merged.is_file() or merged.stat().st_size == 0:
+                raise ValueError("Не удалось создать PDF")
+            if merged.stat().st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            jobs.transition(job_id, user_id, "completed")
+            return BoundedFileResponse(
+                merged,
+                filename="merged.pdf",
+                media_type="application/pdf",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-FileShape-Job-Id": job_id,
+                },
+                background=BackgroundTask(work.cleanup),
+            )
+        except asyncio.CancelledError:
+            if work is not None:
+                work.cleanup()
+            raise
+        except HTTPException:
+            if work is not None:
+                work.cleanup()
+            raise
+        except WorkerTimeout as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=504, detail=str(exc)) from None
+        except ValueError as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+        except Exception:
+            if work is not None:
+                work.cleanup()
+            logger.error("Multi-PDF merge failed")
+            raise HTTPException(status_code=422, detail="Не удалось объединить PDF") from None
 
 
 # Owner-only campaign endpoints share the API-owned durable SQLite store.
