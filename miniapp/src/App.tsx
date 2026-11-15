@@ -3,11 +3,12 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Archive, ArrowDownToLine, ArrowRight, AudioLines, Check,
   ChevronRight, Clock3, FileImage, FileText, Files, FolderOpen,
-  Image, Info, LockKeyhole, RotateCcw, ScanLine, Settings2, Sparkles,
+  Image, Info, LockKeyhole, RotateCcw, Settings2, Sparkles,
   UploadCloud, UserRound, WandSparkles, X,
 } from 'lucide-react';
 import { canConvertLocally, convertLocalImage, extensionFor, type ImageFormat } from './imageTools';
 import { initTelegram, tapFeedback, telegramInitData } from './telegram';
+import { activeTools, acceptForTool, type SingleFileToolKey, type ToolKey } from './toolCatalog';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
 import type { QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
@@ -16,15 +17,15 @@ import { UsageProfile } from './UsageProfile';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
 type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: string };
-type Tool = { title: string; subtitle: string; icon: LucideIcon; category: string; local: boolean };
-const tools: Tool[] = [
-  { title: 'PDF', subtitle: 'Страницы и объединение', icon: FileText, category: 'Документы', local: false },
-  { title: 'Фото', subtitle: 'JPG, PNG, WebP', icon: Image, category: 'Изображения', local: true },
-  { title: 'Аудио', subtitle: 'MP3, OGG, WAV', icon: AudioLines, category: 'Медиа', local: false },
-  { title: 'Архивы', subtitle: 'Просмотреть ZIP', icon: Archive, category: 'Архивы', local: false },
-  { title: 'Сканер', subtitle: 'Скоро', icon: ScanLine, category: 'Скоро', local: false },
-  { title: 'Пакетно', subtitle: '2–8 фото в один PDF', icon: Files, category: 'PDF', local: false },
-];
+const toolIcons: Record<ToolKey, LucideIcon> = {
+  pdf: FileText,
+  image: Image,
+  audio: AudioLines,
+  documents: FileText,
+  archive: Archive,
+  batch: Files,
+};
+const tools = activeTools.map(tool => ({ ...tool, icon: toolIcons[tool.key] }));
 const nav: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: 'home', label: 'Главная', icon: FolderOpen },
   { tab: 'tools', label: 'Инструменты', icon: WandSparkles },
@@ -100,13 +101,32 @@ export default function App() {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  const pick = () => { if (busy) return; tapFeedback(); setBatchMode(false); inputRef.current?.click(); };
-  const pickBatch = () => { if (busy) return; tapFeedback(); batchInputRef.current?.click(); };
+  const pick = (tool?: SingleFileToolKey) => {
+    if (busy) return;
+    tapFeedback();
+    // Opening (or cancelling) the native picker must not discard a prepared batch.
+    // Switching modes only happens once acceptFile validates a selected file.
+    if (!inputRef.current) return;
+    inputRef.current.accept = acceptForTool(tool);
+    // Re-selecting the same file after cancel/reset must still fire onChange.
+    inputRef.current.value = '';
+    inputRef.current.click();
+  };
+  const pickBatch = () => {
+    if (busy || !batchInputRef.current) return;
+    tapFeedback();
+    batchInputRef.current.value = '';
+    batchInputRef.current.click();
+  };
   const showBatch = () => {
     if (busy) return;
     background.releaseInput();
     tapFeedback(); setBatchMode(true); setBatchFiles([]); setFile(null);
     setTab('home'); setNotice(''); setProgress(null);
+  };
+  const openTool = (key: ToolKey) => {
+    if (key === 'batch') showBatch();
+    else pick(key);
   };
   const chooseBatch = (files: File[]) => {
     if (busy || !files.length) return;
@@ -419,7 +439,7 @@ export default function App() {
           <div className="upload-icon"><UploadCloud size={30} strokeWidth={1.8}/></div>
           <h2>Добавьте файл</h2>
           <p>PDF, изображение, аудио или архив</p>
-          <button type="button" className="primary-button" onClick={pick}>Выбрать файл <ArrowRight size={17}/></button>
+          <button type="button" className="primary-button" onClick={() => pick()}>Выбрать файл <ArrowRight size={17}/></button>
           <div className="upload-footnote"><LockKeyhole size={13}/> До 20 МБ · Безопасная обработка</div>
         </div> : <section className="selected-file">
           <div className="section-head"><h2>Выбранный файл</h2><button className="text-button" disabled={busy} onClick={clear}>Сбросить <X size={14}/></button></div>
@@ -508,13 +528,13 @@ export default function App() {
               {busy ? 'Загружаю и проверяю…' : background.active ? (background.status ? 'Задание принято' : 'Проверяем статус') : 'Выполнить в фоне'} <ArrowRight size={17}/>
             </button>
           </div> : kind !== 'image' ? <div className="pending-panel"><Info size={20}/><div><strong>Формат пока не поддерживается</strong><p>Попробуй PDF, TXT, DOCX, ZIP, изображение или аудио.</p></div></div> : null}
-          <button type="button" className="secondary-button full" disabled={busy} onClick={pick}><RotateCcw size={16}/> Выбрать другой файл</button>
+          <button type="button" className="secondary-button full" disabled={busy} onClick={() => pick()}><RotateCcw size={16}/> Выбрать другой файл</button>
         </section>}
         {progress && <ProgressIndicator progress={progress} />}
         <div className="section-head tools-head"><h2>Быстрые инструменты</h2><button className="text-button" onClick={() => setTab('tools')}>Все <ChevronRight size={17}/></button></div>
-        <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.title} onClick={() => { if (tool.title === 'Сканер') { setTab('tools'); setNotice('Сканер появится позже.'); } else if (tool.title === 'Пакетно') showBatch(); else pick(); }}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
+        <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
       </>}
-      {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.title} onClick={() => { if (tool.title === 'Сканер') setNotice('Сканер появится позже.'); else if (tool.title === 'Пакетно') showBatch(); else { setTab('home'); pick(); } }}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
+      {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
       {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + item.jobState : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
       {tab === 'profile' && <>
         <p className="lead">Управление вашим рабочим пространством.</p>

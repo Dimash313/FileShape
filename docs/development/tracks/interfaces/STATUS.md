@@ -1,11 +1,17 @@
 # Interfaces & UX — handoff
 
-Updated: 2026-11-15 UTC; branch: ux/bot-message-linebreaks
+Updated: 2026-11-15 UTC; branch: `ux/miniapp-tool-pickers`; last code commit: `621da3b4a5e2b7e4808392e59ce46baaa90e0365` (check latest PR HEAD after documentation commits)
 Track: interfaces
-Current Issue: #117 — Telegram bot literal newline formatting
-Active PR: draft (see branch ux/bot-message-linebreaks); base docs/independent-development-tracks, dependent on #112
-Implemented in branch: replaced escaped newline display sequences in main.py Telegram messages and added tests/test_bot_message_linebreaks.py regression checks.
-Verified: source inspected through GitHub connector; automated tests, Telegram device checks, Mini App build, Docker and exact-head CI NOT EXECUTED. Do not claim release readiness.
-Dependencies/blockers: #101 GitHub Actions runner allocation; #112 track documentation branch not yet merged. Existing UX standard PR #91 must be coordinated before merging overlapping work.
-Next unblocked task: inventory Mini App responsive and accessibility issues, create a separate scoped Issue after checking overlap with open PRs.
-Risk / cross-track decision needed: main.py is a shared surface; API/security and format tracks must review integration conflicts. No API/auth/processing logic intentionally changed.
+Current Issue: [#122](https://github.com/Dimash313/FileShape/issues/122) — Mini App category-specific file selection and truthful tool catalog
+Active PR: [#126](https://github.com/Dimash313/FileShape/pull/126) (draft; base `ux/bot-message-linebreaks`)
+Parent PRs: [#118](https://github.com/Dimash313/FileShape/pull/118) (Telegram bot newline fix) -> [#112](https://github.com/Dimash313/FileShape/pull/112) (track coordination docs)
+Implemented in PR:
+- `miniapp/src/toolCatalog.ts`: typed catalog exposing only implemented PDF, Photo, Audio, DOCX/TXT, ZIP and batch photo-to-PDF options; native accept hints limited to supported single-file types.
+- `miniapp/src/App.tsx`: category-aware picker on both quick tools and Tool list; generic upload resets accept; same-file reselection works; **opening/cancelling a single-file picker does not prematurely discard a selected photo batch** (mode switches only after valid acceptance); unsupported Scanner removed; existing server/API behaviors preserved.
+- `miniapp/tests/toolCatalog.test.mjs` plus TypeScript test config: 3 catalog tests and an added source-level batch-cancellation regression test (not run on full repository).
+- Updated this STATUS and track ROADMAP in the same stacked branch.
+
+Verified: live GitHub file inspection including 7 static checks of cancelled picker/batch preservation; isolated local reconstruction of the tool catalog passed `tsc --strict --target ES2022 --module ES2022 --moduleResolution Bundler` and `node --test` (3/3 passing). **New cancellation source regression test, full repository Mini App npm test/build, Python tests, Docker, 320px/mobile WebView visual checks and exact-head CI NOT EXECUTED.** Isolated results are not proof of full integration.
+Dependencies/blockers: #101 GitHub Actions runner allocation (parent #118 had zero-step failed jobs), #112/#118 review and merge order, #46 long-open App.tsx accessibility changes may conflict, #91 UX policy review. This Draft PR is not release-ready.
+Next unblocked Issue: NONE claimed. Next candidate is focused Mini App responsive/accessibility and empty-file/error-recovery audit; create new Issue after checking latest PRs.
+Risk / cross-track decision needed: `main.py` is a shared surface in PR #118; API/security and format tracks must review the parent. PR #126 changes no API, auth, quota, processing, or new server capabilities. Browser accept filters do not replace server validation.
