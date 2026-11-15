@@ -37,3 +37,10 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - [Issue #148](https://github.com/Dimash313/FileShape/issues/148) / [Draft PR #153](https://github.com/Dimash313/FileShape/pull/153): inspect all 2–8 input image headers and 20 MiB aggregate file sizes before decoding any pixels. Reject symlink/FIFO inputs, preserve the 35m per-image and 22m cumulative pixel caps, and recheck limits during final conversion. This reduces unnecessary peak decode allocations for batches guaranteed to fail, but is **not** a measured throughput or memory improvement claim.
 - Local reconstructed-domain tests: **13 passed** (3 existing + 10 new) with synthetic solid-color images; full exact-head Python/Mini App/Docker and realistic resource benchmarks remain unverified. Runner CI issue #101 still blocks readiness.
 - Draft dependency: #153 → #144 → #137 → #128 → #112 → #111 → #109 → prior architecture parents. Review/merge only in dependency order after exact-head checks run and pass; preserve existing API/contracts and AGENTS.md rules.
+
+
+## Image source format validation — active stacked Draft
+
+- [Issue #158](https://github.com/Dimash313/FileShape/issues/158) / [Draft PR #159](https://github.com/Dimash313/FileShape/pull/159): centralize JPEG/PNG/WebP **actual input encoding** and single-frame validation in the image-domain header path; reuse it during all-image PDF preflight. Reject disguised GIF/TIFF and animated WebP/APNG before pixel decoding. Preserve quotas, bounded image size, output formats, EXIF/alpha handling, and atomic cleanup.
+- Locally reconstructed module tests: **20/20 passed** (7 new + 13 prior) on Python 3.13.5/Pillow 12.3.0/pypdf 5.9.0, not full repo or exact-head GitHub CI. Issue #101 still blocks CI evidence.
+- Stack: #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture parents. Review/merge in dependency order after actual CI. No new platforms, assets, providers or APIs.
