@@ -4,7 +4,10 @@ import stat
 import zipfile
 
 from docx import Document
+from docx.opc.exceptions import PackageNotFoundError
+from docx.oxml.exceptions import InvalidXmlError
 from docx.table import Table
+from lxml.etree import XMLSyntaxError
 
 MAX_DOCX_FILES = 300
 MAX_DOCX_UNPACKED = 40 * 1024 * 1024
@@ -55,7 +58,14 @@ def validate_docx(source: Path) -> None:
 
 def read_docx_text(source: Path) -> tuple[str, dict]:
     validate_docx(source)
-    document = Document(str(source))
+    try:
+        document = Document(str(source))
+    except (XMLSyntaxError, InvalidXmlError, PackageNotFoundError,
+            zipfile.BadZipFile, zipfile.LargeZipFile,
+            KeyError, ValueError):
+        # The archive passed size/path checks but its OOXML is malformed.
+        # Do not expose parser output or private input paths to callers.
+        raise ValueError("Повреждённый DOCX") from None
     parts = []
     paragraphs = 0
     tables = 0
