@@ -117,9 +117,18 @@ class SecretScanTests(unittest.TestCase):
 
     def test_large_media_prefix_still_scans_for_tokens(self):
         specimen = ("12345678" + ":" + "z" * 35).encode()
-        self.put("oversized.png", specimen + b"0" * MAX_FILE_BYTES)
+        # A bot token must end at a token boundary, not directly adjoin the
+        # filler's alphanumeric bytes.
+        self.put("oversized.png", specimen + b"\n" + b"0" * MAX_FILE_BYTES)
         self.assertIn(
             "telegram_bot_token", scan_file(self.root, "oversized.png")
+        )
+
+    def test_token_without_terminal_boundary_is_not_a_false_positive(self):
+        specimen = ("12345678" + ":" + "z" * 35).encode()
+        self.put("not_a_token.txt", specimen + b"0")
+        self.assertNotIn(
+            "telegram_bot_token", scan_file(self.root, "not_a_token.txt")
         )
 
     def test_sensitive_token_in_filename_is_redacted(self):
