@@ -1,19 +1,15 @@
-"""File transformations used by the Telegram handlers.
+"""Image transformations plus stable compatibility imports for PDF tools.
 
-All source and destination paths must be temporary, server-controlled paths.
+Use services.pdf_tools for PDF implementations and services.pdf_module for
+application-level PDF dispatch. Keep these legacy names available until all
+callers and external integrations have safely migrated.
 """
-from contextlib import ExitStack
 from pathlib import Path
-import re
 import warnings
 
 from PIL import Image, ImageOps
-from pypdf import PdfReader, PdfWriter
 
 MAX_IMAGE_PIXELS = 35_000_000
-MAX_PDF_PAGES = 250
-MAX_MERGE_FILES = 5
-MAX_SELECTED_PAGES = 150
 
 IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
@@ -70,114 +66,17 @@ def compress_image(source: Path, target: Path) -> None:
     finally:
         image.close()
 
-
-def _reader(stream) -> PdfReader:
-    reader = PdfReader(stream, strict=False)
-    if reader.is_encrypted:
-        raise ValueError("Password-protected PDFs are not supported")
-    if not 1 <= len(reader.pages) <= MAX_PDF_PAGES:
-        raise ValueError("PDF contains too many pages or is empty")
-    return reader
-
-
-def pdf_page_count(source: Path) -> int:
-    with source.open("rb") as stream:
-        return len(_reader(stream).pages)
-
-
-def parse_page_selection(value: str, total_pages: int) -> list[int]:
-    """Parse '1,3-5' into zero-based page indexes in the requested order."""
-    if not 1 <= total_pages <= MAX_PDF_PAGES:
-        raise ValueError("Unsupported page count")
-    if not re.fullmatch(r"[0-9,\s-]{1,90}", value):
-        raise ValueError("Use page numbers, e.g. 1,3-5")
-    selection: list[int] = []
-    seen: set[int] = set()
-    for part in value.split(","):
-        part = part.strip()
-        if not part:
-            raise ValueError("Empty page number")
-        if "-" in part:
-            bounds = part.split("-")
-            if len(bounds) != 2 or not all(p.strip().isdigit() for p in bounds):
-                raise ValueError("Invalid page range")
-            start, end = (int(p) for p in bounds)
-            if start > end:
-                raise ValueError("A range must be ascending")
-        elif part.isdigit():
-            start = end = int(part)
-        else:
-            raise ValueError("Invalid page number")
-        if start < 1 or end > total_pages:
-            raise ValueError(f"Page must be between 1 and {total_pages}")
-        if end - start + 1 > MAX_SELECTED_PAGES:
-            raise ValueError("Too many pages selected")
-        for page in range(start, end + 1):
-            if page not in seen:
-                selection.append(page - 1)
-                seen.add(page)
-            if len(selection) > MAX_SELECTED_PAGES:
-                raise ValueError("Too many pages selected")
-    if not selection:
-        raise ValueError("No pages selected")
-    return selection
-
-
-def extract_pdf_pages(source: Path, target: Path, pages: str) -> int:
-    with source.open("rb") as stream:
-        reader = _reader(stream)
-        chosen = parse_page_selection(pages, len(reader.pages))
-        writer = PdfWriter()
-        for index in chosen:
-            writer.add_page(reader.pages[index])
-        with target.open("wb") as output:
-            writer.write(output)
-        return len(chosen)
-
-
-def rotate_pdf(source: Path, target: Path, degrees: int = 90) -> int:
-    if degrees not in (90, 180, 270):
-        raise ValueError("Unsupported rotation")
-    with source.open("rb") as stream:
-        reader = _reader(stream)
-        writer = PdfWriter()
-        for page in reader.pages:
-            writer.add_page(page).rotate(degrees)
-        with target.open("wb") as output:
-            writer.write(output)
-        return len(reader.pages)
-
-
-def merge_pdfs(sources: list[Path], target: Path) -> int:
-    if not 2 <= len(sources) <= MAX_MERGE_FILES:
-        raise ValueError("Select 2 to 5 PDF files")
-    with ExitStack() as stack:
-        writer = PdfWriter()
-        total = 0
-        for source in sources:
-            stream = stack.enter_context(source.open("rb"))
-            reader = _reader(stream)
-            total += len(reader.pages)
-            if total > MAX_PDF_PAGES:
-                raise ValueError("Combined PDF exceeds page limit")
-            for page in reader.pages:
-                writer.add_page(page)
-        with target.open("wb") as output:
-            writer.write(output)
-        return total
-
-
-def remove_pdf_pages(source: Path, target: Path, pages: str) -> int:
-    """Create a copy of PDF excluding specified 1-based page numbers."""
-    with source.open("rb") as stream:
-        reader = _reader(stream)
-        exclude = set(parse_page_selection(pages, len(reader.pages)))
-        if len(exclude) == len(reader.pages):
-            raise ValueError("Нельзя удалить все страницы PDF")
-        writer = PdfWriter()
-        for index, page in enumerate(reader.pages):
-            if index not in exclude:
-                writer.add_page(page)
-        with target.open("wb") as output:
-            writer.write(output)
-        return len(reader.pages) - len(exclude)
+# Legacy public import paths. New PDF code belongs in services.pdf_tools,
+# not here; preserve callers that import PDF functions from file_tools.
+from services.pdf_tools import (  # noqa: E402
+    MAX_MERGE_FILES,
+    MAX_PDF_PAGES,
+    MAX_SELECTED_PAGES,
+    _reader,
+    extract_pdf_pages,
+    merge_pdfs,
+    parse_page_selection,
+    pdf_page_count,
+    remove_pdf_pages,
+    rotate_pdf,
+)
