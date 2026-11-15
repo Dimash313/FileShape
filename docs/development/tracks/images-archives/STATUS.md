@@ -1,26 +1,27 @@
 # Images & Archives — handoff
 
-Updated: 2026-11-15 UTC
+Updated: 2026-11-16 UTC
 Track: `images-archives`
-Claimed Issue: [#186 — close transient PDF image buffers per page](https://github.com/Dimash313/FileShape/issues/186)
-Branch: `fix/image-bundle-eager-buffer-release-h9`
-PR: [#189](https://github.com/Dimash313/FileShape/pull/189), **Draft**, base `test/image-concurrent-resources-h8` (PR #181). Inspect live PR for exact final head after docs.
+Current Issue: [#197 — pin ZIP creation input descriptors](https://github.com/Dimash313/FileShape/issues/197)
+Current branch: `fix/zip-pinned-create-inputs-j1`, base `fix/image-bundle-eager-buffer-release-h9` (parent [Draft PR #189](https://github.com/Dimash313/FileShape/pull/189)).
+Active PR: pending creation; inspect live branch/PR for **final exact head** after docs.
 
-## Proposed changes (Draft, not merged)
-- `services/image_bundle.py`: nested short-lived `ExitStack` around each decoded original and temporary RGBA buffer, freeing both before the next image is decoded. Keep outer `ExitStack` for completed RGB PDF page canvases only, so Pillow can safely encode all PDF pages. Register the freshly allocated white RGB canvas for cleanup **before** alpha paste to avoid leaks if paste fails.
-- `tests/test_image_bundle_transient_release.py`: 4 tests for immediate source closure before next decode, RGBA closure, paste-error canvas cleanup and preservation of previous target on corrupt later member.
-- `docs/benchmarks/IMAGE_RESOURCES.md`: local *manually reconstructed* three-run before/after memory figures and methodology; not an exact PR checkout nor production performance claim.
-- No changes to public image module/API, auth, worker scheduling, per-owner quotas, input formats, EXIF, page ordering, source pinning, per-file/bundle pixel limits, target publication or temp stage naming. No extra provider, audio, payments, media assets or images of living beings (AGENTS.md).
+## Scope in current Draft (NOT merged)
+- `services/archive_tools.py`: `make_zip` now opens up to five regular input sources only once, rejects symbolic links and special files with `O_NOFOLLOW` / `O_NONBLOCK` (where supported) and `fstat`, pins file descriptors for both compressed pass and optional stored fallback, and writes bounded 64-KiB blocks from the already-open streams via `ZipFile.open(..., 'w')`. Rechecks file size, exact read byte count, per-member and aggregate budgets before publishing.
+- Preserves original archive naming and duplicate suffixes, mode/mtime metadata, normal deflation, stored fallback for extreme ratios, inspector/extraction rules and private staged atomic result publication. Reader output and public ArchiveModulePort unchanged. Path replacement is fenced, but concurrent *in-place* inode mutation remains a separate workspace-isolation concern.
+- `tests/test_zip_pinned_creation.py`: seven adversarial and real-file cases (regular path swaps, high-ratio fallback swap, symlink, FIFO, in-place growth/old target preservation, FD closure and ordinary reader roundtrip). One legacy `test_archive_tools.py` failure injector updated to the streamed ZIP output path; test semantics remain target preservation and temporary cleanup.
+- No API, Telegram, Mini App, worker, quotas, billing, paid services or dependencies. Only generated neutral text/binary fixtures; `AGENTS.md` applies.
 
-## Verification and evidence
-- Parent [PR #181](https://github.com/Dimash313/FileShape/pull/181), head `12422e4bca5757ef90e321879a941cdfdebd2d12`, passed actual [Actions run #43734472561](https://github.com/Dimash313/FileShape/actions/runs/43734472561): **678 Python tests** passed; Mini App tests/typecheck/build and Docker succeeded. Real 2-worker tiny-block workload: 54.562 MiB sampled aggregate child RSS, 55.688 MiB summed independent peak RSS. These are tiny 15,232-pixel-per-job fixtures and not a near-cap concurrency result.
-- **Current branch exact-head Actions not yet executed/verified.** Tests written on GitHub. A separate local reconstructed-domain smoke check confirmed original close-before-next decode, RGBA close-before-next decode, and canvas close/preservation on injected paste error. This is not full repo CI.
-- Local A/B measured with the same reconstructed-domain benchmark harness, three fresh processes per profile, Python 3.13.5 / Pillow 12.3.0 / pypdf 5.9.0, Linux: near-cap 6×1800² total 19.44m pixels median absolute child peak **306.887 → 195.891 MiB (~36.2% lower)**; typical 1.4784m pixels **114.633 → 105.582 MiB (~7.9% lower)**. These are one-color synthetic files, not actual host or production profile. See `docs/benchmarks/IMAGE_RESOURCES.md`.
-- Remaining: exact-head full Python suite/Mini App/Docker, auth/owner-bound bot/API regression, representative deployment container memory and 2-/3-worker near-cap measurement, security review and main CI after parent integration. Do not change runtime concurrency allowances based on these experimental figures.
+## Verification and blockers
+- Work and regression tests are committed on GitHub; **exact-head GitHub Actions not yet confirmed**. Must pass full Python suite (including archive and extracted-format regressions), Mini App typecheck/test/build, Docker and independent review. No production launch/merge.
+- Parent PR #189 on prior head `d651cd99b975f28443a690d11ac23a0c710a7497` had a **successful** real GitHub Actions run #43737276758 (Python/Mini App/Docker), but `mergeable:false` at last inspection. Parent #181 advanced from `12422e4b...` to `a11aa3c...` and both edit STATUS; parent #189 must reconcile its newer base before integration. This child is stacked behind #189, so it inherits that gate. Coordination comment left on PR #189; do not force merge.
+- [PR #181](https://github.com/Dimash313/FileShape/pull/181) at `a11aa3c...` passed [Actions #43751503357](https://github.com/Dimash313/FileShape/actions/runs/43751503357): Python/Mini App/Docker success. Existing near-cap memory measurements are diagnostic; shared worker policy still API/security [Issue #177](https://github.com/Dimash313/FileShape/issues/177).
+- The prior merged-main CI and genuine bot/API deployed workloads remain unverified. No image-domain output change in this branch.
 
-## Integration dependency
-Pending branch → [#181](https://github.com/Dimash313/FileShape/pull/181) → [#168](https://github.com/Dimash313/FileShape/pull/168) → [#162](https://github.com/Dimash313/FileShape/pull/162) → [#159](https://github.com/Dimash313/FileShape/pull/159) → [#153](https://github.com/Dimash313/FileShape/pull/153) → [#144](https://github.com/Dimash313/FileShape/pull/144) → [#137](https://github.com/Dimash313/FileShape/pull/137) → [#128](https://github.com/Dimash313/FileShape/pull/128) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) → [#109](https://github.com/Dimash313/FileShape/pull/109) → earlier architecture parents. All are Draft/unmerged at last branch inspection. Never merge out of dependency order or without real final-head checks/review.
+## Stacked dependency chain
+This branch → [PR #189](https://github.com/Dimash313/FileShape/pull/189) → [#181](https://github.com/Dimash313/FileShape/pull/181) → [#168](https://github.com/Dimash313/FileShape/pull/168) → [#162](https://github.com/Dimash313/FileShape/pull/162) → [#159](https://github.com/Dimash313/FileShape/pull/159) → [#153](https://github.com/Dimash313/FileShape/pull/153) → [#144](https://github.com/Dimash313/FileShape/pull/144) → [#137](https://github.com/Dimash313/FileShape/pull/137) → [#128](https://github.com/Dimash313/FileShape/pull/128) → [#112](https://github.com/Dimash313/FileShape/pull/112) → [#111](https://github.com/Dimash313/FileShape/pull/111) → [#109](https://github.com/Dimash313/FileShape/pull/109) → architecture ancestors.
 
-## Next step
-- Open a Draft PR for #186; verify full exact-head GitHub Actions including new regression cases. Correct any observed test failure without loosening safety.
-- After stable green branch CI, coordinate actual worker concurrency / RSS guardrails with API & Security Issue [#177](https://github.com/Dimash313/FileShape/issues/177). HTTP ZIP extraction remains solely a contract proposal in [Issue #132](https://github.com/Dimash313/FileShape/issues/132).
+## Next actions
+- Inspect actual GitHub CI and fix concrete failures in this branch; do not loosen safety tests or claim green from an older SHA.
+- Coordinate parent #189 branch reconciliation and integration review before this ZIP PR is mergeable.
+- Keep ZIP HTTP extraction as a contract proposal owned by API/security [Issue #132](https://github.com/Dimash313/FileShape/issues/132), [PR #135](https://github.com/Dimash313/FileShape/pull/135). Do not enable it here.
