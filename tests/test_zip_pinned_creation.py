@@ -126,6 +126,74 @@ class ZipPinnedCreationTests(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), b"old output must remain untouched")
         self.assert_no_staging()
 
+    def test_same_length_in_place_rewrite_is_rejected(self):
+        """An unchanged length does not mean an approved source is unchanged."""
+        previous = b"original target stays available"
+        self.output.write_bytes(previous)
+        original_size = self.first.stat().st_size
+        replacement = b"Z" * original_size
+        original = zipfile.ZipFile.open
+        overwritten = False
+
+        def rewrite_source_during_write(archive, name, mode="r", *args, **kwargs):
+            nonlocal overwritten
+            if mode == "w" and not overwritten:
+                overwritten = True
+                before = self.first.stat()
+                self.first.write_bytes(replacement)
+                # Exercise the metadata guard independent of filesystem clock
+                # resolution: the contents change but the byte count does not.
+                os.utime(self.first, ns=(
+                    before.st_atime_ns, before.st_mtime_ns + 2_000_000_000,
+                ))
+                self.assertEqual(self.first.stat().st_size, original_size)
+            return original(archive, name, mode, *args, **kwargs)
+
+        with patch.object(zipfile.ZipFile, "open", autospec=True,
+                          side_effect=rewrite_source_during_write):
+            with self.assertRaisesRegex(ValueError, "изменился"):
+                make_zip(
+                    [(self.first, "first.txt"), (self.second, "second.txt")],
+                    self.output,
+                )
+        self.assertTrue(overwritten)
+        self.assertEqual(self.first.read_bytes(), replacement)
+        self.assertEqual(self.output.read_bytes(), previous)
+        self.assert_no_staging()
+
+    def test_same_length_mutation_before_stored_rebuild_is_rejected(self):
+        """A high-ratio fallback must not publish changed bytes of same size."""
+        self.first.write_bytes(b"R" * 400_000)
+        previous = b"existing archive must stay intact"
+        self.output.write_bytes(previous)
+        original = zipfile.ZipFile.open
+        count = 0
+
+        def overwrite_on_rebuild(archive, name, mode="r", *args, **kwargs):
+            nonlocal count
+            if mode == "w" and getattr(name, "filename", "") == "first.txt":
+                count += 1
+                if count == 2:
+                    before = self.first.stat()
+                    with self.first.open("r+b") as writer:
+                        writer.write(b"S" * 16)
+                    os.utime(self.first, ns=(
+                        before.st_atime_ns, before.st_mtime_ns + 2_000_000_000,
+                    ))
+                    self.assertEqual(self.first.stat().st_size, 400_000)
+            return original(archive, name, mode, *args, **kwargs)
+
+        with patch.object(zipfile.ZipFile, "open", autospec=True,
+                          side_effect=overwrite_on_rebuild):
+            with self.assertRaisesRegex(ValueError, "изменился"):
+                make_zip(
+                    [(self.first, "first.txt"), (self.second, "second.txt")],
+                    self.output,
+                )
+        self.assertEqual(count, 2)
+        self.assertEqual(self.output.read_bytes(), previous)
+        self.assert_no_staging()
+
     @unittest.skipUnless(Path("/proc/self/fd").is_dir(), "Linux descriptor test")
     def test_rejected_second_source_does_not_leak_first_source_descriptor(self):
         fifo = self.root / "fifo"
