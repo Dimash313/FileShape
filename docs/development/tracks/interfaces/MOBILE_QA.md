@@ -2,11 +2,12 @@
 
 **Scope:** Draft PR [#173](https://github.com/Dimash313/FileShape/pull/173), Issue [#172](https://github.com/Dimash313/FileShape/issues/172).
 **Status:** manual verification **NOT EXECUTED**. This is an acceptance checklist, not proof of compatibility.
+**Owner launch decision:** no public/closed beta, early access, pilot or staged user rollout before the first public release (documented in [PR #190](https://github.com/Dimash313/FileShape/pull/190)). These manual device cases are **optional internal checks if equipment is available**, not a requirement to recruit users or a blanket blocker on merging green, reviewed engineering PRs. Unrun cases remain Not run and must never be represented as verified.
 The batch-reorder focus check K8 is covered by unit and source-level regressions, but still requires real keyboard/TalkBack verification.
 
 ## Before testing
 
-1. Use a trusted preview of the **exact PR commit**, not the public app on `main`. Record the preview URL, build commit SHA, browser/Telegram client version, OS, viewport size and tested date. **Do not claim #173 was tested if the running app does not contain its build.**
+1. For non-public internal QA only, use a trusted local build of the **exact PR commit**, never a publicly accessible beta or volunteer/user testing. Record the build commit SHA, browser/Telegram client version, OS, viewport size and date. **Do not claim #173 was tested if the running app does not contain its build.**
 2. Use harmless sample files (an empty PDF, a valid small PDF, simple geometric JPG/PNG and a plain TXT); do not upload private data or prohibited content to preview environments.
 3. For keyboard checks, use desktop Chromium/Firefox/Safari or a connected hardware keyboard. For accessibility checks, use Android TalkBack in Telegram WebView and/or iOS VoiceOver. Do not treat a mouse-only walkthrough as keyboard/AT QA.
 
@@ -44,7 +45,8 @@ The batch-reorder focus check K8 is covered by unit and source-level regressions
 
 - Record for each attempted case: **Pass / Fail / Blocked**, environment and a short note. A result of “Not run” is not a Pass.
 - Any unresolvable keyboard trap, focus transferring to the wrong photo after reorder, hidden focused element, incorrect file preservation, fabricated progress, or horizontal content blocking a primary action is a **release blocker**. File an Issue with repro steps; do not merge a workaround without tests.
-- Required automated gate: exact PR head `miniapp` job passes frontend tests, typecheck and build; `tests` job passes Python and Docker; retain GitHub run URL/commit.
+- Required automated gate: exact PR head `miniapp` job passes frontend tests, typecheck and build; `tests` job passes Python and Docker; retain GitHub run URL/commit. Before public release, add mock/simulated keyboard focus, accessibility semantics, Telegram WebApp interactions, invalid-file and failure/recovery coverage wherever feasible. Document anything not exercised.
 - Required integration gate: parent PRs #112 → #118 → #126 → #136 → #145 → #152, conflicting historical #46 reviewed, independent code review, and successful integration in target branch. **Green CI alone is not 10/10 readiness.**
+- `Not run` for manual Telegram/TalkBack/VoiceOver/device tests is a **documented limitation**, not by itself a reason to hold or merge the PR. Do not conduct a public/closed beta to fill the gap. An actual known and reproducible accessibility or correctness defect remains a blocker until fixed or its affected feature is safely disabled. The owner decides the first public release.
 
 Maintainer notes: the Mini App is Telegram-first. This document does not authorize a standalone website/app rollout or changes to accounts/API/billing.
