@@ -77,6 +77,20 @@ class PdfExtractionBoundaryTests(unittest.TestCase):
             })
         )
 
+    def test_pdf_port_runs_without_legacy_image_facade_dispatch(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "source.pdf"
+            make_pdf(source, 2)
+            # Patching the old compatibility symbol cannot redirect the
+            # new standalone PDF port into the image/legacy facade.
+            with patch.object(
+                file_tools, "pdf_page_count",
+                side_effect=AssertionError("legacy facade should not be called"),
+            ):
+                self.assertEqual(pdf_module.count_pages(source), 2)
+
     def test_legacy_pdf_import_and_typed_module_produce_same_results(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
