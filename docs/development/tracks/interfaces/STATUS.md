@@ -1,25 +1,25 @@
 # Interfaces & UX — handoff
 
-Updated: 2026-11-15 UTC; branch: `ux/miniapp-empty-file-preflight`; last code commit: `36197a3ed8dee096366e93f69bbe951d894eec3e` (recheck exact PR HEAD after this documentation commit)
+Updated: 2026-11-15 UTC
 Track: interfaces
-Current Issue: [#131](https://github.com/Dimash313/FileShape/issues/131) — empty and malformed Mini App file selection
-Active PR: [#136](https://github.com/Dimash313/FileShape/pull/136) (Draft, base `ux/miniapp-tool-pickers`)
-Parent stacked PRs: [#126](https://github.com/Dimash313/FileShape/pull/126) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#112](https://github.com/Dimash313/FileShape/pull/112).
+Current Issue: [#139](https://github.com/Dimash313/FileShape/issues/139) — Mini App touch targets and narrow-screen notice wrapping
+Active PR: [#145](https://github.com/Dimash313/FileShape/pull/145) (Draft; base `ux/miniapp-empty-file-preflight`)
+Branch: `ux/miniapp-touch-targets`
+Last code commit before this STATUS update: `35dfab939f0274c5f921d2393c5e756b031e1c15`. Recheck **final** PR head SHA after documentation commits.
 
-Implemented in Draft PR #136:
-- `miniapp/src/filePreflight.ts`: pure preflight validates single-file positive safe-integer size and existing <=20 MiB cap; validates batches of 2–8 supported images with positive sizes and aggregate <=20 MiB.
-- `miniapp/src/App.tsx`: uses preflight before selecting a single file or batch, reports distinct empty/oversized/unsupported errors, and leaves an existing valid selection intact after invalid attempts.
-- `miniapp/tests/filePreflight.test.mjs`: five regression cases for empty/non-finite/invalid sizes, exact 20 MiB boundary, image types and batch count.
-- `miniapp/tsconfig.test.json`: compiles new module into Node test output.
-- No API, quota, auth, server format support, payments or third-party dependencies changed.
+Dependencies: stacked on Draft [#136](https://github.com/Dimash313/FileShape/pull/136) → [#126](https://github.com/Dimash313/FileShape/pull/126) → [#118](https://github.com/Dimash313/FileShape/pull/118) → [#112](https://github.com/Dimash313/FileShape/pull/112). Older [#46](https://github.com/Dimash313/FileShape/pull/46) changes `miniapp/src/styles.css` and must be reviewed for merge conflicts before integrating #145.
 
-Verified:
-- Source from GitHub connector matched intended imports, single/batch call sites, test TypeScript inclusion and removal of old incomplete checks.
-- In a local isolated temporary harness, exact copied source compiled using `tsc --strict --target ES2022 --module ES2022 --moduleResolution bundler --lib ES2022,DOM`.
-- `node --test tests/filePreflight.test.mjs` passed **5/5** cases.
-- Full repository `npm test`, Vite build/typecheck, Python tests, Docker and mobile Telegram WebView/320 px visual tests **NOT EXECUTED**. Local repository cloning blocked by unavailable GitHub DNS. Never treat isolated tests as full integration proof.
-- Exact-head GitHub Actions is pending/failing under [#101](https://github.com/Dimash313/FileShape/issues/101); check latest run and zero-step runner failures before merger.
+Implemented in #145:
+- `miniapp/src/styles.css`: add explicit 44px clickable dimensions for previously small icon buttons, minimum 44px for text actions, PDF page presets/bulk/pagination, status checks, usage refresh and batch reorder; allow lengthy notice text to break anywhere without horizontal expansion.
+- `miniapp/tests/touchTargets.test.mjs`: five source-level Node regression tests for target sizing, notice wrapping, and preservation of existing focus, reduced-motion, forced-colors and <=370px CSS rules.
+- `docs/development/tracks/interfaces/ROADMAP.md` and this STATUS updated for handoff.
+- No new UI capabilities, content, audio, images, monetization, third-party services, API, auth or processing changes.
 
-Dependencies/blockers: #101 Actions runner allocation; #136 is stacked on #126/#118/#112; [#46](https://github.com/Dimash313/FileShape/pull/46) touches App.tsx and requires conflict review. No release or merge readiness claimed.
-Next unblocked Issue: NONE claimed. Next candidate: focused 320–370px responsive/keyboard/screen-reader focus audit of Mini App, with a separately claimed Issue and independent PR after checking overlapping files.
-Risk / cross-track decision needed: no API change in #136; only browser-side preflight hints. Server remains authoritative for malicious files and unsupported content.
+Verification:
+- Verified exact CSS source and intended selectors through GitHub connector. Static assertions of target rule values, existing focus and small-screen/reduced-motion rules passed on branch source.
+- New Node test file added but **not executed** in full repository here.
+- Full `npm test`, Vite build/typecheck, Python suite, Docker, mobile Android/iOS Telegram WebView at 320/360/370px, screen-reader/focus-order and large-text verification: **NOT EXECUTED**.
+- [#101](https://github.com/Dimash313/FileShape/issues/101) GitHub Actions runner allocation failures block release verification. Exact-head Actions and zero-step jobs must be checked before merge. Do not claim CI green or released.
+
+Next unblocked Issue: NONE claimed. Next candidate: check keyboard focus and active navigation semantics in Mini App (avoid overlapping older #46) or perform real device responsive accessibility audit once a supported runner / browser harness is available; create new Issue after reviewing current code.
+Risk/cross-track coordination: shared style file conflict with #46, stacked PR sequencing and #101 runner failures. No API/security change required for this CSS-only fix.
