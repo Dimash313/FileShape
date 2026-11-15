@@ -177,7 +177,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                     "pages": "",
                 }, timeout=15)
             self.assertTrue(result["ok"])
-            self.assertAlmostEqual(result["info"]["seconds"], 0.5, delta=0.2)
+            # The worker wraps the API info envelope: {"info": {"info": ...}}.
+            self.assertAlmostEqual(result["info"]["info"]["seconds"], 0.5, delta=0.2)
 
     async def test_timeout_kills_child(self):
         original = asyncio.create_subprocess_exec
