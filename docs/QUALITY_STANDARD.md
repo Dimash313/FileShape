@@ -39,6 +39,42 @@ file types with people unfamiliar with the UI before broad launch. Record
 confusion, misclicks and failures; improve and retest. Five is a minimum
 qualitative sanity check, not statistical proof of perfection.
 
+## Mandatory code-level quality gate — every function, not only the UI
+
+**Scope:** every changed line, function, class, module, endpoint, database
+query/migration, test, build script and configuration file. The whole
+product cannot pass by averaging a strong interface against weak code.
+
+For every changed component, reviewers must explicitly check:
+
+- **Purpose and design:** is the code necessary, readable, cohesive, typed
+  where appropriate, and free from unnecessary duplication or complexity?
+- **Correctness:** are normal, boundary, malformed and unsupported inputs
+  handled with clear contracts and accurate output?
+- **Safety:** are authorization, user isolation, input validation, path
+  safety, subprocess safety, resource caps and temporary cleanup enforced?
+- **Reliability:** are exceptions, cancellation, retries, stale state,
+  concurrency, idempotency and crash recovery handled where relevant?
+- **Performance:** are hot paths bounded and measured when a performance
+  claim is made, without needless I/O or memory allocations?
+- **Tests:** do meaningful automated tests cover success, failure and
+  regressions, with no fake passes or hidden skipped checks?
+- **Maintenance:** are names, dependencies, documentation, migrations and
+  backwards compatibility reviewed?
+- **Product/ethics:** does any visible behavior meet button-first UX and
+  permanent halal-only requirements?
+
+**Per-PR evidence table:**
+
+| Changed component | Contract/invariants | Negative and regression tests | Security/performance checks | Status and remaining gaps |
+| --- | --- | --- | --- | --- |
+| List each affected function/module | Describe verified behavior | Link tests | Link evidence | PASS / FAIL / NOT TESTED |
+
+This is a **review discipline**, not a claim that subjective code quality
+or every line can be assigned a scientifically exact score. Missing
+verification is NOT TESTED, never automatically PASS. Known blocker/high
+issues prevent merging/release; track lesser issues transparently.
+
 ## Defect severity and release decisions
 
 - **Blocker/Critical:** data exposure, file corruption/data loss, false
