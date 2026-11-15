@@ -106,3 +106,20 @@ conversion failures and failed delivery with quota refunds.
 See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md). This PR is not
 deployed or verified by exact-head full CI. The other format modules
 and the bot's existing interface remain unchanged.
+
+
+### Phase C1 — independent PDF module contract (draft; not released)
+
+Created a typed PDF module boundary, with the API delegating its existing
+page information, rotation, extraction and deletion operations to the
+compatibility adapter. The API action catalog and output names remain
+unchanged; PDF merge remains a Telegram-only legacy flow. Real-PDF fixture
+tests, dispatch/error tests and architecture import guards are included.
+See [MODULAR_ARCHITECTURE.md](MODULAR_ARCHITECTURE.md).
+
+The current shared `services/file_tools.py` still contains PDF and image
+implementations; do not claim full physical separation yet. Next isolate
+the bot's PDF calls in a separately reviewed PR. Do not merge or deploy
+without required exact-head CI and manual verification of the affected
+workflow.
+
