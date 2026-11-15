@@ -17,6 +17,10 @@ AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".oga", ".m4a", ".flac"}
 OUTPUT_FORMATS = {"mp3": ".mp3", "ogg": ".ogg", "wav": ".wav"}
 MAX_DURATION_SECONDS = 600
 MAX_AUDIO_OUTPUT_BYTES = 44 * 1024 * 1024
+# Bounds are checked from the pinned inode, independent of caller upload checks.
+# 50 MiB permits the existing MP4/MOV and verified MP3 result paths.
+MAX_PINNED_MEDIA_BYTES = 50 * 1024 * 1024
+MAX_CONVERSION_INPUT_BYTES = 20 * 1024 * 1024
 
 # Self-contained audio only: concat, HLS and similar demuxers can dereference
 # additional local paths beyond the original user-provided file.
@@ -39,8 +43,11 @@ def _pinned_audio_source(source: Path):
     except OSError:
         raise ValueError("Не удалось прочитать аудиофайл") from None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        inode = os.fstat(fd)
+        if not stat.S_ISREG(inode.st_mode):
             raise ValueError("Нужен обычный аудиофайл")
+        if not 0 < inode.st_size <= MAX_PINNED_MEDIA_BYTES:
+            raise ValueError("Медиафайл пустой или превышает 50 МиБ")
         header = os.pread(fd, 16, 0)
         is_wav = header[:4] in (b"RIFF", b"RF64") and header[8:12] == b"WAVE"
         is_mp3 = header.startswith(b"ID3") or (
@@ -157,6 +164,8 @@ def convert_audio(source: Path, target: Path, output_format: str) -> dict:
     expected_codecs = {"mp3": "mp3", "ogg": "opus", "wav": "pcm_s16le"}
 
     with _pinned_audio_source(source) as (pinned_path, source_fd):
+        if os.fstat(source_fd).st_size > MAX_CONVERSION_INPUT_BYTES:
+            raise ValueError("Аудиофайл превышает 20 МиБ")
         info = _probe_pinned_audio(pinned_path, source_fd, exact=False)
         temporary_fd, temporary_name = tempfile.mkstemp(
             prefix=".fileshape-audio-convert-",
