@@ -29,9 +29,12 @@ def images_to_pdf(sources: list[Path], target: Path) -> int:
     # a FIFO/symlink is never a valid source for this file-based operation.
     total_bytes = 0
     for source in sources:
-        if source.is_symlink() or not stat.S_ISREG(source.stat().st_mode):
+        if source.is_symlink():
             raise ValueError("Поддерживаются только обычные файлы изображений")
-        total_bytes += source.stat().st_size
+        metadata = source.stat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("Поддерживаются только обычные файлы изображений")
+        total_bytes += metadata.st_size
         if total_bytes > MAX_BUNDLE_BYTES:
             raise ValueError("Общий размер фотографий превышает 20 МБ")
 
@@ -53,11 +56,18 @@ def images_to_pdf(sources: list[Path], target: Path) -> int:
     with ExitStack() as stack:
         pages: list[Image.Image] = []
         total_pixels = 0
+        actual_bytes = 0
         for source in sources:
             # Source bytes and dimensions may change after the header pass.
             # Enforce both cumulative limits again before conversion.
-            if source.is_symlink() or not stat.S_ISREG(source.stat().st_mode):
+            if source.is_symlink():
                 raise ValueError("Поддерживаются только обычные файлы изображений")
+            metadata = source.stat()
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("Поддерживаются только обычные файлы изображений")
+            actual_bytes += metadata.st_size
+            if actual_bytes > MAX_BUNDLE_BYTES:
+                raise ValueError("Общий размер фотографий превышает 20 МБ")
             image = _open_image(source)
             stack.callback(image.close)
             total_pixels += image.width * image.height
