@@ -72,6 +72,7 @@ def run_parallel(
     memory_mib: int,
     timeout: int,
     interval_ms: int,
+    aggregate_memory_mib: int = 1024,
 ) -> dict:
     if sys.platform != "linux" or not Path("/proc/self/statm").is_file():
         raise RuntimeError("Concurrent RSS sampling requires Linux procfs")
@@ -87,6 +88,8 @@ def run_parallel(
         raise ValueError("Worker timeout must be 1-600 seconds")
     if not 5 <= interval_ms <= 1000:
         raise ValueError("Sampling interval must be 5-1000 ms")
+    if not 256 <= aggregate_memory_mib <= 4096:
+        raise ValueError("Sampled aggregate budget must be 256-4096 MiB")
     validate_profile(profile)
 
     with tempfile.TemporaryDirectory(prefix="fileshape_concurrency_") as rootname:
@@ -123,6 +126,8 @@ def run_parallel(
                 total_rss = sum(_rss_bytes(p.pid) for p in processes)
                 peak_sampled = max(peak_sampled, total_rss)
                 samples += 1
+                if total_rss > aggregate_memory_mib * 1024 * 1024:
+                    raise MemoryError("Sampled child RSS exceeded aggregate budget")
                 if all(p.poll() is not None for p in processes):
                     break
                 if any(p.poll() not in (None, 0) for p in processes):
@@ -168,6 +173,7 @@ def run_parallel(
                 "sample_count": samples,
                 "sample_interval_ms": interval_ms,
                 "per_child_memory_limit_mib": memory_mib,
+                "aggregate_sample_budget_mib": aggregate_memory_mib,
                 "input_pixels_per_worker": sum(
                     w * h for _, w, h in PROFILES[profile]
                 ),
@@ -192,13 +198,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--memory-mib", type=int, default=1024)
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--interval-ms", type=int, default=25)
+    parser.add_argument("--aggregate-memory-mib", type=int, default=1024)
     args = parser.parse_args(argv)
     try:
         report = run_parallel(
             args.profile, args.fixture_style, args.workers,
             args.memory_mib, args.timeout, args.interval_ms,
+            args.aggregate_memory_mib,
         )
-    except (ValueError, RuntimeError, TimeoutError) as error:
+    except (ValueError, RuntimeError, TimeoutError, MemoryError) as error:
         parser.exit(status=1, message=f"{error}\n")
     print(json.dumps(report, sort_keys=True))
     return 0
