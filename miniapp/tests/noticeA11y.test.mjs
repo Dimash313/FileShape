@@ -78,3 +78,22 @@ test('PDF page input exposes semantic validation error and links its message', (
   assert.match(app, /selectedPageNumbers\.size > 150 \? 'За одну операцию можно выбрать максимум 150 страниц\.'/);
   assert.match(app, /selectedAction === 'pdf:remove' && pdfPageCount !== null && selectedPageNumbers\.size === pdfPageCount/);
 });
+
+test('job history and status notice use the same API-typed localized labels', () => {
+  assert.match(app, /import type \{ JobStatus, QueueStatus, UploadProgress \} from '\.\/api';/);
+  assert.match(app, /jobState\?: JobStatus\['state'\]/);
+  assert.match(app, /const jobStateLabels: Record<JobStatus\['state'\], string> = \{/);
+
+  for (const [state, label] of [
+    ['queued', 'ожидание'],
+    ['processing', 'обработка'],
+    ['completed', 'завершено'],
+    ['failed', 'ошибка'],
+    ['cancelled', 'отменено'],
+  ]) {
+    assert.match(app, new RegExp('\\b' + state + ': \\'' + label + '\\''));
+  }
+  assert.match(app, /showNotice\('Статус задания: ' \+ jobStateLabels\[status\.state\], status\.state === 'failed' \? 'alert' : 'status'\);/);
+  assert.match(app, /\{item\.jobState \? ' · ' \+ jobStateLabels\[item\.jobState\] : ''\}/);
+  assert.doesNotMatch(app, /' · ' \+ item\.jobState\b/);
+});
