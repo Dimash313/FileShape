@@ -101,16 +101,17 @@ class ProbeFailureTests(unittest.TestCase):
     def test_ffmpeg_timeout_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "result.mp3"
-            with patch("services.audio_tools.probe_audio", return_value={
-                "seconds": 1, "codec": "pcm_s16le"
-            }), patch("services.audio_tools._program", return_value="ffmpeg"), patch(
-                "services.audio_tools.subprocess.run",
-                side_effect=subprocess.TimeoutExpired(["ffmpeg"], 65),
-            ):
-                with self.assertRaisesRegex(ValueError, "лимит времени"):
-                    convert_audio(Path(directory) / "source.wav", output, "mp3")
-            self.assertFalse(output.exists())
+            original_run = subprocess.run
 
+            def timeout_only_ffmpeg(command, *args, **kwargs):
+                if Path(command[0]).name == "ffmpeg":
+                    raise subprocess.TimeoutExpired(command, 65)
+                return original_run(command, *args, **kwargs)
+
+            with patch("services.audio_tools.subprocess.run", side_effect=timeout_only_ffmpeg):
+                with self.assertRaisesRegex(ValueError, "лимит времени"):
+                    convert_audio(self.source, output, "mp3")
+            self.assertFalse(output.exists())
 
 if __name__ == "__main__":
     unittest.main()
