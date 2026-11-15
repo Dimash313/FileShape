@@ -66,32 +66,92 @@ def inspect_zip(source: Path) -> dict:
 
 
 def unpack_zip(source: Path, folder: Path) -> list[tuple[Path, str]]:
+    """Extract into a private stage; never expose partial or clobbered output.
+
+    Staged files are hard-linked into place only after every member has
+    passed CRC and actual-byte checks. The stage lives on the same filesystem
+    as the result, so publishing does not copy up to 50 MiB a second time.
+    """
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("Каталог распаковки недоступен")
+
+    # Keep the public inspector's original validation and error semantics.
     summary = inspect_zip(source)
     if not 1 <= summary["files"] <= MAX_EXTRACT_FILES:
         raise ValueError(f"Распаковка доступна для 1–{MAX_EXTRACT_FILES} файлов")
-    result = []
-    actual_total = 0
-    with zipfile.ZipFile(source, "r") as archive:
-        for index, info in enumerate((info for info in archive.infolist() if not info.is_dir()), 1):
-            # Basename only: prevent Zip Slip, even when folders are nested.
-            raw_name = PurePosixPath(info.filename).name
-            clean_name = re.sub(r"[\x00-\x1f\x7f]", "_", raw_name).strip(" .")
-            clean_name = clean_name[:90] or f"file_{index}"
-            safe_name = f"{index:02d}_{clean_name}"
-            dest = folder / safe_name
-            size = 0
-            with archive.open(info, "r") as input_file, dest.open("wb") as output:
-                while True:
-                    chunk = input_file.read(64 * 1024)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    actual_total += len(chunk)
-                    if size > MAX_MEMBER_BYTES or actual_total > MAX_UNCOMPRESSED_TOTAL:
-                        raise ValueError("Превышен лимит распаковки")
-                    output.write(chunk)
-            result.append((dest, safe_name))
-    return result
+
+    # Track only files *we* published; never remove pre-existing entries.
+    published: list[tuple[Path, int, int]] = []
+    try:
+        with zipfile.ZipFile(source, "r") as archive:
+            # Validate the same open archive used for extraction. Otherwise a
+            # swapped ZIP between inspect_zip() and open() bypasses preflight.
+            members = archive.infolist()
+            if len(members) > MAX_ARCHIVE_ENTRIES:
+                raise ValueError("Слишком много элементов в ZIP")
+            files: list[zipfile.ZipInfo] = []
+            declared_total = 0
+            for info in members:
+                _validate_member(info)
+                if not info.is_dir():
+                    declared_total += info.file_size
+                    if declared_total > MAX_UNCOMPRESSED_TOTAL:
+                        raise ValueError("ZIP после распаковки превышает лимит")
+                    files.append(info)
+            if len(files) != summary["files"] or declared_total != summary["bytes"]:
+                raise ValueError("ZIP был изменён во время проверки")
+
+            actual_total = 0
+            with tempfile.TemporaryDirectory(
+                prefix=".fileshape_extract_", dir=folder,
+            ) as staging_name:
+                staging = Path(staging_name)
+                prepared: list[tuple[Path, Path, str]] = []
+                for index, info in enumerate(files, 1):
+                    # Keep existing flat, indexed output names and ordering.
+                    raw_name = PurePosixPath(info.filename).name
+                    clean_name = re.sub(r"[\x00-\x1f\x7f]", "_", raw_name).strip(" .")
+                    clean_name = clean_name[:90] or f"file_{index}"
+                    safe_name = f"{index:02d}_{clean_name}"
+                    staged = staging / safe_name
+                    size = 0
+                    with archive.open(info, "r") as input_file, staged.open("xb") as output:
+                        while True:
+                            chunk = input_file.read(64 * 1024)
+                            if not chunk:
+                                break
+                            size += len(chunk)
+                            actual_total += len(chunk)
+                            if size > MAX_MEMBER_BYTES or actual_total > MAX_UNCOMPRESSED_TOTAL:
+                                raise ValueError("Превышен лимит распаковки")
+                            output.write(chunk)
+                    prepared.append((staged, folder / safe_name, safe_name))
+
+                # A hard link is atomic and fails if dest already exists,
+                # including a symlink; unlike os.replace it cannot clobber.
+                results = []
+                for staged, dest, safe_name in prepared:
+                    identity = staged.stat()
+                    os.link(staged, dest)
+                    published.append((dest, identity.st_dev, identity.st_ino))
+                    results.append((dest, safe_name))
+                return results
+    except BaseException as error:
+        # If publication fails halfway through, remove only our own links.
+        # In case an external process replaces a path, leave its inode alone.
+        for dest, device, inode in reversed(published):
+            try:
+                current = dest.lstat()
+                if (stat.S_ISREG(current.st_mode)
+                        and current.st_dev == device and current.st_ino == inode):
+                    dest.unlink()
+            except OSError:
+                # Directory permissions/filesystem errors can prevent cleanup;
+                # callers still own their private workspace as a final guard.
+                pass
+        if isinstance(error, (zipfile.BadZipFile, zipfile.LargeZipFile)):
+            raise ValueError("Повреждённый или неподдерживаемый ZIP") from None
+        raise
 
 
 def _archive_name(name: str, used: set[str]) -> str:
