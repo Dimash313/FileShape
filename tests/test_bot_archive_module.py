@@ -180,6 +180,26 @@ class BotArchivePortTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Создание ZIP · 1/5", callback.message.answer.await_args.args[0])
 
+    async def test_zip_bundle_admission_matches_reader_total_limit(self):
+        from services.archive_tools import MAX_UNCOMPRESSED_TOTAL
+        self.assertEqual(main.MAX_ZIP_BUNDLE_BYTES, MAX_UNCOMPRESSED_TOTAL)
+        message = fake_message()
+        fsm = SimpleNamespace(
+            get_data=AsyncMock(return_value={
+                "zip_files": [{
+                    "file_id": "first", "size": MAX_UNCOMPRESSED_TOTAL - 10,
+                    "name": "first.txt",
+                }],
+            }),
+            update_data=AsyncMock(),
+        )
+        with patch.object(main, "attachment", return_value=(
+            SimpleNamespace(file_id="second"), ".txt", "txt", 20,
+        )):
+            await main.collect_zip_file(message, fsm)
+        fsm.update_data.assert_not_awaited()
+        self.assertIn("50 МБ", message.answer.await_args.args[0])
+
     async def test_zip_bundle_preserves_order_names_and_telegram_result(self):
         message, bot, fsm, items = zip_bundle(count=3)
         expected_names = [item["name"] for item in items]
