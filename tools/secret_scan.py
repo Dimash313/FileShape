@@ -51,17 +51,33 @@ def scan_file(root: Path, relative: str) -> tuple[str, ...]:
         return ("tracked_private_file",)
     path = root / relative
     try:
-        info = path.lstat()  # Never follow a tracked symlink to private paths.
+        info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
             return ("tracked_symlink_requires_review",)
         if not stat.S_ISREG(info.st_mode):
             return ("unsupported_tracked_entry",)
-        if info.st_size > MAX_FILE_BYTES:
-            if path.suffix.lower() in BINARY_EXTENSIONS:
-                return ()
+        large_media = info.st_size > MAX_FILE_BYTES and path.suffix.lower() in BINARY_EXTENSIONS
+        if info.st_size > MAX_FILE_BYTES and not large_media:
             return ("oversized_tracked_file",)
-        with path.open("rb") as stream:
-            data = stream.read(MAX_FILE_BYTES + 1)
+        # lstat() alone is racy: a path can turn into a symlink before open().
+        # Pin and validate the fd, never following a replaced symlink.
+        if not hasattr(os, "O_NOFOLLOW"):
+            return ("no_follow_unavailable",)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode):
+                return ("unsupported_tracked_entry",)
+            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                return ("tracked_file_changed",)
+            if opened.st_size > MAX_FILE_BYTES and not large_media:
+                return ("oversized_tracked_file",)
+            # Large media remain allowed, but inspect a bounded prefix too:
+            # a token in image/document metadata should not be overlooked.
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                data = stream.read(MAX_FILE_BYTES if large_media else MAX_FILE_BYTES + 1)
+        finally:
+            os.close(fd)
         if len(data) > MAX_FILE_BYTES:
             return ("oversized_tracked_file",)
     except OSError:
