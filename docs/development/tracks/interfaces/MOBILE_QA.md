@@ -25,7 +25,7 @@ The batch-reorder focus check K8 is covered by unit and source-level regressions
 | K8 | Using a keyboard, select 3 photos and reorder the middle item up/down | The moved photo retains focus on its own control at the new position; at first/last positions focus moves to its enabled opposite-direction control, not to a different photo | Not run |
 | K9 | Trigger invalid file selection, an impossible PDF range, and a failed conversion | TalkBack/VoiceOver promptly announces each error as an assertive alert without moving focus; close button works | Not run |
 | K10 | Complete a successful operation and then an error, then the reverse order | Success is politely announced, error assertively; neither inherits the previous message's severity | Not run |
-| K11 | In История, check a completed job and then a failed/queued job status with harmless simulated data | Status labels are readable Russian words matching the status notice, not raw API values such as `processing` or `failed` | Not run |
+| K11 | In История, check completed, queued, processing, failed and cancelled states with harmless local mocks, including a successful local result without a retained Blob | Russian text matches actual state; only completed/local successful entries show a check, queued/processing show a clock, failed/cancelled show an X; no misleading success symbol | Not run |
 
 ## Mobile layout and functionality
 
