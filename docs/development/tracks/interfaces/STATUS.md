@@ -42,3 +42,10 @@ Draft PR: [#173](https://github.com/Dimash313/FileShape/pull/173); branch `ux/mi
 - Added pure `miniapp/src/batchReorderFocus.ts` with guarded index/direction/count and `miniapp/tests/batchReorderFocus.test.mjs` (5 regression cases), plus `miniapp/tsconfig.test.json` inclusion. Direct GitHub inspection matched 8/8 wiring and test configuration invariants; **these are not a substitute for an executed CI run**.
 - Updated `docs/development/tracks/interfaces/MOBILE_QA.md` with manual test K8 for keyboard reorder. It is **NOT RUN**. No API, auth, processing algorithm, paid service, image asset, music or other new capability.
 - Latest code/test changes require **exact final-head GitHub Actions CI and real keyboard/TalkBack QA** before Draft #173 can be marked ready; upstream stacked parent integration and independent reviews remain outstanding. Recheck head SHA after this STATUS commit.
+
+## Follow-up: accessible failure alerts (Issue #192)
+
+- Issue: [#192](https://github.com/Dimash313/FileShape/issues/192), implemented in existing [Draft #173](https://github.com/Dimash313/FileShape/pull/173) rather than extending the stacked chain.
+- Formerly all notices, including invalid file selection, incorrect PDF ranges and request failures, rendered as `role="status"`. App now stores a typed atomic notice object `{ text, kind }` and renders its `role` as `alert` for explicitly identified validation/failure states, or `status` for routine confirmations. Failed job-state messages are alert; other states stay polite. No classification by error wording. Dismissal/navigation clears the notice.
+- Added `miniapp/tests/noticeA11y.test.mjs` with 5 regressions, and manual TalkBack/VoiceOver checks K9/K10 (both **NOT RUN**) to `MOBILE_QA.md`. Browser file handling and backend API are unchanged; no new styles/assets/dependencies/payments.
+- Direct review checked nine source invariants and explicit alert paths. **This is static inspection, not executed tests.** Fresh exact-head GitHub Actions and real Telegram WebView/AT verification are mandatory. Do not merge while Draft, while any check is pending/failed, or before the stacked parent integration/review.
