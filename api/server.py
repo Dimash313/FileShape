@@ -50,7 +50,7 @@ from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
 from services.archive_tools import inspect_zip
 from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
-from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
+from services.image_bundle import MIN_IMAGES, MAX_IMAGES
 from services.upload_validation import validate_upload
 from services.image_tools import IMAGE_FORMATS
 from services.image_module import image_module
