@@ -219,3 +219,22 @@ a separate [CI PR #102](https://github.com/Dimash313/FileShape/pull/102).
 These architecture PRs remain drafts until the full exact-head test
 suite and dependent integration checks can execute and pass.
 
+
+### Phase D2 — Telegram DOCX/TXT uses the shared document port (draft)
+
+The four existing bot callbacks, DOCX/TXT information and DOCX->TXT /
+TXT->DOCX export, delegate to `DocumentModulePort` already used by the
+API. Existing bot-specific file names, visible text, menus, quotas, access
+checks, temporary files and result delivery remain intact.
+
+Handler regression tests cover owner/format validation and failed
+conversion or Telegram delivery refunds. Actual Word/plain-text fidelity
+continues to be covered by the original document and API conversion suites.
+There are no new public endpoints or file types.
+
+Next independently isolate existing ZIP archive operations with an
+archive port and preserve path traversal/decompression limits. CI remains
+blocked before runner allocation (issue #101); this PR must stay draft
+until exact-head tests, Mini App checks and Docker all actually execute
+successfully.
+
