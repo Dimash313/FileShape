@@ -163,7 +163,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 writer.setnchannels(1)
                 writer.setsampwidth(2)
                 writer.setframerate(16000)
-                writer.writeframes(b"\\x00\\x00" * 8000)
+                writer.writeframes(bytes(16000))
             with patch.dict(os.environ, {
                 "BOT_TOKEN": "fake_parent_bot_token",
                 "GITHUB_TOKEN": "fake_parent_github_token",
