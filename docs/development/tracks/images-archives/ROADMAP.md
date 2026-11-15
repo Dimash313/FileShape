@@ -42,5 +42,5 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 ## Image source format validation — active stacked Draft
 
 - [Issue #158](https://github.com/Dimash313/FileShape/issues/158) / [Draft PR #159](https://github.com/Dimash313/FileShape/pull/159): centralize JPEG/PNG/WebP **actual input encoding** and single-frame validation in the image-domain header path; reuse it during all-image PDF preflight. Reject disguised GIF/TIFF and animated WebP/APNG before pixel decoding. Preserve quotas, bounded image size, output formats, EXIF/alpha handling, and atomic cleanup.
-- Locally reconstructed module tests: **20/20 passed** (7 new + 13 prior) on Python 3.13.5/Pillow 12.3.0/pypdf 5.9.0, not full repo or exact-head GitHub CI. Issue #101 still blocks CI evidence.
+- Locally reconstructed module tests: **29/29 passed** (7 new + 22 prior) across input preflight, PDF bundle creation and atomic publication on Python 3.13.5/Pillow 12.3.0/pypdf 5.9.0, not full repo or exact-head GitHub CI. Issue #101 still blocks CI evidence.
 - Stack: #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture parents. Review/merge in dependency order after actual CI. No new platforms, assets, providers or APIs.
