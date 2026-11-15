@@ -582,7 +582,10 @@ h1 {
 .skip-link {
   position: fixed;
   top: calc(10px + env(safe-area-inset-top));
-  left: 16px;
+  /* The Mini App is a centered 600px shell on wide viewports. */
+  left: max(16px, calc((100vw - 600px) / 2 + 16px));
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
   z-index: 30;
   transform: translateY(-200%);
   opacity: 0;
@@ -606,4 +609,12 @@ h1 {
 #main-content,
 #screen-title {
   scroll-margin-top: calc(90px + env(safe-area-inset-top));
+}
+@media (forced-colors: active) {
+  .skip-link:focus {
+    background: Canvas;
+    color: CanvasText;
+    border-color: Highlight;
+    outline-color: Highlight;
+  }
 }
