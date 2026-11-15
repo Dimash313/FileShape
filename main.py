@@ -30,7 +30,7 @@ from services.bot_operations import (
 from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
-from services.archive_tools import MAX_BUNDLE_FILES
+from services.archive_tools import MAX_BUNDLE_FILES, MAX_UNCOMPRESSED_TOTAL
 from services.archive_module import archive_module
 from services.document_module import document_module
 from services.file_tools import MAX_MERGE_FILES
@@ -42,7 +42,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 MAX_BYTES = 20 * 1024 * 1024  # Standard Bot API download limit.
 MAX_MERGE_BYTES = 60 * 1024 * 1024
-MAX_ZIP_BUNDLE_BYTES = 60 * 1024 * 1024
+MAX_ZIP_BUNDLE_BYTES = MAX_UNCOMPRESSED_TOTAL
 MAX_OUTPUT_BYTES = 45 * 1024 * 1024
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 processing_slots = asyncio.Semaphore(3)
@@ -574,7 +574,7 @@ async def collect_zip_file(message: Message, state: FSMContext):
         await message.answer("Максимум 5 файлов. Нажми «Готово».")
         return
     if sum(item["size"] for item in items) + size > MAX_ZIP_BUNDLE_BYTES:
-        await message.answer("Суммарный лимит — 60 МБ. Выбери файл поменьше.")
+        await message.answer("Суммарный лимит — 50 МБ. Выбери файл поменьше.")
         return
     items.append({
         "file_id": file.file_id,
