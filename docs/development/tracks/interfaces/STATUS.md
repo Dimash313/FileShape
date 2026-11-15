@@ -27,3 +27,10 @@ Draft PR: [#173](https://github.com/Dimash313/FileShape/pull/173); branch `ux/mi
 - Old [#46](https://github.com/Dimash313/FileShape/pull/46) is conflicting and includes an obsolete Scanner and different design. #173 selectively ports its skip link and heading focus ideas only; old PR should not be merged whole.
 - Actions runner blocker [#101](https://github.com/Dimash313/FileShape/issues/101) was fixed by project owner and is closed; all six preceding Interfaces Draft PR heads had successful Actions as of this checkpoint.
 - Next step: exact-final-head CI; manually run `MOBILE_QA.md` with a build of #173; independent review and parent integration. Next unblocked Issue: NONE claimed. Avoid creating further stacked UX PRs before these gates.
+
+## Follow-up keyboard review — 2026-11-15 UTC
+
+- CI checkpoint: [run #43733817332](https://github.com/Dimash313/FileShape/actions/runs/43733817332) completed **success** (9 Mini App and 11 Python/Docker steps) on prior documentation head `a5e4f85a1dc7ba318aea1c0ce86b6300b4798fce`.
+- Found a real layout problem in the existing skip-link style: `left:16px` fixed it to the *viewport*, outside the centered 600px Mini App on desktop. Fixed by aligning the focused link to the shell with a 16px minimum margin and viewport width cap. Explicit forced-colors system highlight styling was added to preserve perceivable keyboard focus.
+- Added sixth Node regression case and one extra manual QA row, M9; five existing keyboard tests preserved. Direct GitHub CSS/JS inspection passed 7/7 assertions. **Run `npm test`/Actions on this updated final head before declaring CI green.**
+- Real keyboard / TalkBack / VoiceOver tests and owner/integrator review remain NOT EXECUTED. No new API, payments, file processing, color assets or dependencies. Keep #173 **Draft**, and do not merge out of its parent branch order.
