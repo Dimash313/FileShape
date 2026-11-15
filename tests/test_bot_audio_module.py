@@ -3,7 +3,6 @@
 These handler tests exercise routing, isolation and quota settlement without
 requiring Telegram or FFmpeg. Existing test_audio_tools.py exercises FFmpeg.
 """
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
