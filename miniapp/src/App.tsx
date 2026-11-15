@@ -13,13 +13,13 @@ import { batchImageSelectionError, singleFileSelectionError } from './filePrefli
 import { describeTransfer } from './transferPresentation';
 import { nextBatchReorderFocus, type BatchReorderFocus, type BatchReorderDirection } from './batchReorderFocus';
 import { actionsFor, downloadBlob, getQueueStatus, getJobStatus, runMultiImagePdf, runServerAction } from './api';
-import type { QueueStatus, UploadProgress } from './api';
+import type { JobStatus, QueueStatus, UploadProgress } from './api';
 import { BackgroundJobsPanel, useBackgroundJobs } from './BackgroundJobs';
 import { OwnerCampaigns } from './OwnerCampaigns';
 import { UsageProfile } from './UsageProfile';
 
 type Tab = 'home' | 'tools' | 'history' | 'profile';
-type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: string };
+type Task = { id: number; name: string; format: string; time: string; blob?: Blob; jobId?: string; jobState?: JobStatus['state'] };
 const toolIcons: Record<ToolKey, LucideIcon> = {
   pdf: FileText,
   image: Image,
@@ -35,6 +35,14 @@ const nav: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: 'history', label: 'История', icon: Clock3 },
   { tab: 'profile', label: 'Профиль', icon: UserRound },
 ];
+// Shared, type-checked Russian labels for the statuses returned by our API.
+const jobStateLabels: Record<JobStatus['state'], string> = {
+  queued: 'ожидание',
+  processing: 'обработка',
+  completed: 'завершено',
+  failed: 'ошибка',
+  cancelled: 'отменено',
+};
 const formats: { value: ImageFormat; label: string }[] = [
   { value: 'image/jpeg', label: 'JPG' },
   { value: 'image/png', label: 'PNG' },
@@ -216,7 +224,7 @@ export default function App() {
     try {
       const status = await getJobStatus(item.jobId);
       setHistory(items => items.map(entry => entry.id === item.id ? { ...entry, jobState: status.state } : entry));
-      showNotice('Статус задания: ' + ({ queued: 'ожидание', processing: 'обработка', completed: 'завершено', failed: 'ошибка', cancelled: 'отменено' }[status.state]), status.state === 'failed' ? 'alert' : 'status');
+      showNotice('Статус задания: ' + jobStateLabels[status.state], status.state === 'failed' ? 'alert' : 'status');
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Не удалось проверить статус.', 'alert');
     }
@@ -570,7 +578,7 @@ export default function App() {
         <div className="tools-grid">{tools.map(tool => <button className="tool-card" type="button" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><tool.icon size={22} strokeWidth={1.9}/><span>{tool.title}</span></button>)}</div>
       </>}
       {tab === 'tools' && <><p className="lead">Изображения обрабатываются локально. Для PDF, аудио и документов доступен серверный конвертер.</p><div className="tool-list">{tools.map(tool => <button type="button" className="tool-list-item" key={tool.key} disabled={busy} onClick={() => openTool(tool.key)}><div className="tool-list-icon"><tool.icon size={22}/></div><div><strong>{tool.title}</strong><span>{tool.subtitle}</span></div><ChevronRight size={19}/></button>)}</div></>}
-      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + item.jobState : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
+      {tab === 'history' && <><div className="section-head"><h2>Последние операции</h2><button type="button" className="text-button" disabled={!history.length} onClick={() => setHistory([])}>Очистить</button></div><p className="lead">Результаты текущей сессии. Последние небольшие файлы можно скачать повторно.</p>{history.length ? <div className="history-list">{history.map(item => <div className="history-item" key={item.id}><div className="tool-list-icon"><FileImage size={20}/></div><div><strong>{item.name}</strong><span>{item.format} · {item.time}{item.jobState ? ' · ' + jobStateLabels[item.jobState] : ''}</span>{item.jobId && <button type="button" className="job-check" onClick={() => void checkJob(item)}>Проверить статус</button>}</div>{item.blob ? <button type="button" className="history-download" onClick={() => { if (item.blob) downloadBlob(item.blob, item.name); }} aria-label={'Скачать ' + item.name}><ArrowDownToLine size={17}/></button> : <Check size={18}/>}</div>)}</div> : <div className="empty-state"><Clock3 size={30}/><strong>Пока пусто</strong><span>После конвертации результат появится здесь.</span></div>}</>}
       {tab === 'profile' && <>
         <p className="lead">Управление вашим рабочим пространством.</p>
         <div className="profile-card">
