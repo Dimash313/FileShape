@@ -19,11 +19,15 @@ and Mini App processing behavior and authorization remain unchanged.
 - `max_upload_bytes` and `max_result_bytes` refer to the **HTTP API's**
   current maximums, not mobile or bot transport limits.
 - `batch_operations[]` is a **separate route descriptor** for the actually
-  implemented `POST /api/v1/images/pdf` image-batch and
-  `POST /api/v1/pdf/merge` PDF merge endpoints. Each has its own
-  accepted input suffixes, minimum/maximum file count, and aggregate
-  20 MiB HTTP upload limit. Neither is a `/api/v1/convert` action code.
-  API ZIP creation/extraction are not implemented routes.
+  implemented `POST /api/v1/images/pdf` image-batch,
+  `POST /api/v1/pdf/merge` PDF merge, and
+  `POST /api/v1/zip/create` arbitrary-file ZIP creation endpoints.
+  Each has a reviewed input type, 2–5 or 2–8 file count limits,
+  and a 20 MiB HTTP aggregate upload budget. None is an action
+  of `/api/v1/convert`. API ZIP extraction is not implemented.
+  ZIP creation declares `input_kind: "any_file"` and
+  `accept_any_file_type: true`; its empty `input_extensions` list
+  explicitly means **no extension restriction**, not zero accepted files.
 
 The endpoint is public, returns no personal/account/payment/job metadata and
 has `Cache-Control: no-store`. It cannot start work, award credits, or
@@ -56,7 +60,7 @@ considering any deployment.
 ## Source and compatibility
 
 This manifest reuses the unmerged design from PR #87 and extends it
-with separately declared image-batch and PDF merge routes for the current
+with separately declared image-batch, PDF merge and ZIP creation routes for the current
 architecture branch. It is a description of HTTP **route availability**
 only, not a promise that files are processable, runtime resources are
 healthy, or a deployment exists. `schema_version: 1` stays stable
@@ -117,3 +121,33 @@ CI remains blocked before runner assignment (issue #101); do not merge
 this draft or deploy until full exact-head Python, Mini App and Docker
 checks and real-file smoke tests run and pass.
 
+
+## Phase F3 — bounded HTTP ZIP creation through shared archive module (draft)
+
+`POST /api/v1/zip/create` accepts 2–5 multipart `uploads` fields
+of any filename extension, within a combined 20 MiB HTTP upload budget
+and 20 MiB maximum for each file. ZIP member names are sanitized and
+de-duplicated by the existing archive service; filenames never become
+server filesystem paths. The archive contains the uploaded bytes in
+client-supplied order. The route produces `fileshape.zip`, not a
+`zip:create` action under `POST /api/v1/convert`.
+
+The server requires signed Telegram initData, applies admission,
+subscription/entitlement, rate and quota limits and uses a private
+temporary workspace. The worker accepts a strict 2–5 integer count,
+a matching list of bounded string names, and fixed
+`zip_item_0` ... `zip_item_4` files, refusing symlinks, missing or
+oversized input. ZIP creation runs under the existing resource-limited
+process using `ArchiveModulePort.create`. Success uses a bounded
+`application/zip` response and cleanup after streaming; errors and
+cancelled requests clean temporary content.
+
+The route is advertised under `batch_operations` **only** after its
+implementation is present in the same PR. The capability listing is
+not authentication or an authorization grant. Future site and
+standalone mobile clients still need separate FileShape identity
+adapters. ZIP extraction over HTTP does not yet exist.
+
+**Release gate:** Phase F3 remains a draft stacked on F2 until
+GitHub Actions issue #101 is resolved and Python, Mini App and Docker
+CI and real upload/ZIP/worker security tests run successfully.
