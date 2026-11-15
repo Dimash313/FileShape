@@ -114,6 +114,20 @@ class HttpZipCreateTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
+    def test_quota_denial_cannot_create_workspace_or_call_worker(self):
+        from fastapi import HTTPException
+        with (
+            patch.object(server, "new_job",
+                         side_effect=HTTPException(429, "quota exceeded")),
+            patch.object(server, "Workspace") as workspace,
+            patch.object(server, "run_managed_worker",
+                         new_callable=AsyncMock) as worker,
+        ):
+            response = self.upload([("a.bin", b"first"), ("b.bin", b"second")])
+            self.assertEqual(response.status_code, 429, response.text)
+            workspace.assert_not_called()
+            worker.assert_not_awaited()
+
     def test_invalid_file_count_rejected(self):
         files = [(f"f{index}.bin", b"a") for index in range(6)]
         for batch in (files[:1], files):
