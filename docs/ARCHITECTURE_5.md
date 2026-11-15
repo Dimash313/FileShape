@@ -173,3 +173,13 @@ dispatch transaction. This reduces the crash gap but **does not**
 make filesystem bytes and the dispatch database one atomic persistence
 system. It is neither shared storage nor an activated startup recovery
 protocol, and must not be injected into the current JobRuntime.
+
+
+## Phase E5 — expired processing input review (5.0.11; stacked draft)
+
+The offline [review protocol](PROCESSING_INPUT_RECOVERY.md) complements the
+unmerged 5.0.9 input handoff: a previously leased worker's missing input
+remains unclaimable until a separate bounded, lease-expiry-fenced review.
+An operator-only verified second check may fail/refund or restore readiness.
+It adds no public API, bot operation or payment switch; parent 5.0.9 and
+final-head CI must pass first, plus separate rollout/crash tests.

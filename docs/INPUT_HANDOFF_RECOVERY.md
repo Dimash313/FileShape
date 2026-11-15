@@ -121,3 +121,13 @@ failure/refund, terminal isolation and invalid payload cleanup.
 No payments, music, visuals depicting living beings, advertising,
 paid services, third-party dependencies or newly enabled file operations
 were added. AGENTS.md remains mandatory.
+
+
+## Follow-up 5.0.11 — expired processing leases (separate stacked draft PR)
+
+The opt-in [processing input review protocol](PROCESSING_INPUT_RECOVERY.md)
+can inspect missing, expired-leased **processing** inputs after a previous
+claim demoted them to suspect. A timed second observation promotes review;
+a separately trusted operator re-verifies and either restores readiness for
+a new fenced worker attempt or atomically fails/refunds the still-missing
+job. **Not live, not automatic, not a cross-store atomicity guarantee.**
