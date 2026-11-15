@@ -98,3 +98,37 @@ adapter, while preserving public `audio:info`, `audio:mp3`, `audio:ogg`,
 - No benchmark or full CI pass is claimed until the exact PR head has
   executed the required checks.
 
+## Phase B2 — Telegram bot audio adapter (draft PR; not merged)
+
+The existing Telegram handler `main.py` now calls the **same**
+`services.audio_module.audio_module` contract as the API for audio probing
+and MP3/OGG/WAV conversion. The bot still owns Telegram identity checks,
+download transport, state, quotas, workspace lifecycle, result delivery
+and local temporary-file cleanup. No new endpoint or background service.
+
+The following user-facing behavior must remain unchanged:
+- The existing `audio:info`, `audio:mp3`, `audio:ogg`, `audio:wav`
+  inline buttons and accepted file types.
+- The existing 20 MiB Telegram download and 45 MiB output caps, 10-minute
+  FFmpeg duration limit and existing conversion preset settings.
+- Audio conversion filenames `audio.mp3`, `audio.ogg`, `audio.wav`
+  for bot results; API output filenames `converted.*` remain distinct.
+- Unauthorized, unrelated and unsupported callbacks are rejected
+  **before** downloading, quota reservation or invoking the audio module.
+- The successful-delivery billing settlement and refund-on-error behavior
+  remain owned by `metered_bot_work`, not the format adapter.
+
+### Evidence and gates
+
+New bot regression tests use mock Telegram transport and a mocked module
+adapter to exercise callback routing, per-format target paths, successful
+information reads, foreign-user rejection, malformed action rejection,
+conversion errors and failed Telegram delivery with quota release.
+Existing real FFmpeg tests and API conversion matrix still need to pass on
+the final branch. These tests do **not** substitute for real Telegram
+private-chat smoke tests or a fully executed GitHub Actions run.
+
+**Follow-up:** extract a similarly minimal contract for a second format
+domain, one PR at a time; audit how all clients share format capabilities.
+Do not introduce per-format microservices or change shared storage/billing.
+
