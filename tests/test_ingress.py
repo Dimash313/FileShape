@@ -78,7 +78,7 @@ class IngressTests(unittest.TestCase):
                 self.assertEqual(status, 400)
 
     def test_reject_noncanonical_decimal_length(self):
-        for length in (b"+1", b" 1", b"1 ", b"1, 1", b"\\xb2", b""):
+        for length in (b"+1", b" 1", b"1 ", b"1, 1", bytes([0xB2]), b""):
             with self.subTest(length=length):
                 status, _ = call_guard([b"x"], [(b"content-length", length)])
                 self.assertEqual(status, 400)
