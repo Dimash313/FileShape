@@ -30,7 +30,8 @@ from services.bot_operations import (
 from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
-from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
+from services.archive_tools import MAX_BUNDLE_FILES
+from services.archive_module import archive_module
 from services.document_module import document_module
 from services.file_tools import MAX_MERGE_FILES
 from services.image_tools import IMAGE_FORMATS
@@ -523,7 +524,7 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext, actor_id
                     check_download(path)
                     inputs.append((path, item["name"]))
                 target = folder / "fileshape.zip"
-                await asyncio.to_thread(make_zip, inputs, target)
+                await asyncio.to_thread(archive_module.create, inputs, target)
                 await send_result(message, target, f"✅ ZIP из {len(items)} файлов · FileShape")
     except BotOperationQuotaExceeded:
         await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
@@ -778,7 +779,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         f"📝 TXT: строк {info['lines']}, символов {info['characters']}."
                     )
                 elif action == "zip:list":
-                    info = await asyncio.to_thread(inspect_zip, source)
+                    info = await asyncio.to_thread(archive_module.inspect, source)
                     names = "\n".join("• " + name[:100] for name in info["names"])
                     await callback.message.answer(
                         f"📦 ZIP: файлов {info['files']}, распакованный размер "
@@ -786,7 +787,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         f"{names or 'Архив пуст.'}"
                     )
                 elif action == "zip:extract":
-                    entries = await asyncio.to_thread(unpack_zip, source, folder)
+                    entries = await asyncio.to_thread(archive_module.extract, source, folder)
                     for path, name in entries:
                         await send_result(callback.message, path, f"📂 {name}")
                 else:
