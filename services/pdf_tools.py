@@ -5,7 +5,9 @@ Callers must still enforce authorization, upload limits and artifact cleanup.
 """
 from contextlib import ExitStack
 from pathlib import Path
+import os
 import re
+import tempfile
 
 from pypdf import PdfReader, PdfWriter
 
@@ -20,6 +22,29 @@ def _reader(stream) -> PdfReader:
     if not 1 <= len(reader.pages) <= MAX_PDF_PAGES:
         raise ValueError("PDF contains too many pages or is empty")
     return reader
+
+
+def _write_pdf_atomically(writer: PdfWriter, target: Path) -> None:
+    """Publish only a complete PDF; preserve the previous output on errors.
+
+    The temporary file lives in the target directory to keep os.replace
+    atomic and has restrictive permissions from NamedTemporaryFile.
+    """
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            writer.write(output)
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def pdf_page_count(source: Path) -> int:
@@ -72,8 +97,7 @@ def extract_pdf_pages(source: Path, target: Path, pages: str) -> int:
         writer = PdfWriter()
         for index in chosen:
             writer.add_page(reader.pages[index])
-        with target.open("wb") as output:
-            writer.write(output)
+        _write_pdf_atomically(writer, target)
         return len(chosen)
 
 
@@ -85,8 +109,7 @@ def rotate_pdf(source: Path, target: Path, degrees: int = 90) -> int:
         writer = PdfWriter()
         for page in reader.pages:
             writer.add_page(page).rotate(degrees)
-        with target.open("wb") as output:
-            writer.write(output)
+        _write_pdf_atomically(writer, target)
         return len(reader.pages)
 
 
@@ -104,8 +127,7 @@ def merge_pdfs(sources: list[Path], target: Path) -> int:
                 raise ValueError("Combined PDF exceeds page limit")
             for page in reader.pages:
                 writer.add_page(page)
-        with target.open("wb") as output:
-            writer.write(output)
+        _write_pdf_atomically(writer, target)
         return total
 
 
@@ -120,6 +142,5 @@ def remove_pdf_pages(source: Path, target: Path, pages: str) -> int:
         for index, page in enumerate(reader.pages):
             if index not in exclude:
                 writer.add_page(page)
-        with target.open("wb") as output:
-            writer.write(output)
+        _write_pdf_atomically(writer, target)
         return len(reader.pages) - len(exclude)
