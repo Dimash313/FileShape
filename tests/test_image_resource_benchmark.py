@@ -3,9 +3,14 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
-from benchmarks.image_resources import MAX_TOTAL_PIXELS, PROFILES, validate_profile
+from PIL import Image
+
+from benchmarks.image_resources import (
+    MAX_TOTAL_PIXELS, PROFILES, create_fixtures, validate_profile,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +30,22 @@ class ImageResourceBenchmarkTests(unittest.TestCase):
                 )
         near = validate_profile("near-cap")
         self.assertGreater(sum(w * h for _, w, h in near), 18_000_000)
+
+    def test_abstract_blocks_are_generated_inside_input_budget(self):
+        with tempfile.TemporaryDirectory() as folder:
+            sources = create_fixtures(Path(folder), "smoke", "blocks")
+            self.assertEqual(len(sources), 2)
+            with Image.open(sources[0]) as png:
+                self.assertEqual(png.format, "PNG")
+                self.assertNotEqual(png.getpixel((0, 0)), png.getpixel((20, 20)))
+            self.assertTrue(all(file.is_file() for file in sources))
+            self.assertLess(sum(file.stat().st_size for file in sources), 20 * 1024 * 1024)
+
+    def test_unrecognized_fixture_style_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(ValueError, "Invalid fixture style"):
+                create_fixtures(Path(folder), "smoke", "unknown")
+            self.assertEqual(list(Path(folder).iterdir()), [])
 
     @unittest.skipUnless(sys.platform == "linux", "Linux peak RSS and RLIMIT_AS")
     def test_isolated_smoke_report_is_measured_and_has_bounded_inputs(self):
