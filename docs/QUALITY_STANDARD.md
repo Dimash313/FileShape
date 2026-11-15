@@ -135,3 +135,44 @@ Every feature or UX PR should state:
 
 **Success criterion:** demonstrably excellent, reliable and useful software
 with no known launch blockers, not an invented numeric perfection score.
+
+## Whole-system, cross-platform and adversarial acceptance
+
+**Coverage:** Telegram bot, Telegram Mini App, public site, web application,
+Android, iOS, backend/API, workers, databases, storage, infrastructure,
+build/release pipeline, user support and business operations. This standard
+is binding for every currently shipped surface and every future surface
+when implemented; planned platforms are not falsely marked as tested.
+
+A release review must examine the **end-to-end path**, including all
+interfaces and shared dependencies, not just the changed component.
+
+| End-to-end scenario | Required evidence |
+| --- | --- |
+| Same supported file via bot and Mini App/web/mobile | Consistent output quality, limits, errors and security |
+| User identity and ownership | Cannot view, modify or retrieve another user's files/jobs or balances |
+| Operation lifecycle | Upload, admission, conversion, cancellation, retry, delivery, cleanup, restart |
+| Quota and payments | No bypass through another client; no double charge or unverified entitlement |
+| Resource and parser abuse | Bounded large/malformed/compressed inputs, subprocess and disk/memory exhaustion |
+| UI across devices | Narrow phones, touch, keyboard, accessibility, light/dark, error and offline states |
+| Storage and retention | Expiration, deletion, access revocation and logging consistent across clients |
+| Deploy and rollback | Reproducible CI, production-like smoke tests, migrations and safe recovery |
+| Ethical compliance | Every channel, dependency, asset, ad and monetization flow follows AGENTS.md |
+
+### Required challenge review
+
+For each major feature or release, assign reviewers to ask:
+1. **Where could this fail?** Explore boundary values, unsupported formats,
+   corruption, timeouts, retries and interruption.
+2. **How could this be misused?** Test permissions, malicious inputs,
+   state manipulation, abuse and quota bypass in an authorized test setup.
+3. **Where is the experience confusing?** Observe first-time users without
+   instructions; measure whether they complete the intended task.
+4. **What breaks when platforms interact?** Check consistent API contracts,
+   state, output and billing from all shipped entry points.
+5. **What has not been tested?** Record it as NOT TESTED, not PASS.
+
+**Release rule:** no critical/high findings, no required untested gates,
+no misleading capability claims. Address known weaknesses and re-run
+regression and end-to-end checks before release. Absolute perfection is
+not provable; a high bar plus continuous challenge testing is mandatory.
