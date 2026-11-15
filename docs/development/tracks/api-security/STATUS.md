@@ -4,12 +4,12 @@ Updated: 2026-11-15 UTC; verify live GitHub PR SHA/Actions and architecture depe
 Track: `api-security`.
 Current issue: [#175](https://github.com/Dimash313/FileShape/issues/175), no-network tracked credential preflight.
 Branch: `api-security/175-tracked-secret-preflight`.
-PR: pending at time of this status edit; targets `docs/independent-development-tracks` / unmerged [#112](https://github.com/Dimash313/FileShape/pull/112).
+PR: [#176](https://github.com/Dimash313/FileShape/pull/176) (Draft), targets `docs/independent-development-tracks` / unmerged [#112](https://github.com/Dimash313/FileShape/pull/112).
 
 ## Current focused change
 
-- `tools/secret_scan.py`: standard-library-only scanner on `git ls-files --cached -z`, limited to 20k paths and 2 MiB per individual nonbinary file. High-confidence Telegram, GitHub, AWS, PEM private key, OpenAI, Stripe and Slack token patterns plus tracked private credential filenames; no token bytes or excerpts are ever logged. Captures unusual binary encodings too, rejects tracked symlinks, large text and read errors.
-- `tests/test_secret_scan.py`: synthetic tokens composed dynamically, tracked vs untracked, private and example env files, invalid binary encoding, oversize text, safe path labels, symlink refusal and missing Git repo.
+- `tools/secret_scan.py`: standard-library-only scanner on `git ls-files --cached -z`, limited to 20k paths and 2 MiB per scanned file or binary prefix. High-confidence Telegram, GitHub, AWS, PEM private key, OpenAI, Stripe and Slack token patterns plus private credential filenames. Never prints matched bytes. Uses `O_NOFOLLOW` and `fstat()` pinned inode verification to reject a symlink replacement between `lstat()` and `open()`; scans the first 2 MiB of oversized media without loading entire binaries, fails closed on oversized text and read errors.
+- `tests/test_secret_scan.py`: synthetic tokens composed dynamically, tracked vs untracked, private and example env files, invalid binary encoding, oversize text, safe path labels, symlink refusal, **lstat-to-open symlink substitution**, oversized binary-prefix detection, and missing Git repo.
 - `.github/workflows/tests.yml`: new enforced `Reject accidentally committed credentials` step after Python 3.12 setup and before FFmpeg/dependency install. Existing full Python tests, Docker and Mini App are unchanged.
 - No new packages, secrets, network calls, user media, music, imagery, payments or third-party services. Scanner is **not** Git-history auditing, revocation, nor a GitHub native secret-scanning substitute. Regex positives can require manual review.
 
@@ -17,7 +17,7 @@ PR: pending at time of this status edit; targets `docs/independent-development-t
 
 ## CI and other API/security PRs
 
-GitHub Actions issue [#101](https://github.com/Dimash313/FileShape/issues/101) is closed after owner's public repository switch; hosted runners and full CI have resumed. **No exact-head CI was run/observed for #175 at status-writing time**. Require checked-out exact PR-head Python tests, Mini App tests/typecheck/build, Docker build, independent review, then owner-approved integration in correct ancestry order; no CI-green or production-ready claim before results.
+GitHub Actions issue [#101](https://github.com/Dimash313/FileShape/issues/101) is closed after owner's public repository switch; hosted runners and full CI have resumed. The initial PR #176 head `24ec2089e935304086076d51074504f3828b55ce` passed actual Python tests, Mini App tests/build and Docker plus new preflight ([Actions run #43731842965](https://github.com/Dimash313/FileShape/actions/runs/43731842965)). Further hardening commits followed (fd-pinned anti-symlink-swap check and large-media prefix test); **their new exact-head CI is pending** at status-writing time. Require latest checked-out exact PR-head Python tests, Mini App tests/typecheck/build, Docker build and independent review, then owner-approved integration in correct ancestry order; no production-ready claim.
 
 Other unmerged Drafts: #124 upload framing, #135 ZIP extraction HTTP design-only, #142 pinned published file identity, #151 privacy-safe request traces, #156 bounded queue admission, #164 bounded worker stdout, #170 child environment secret isolation stacked on #164. These had prior exact-head green CI; inspect live PRs to confirm no HEAD drift. Handoff STATUS edits on other branches must be reconciled with live issues rather than blindly overwritten.
 
