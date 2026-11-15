@@ -7,17 +7,19 @@ Status: **product proposal, not implemented or deployed**. Created 2026-11-15. T
 
 **Design now, activate later:** one server-authoritative, versioned API and conversion capability registry for all future clients. Keep Telegram-specific transport, Stars invoices, Mini App initData and 20 MiB bot download limits in ingress adapters, not conversion business logic. Build portable, testable boundaries for authentication, authorization, user identities, entitlements, billing, jobs, workers, temporary artifacts and capability discovery. Maintain backward-compatible bot routes during migration.
 
-### IhsanSoft identity and subscriptions — future-proof contract
+### Product-owned FileShape accounts and subscriptions — future-proof contract
 
-- Plan **IhsanSoft ID** as the shared identity layer across future products; FileShape is the first relying application. An internal opaque `account_id` identifies a person; provider credentials are separate verified links. Never treat Telegram ID, Google email or Apple relay email as an interchangeable primary key.
-- **Bot launch:** verify Telegram identity using current trusted bot/Mini App mechanisms. Create or map an internal account without requiring an additional signup. Do not switch production identity stores without migration and account-isolation tests.
-- **Website:** add secure Telegram sign-in and optionally verified email/Google sign-in; link existing identities only after fresh proof of control of both accounts. Prevent silent merges, account takeover, IDOR and duplicate paid entitlement grants.
-- **Mobile:** add supported Google and Apple sign-in as appropriate, plus restore purchases and store-specific account-deletion/consent flows. Do not assume Telegram Stars purchases can replace required Google Play/App Store in-app billing.
-- Keep **one FileShape Pro entitlement** per verified account, available to signed-in clients where store policies allow, while payment receipts, refund states, taxes, currencies and transaction verification remain **provider-specific**. Other IhsanSoft products have independent entitlements by default; no automatic cross-product Pro sharing.
-- Price target: **149 Telegram Stars / 30 days** in the bot. Future mobile/web local-currency prices aim for comparable customer cost, **not** guaranteed exact equality; validate local store pricing, taxes, fees and rules before approval. Existing Free and Pro server quotas in ROADMAP.md remain unchanged for bot/cloud.
-- **Mobile local operations:** product goal is no attempt-count limit and no third-party ad networks for on-device processing, while technical device limits apply. **Cloud operations** remain metered by verified entitlement and capacity; avoid unlimited server processing promises.
-- Shared settings and favorites are optional, minimal and privacy-scoped. **Do not** permanently sync user files by default. Short-lived artifacts retain strict TTL, ownership and deletion.
-- Account deletion, provider unlinking, recovery and migration require audited, abuse-resistant flows. A payment account cannot be hijacked by linking an unverified email or Telegram handle.
+**Decision: do not create IhsanSoft ID, cross-product single sign-on or a shared IhsanSoft user database.** IhsanSoft is the publisher/umbrella brand and quality standard only. FileShape, NickScope and any future products independently own their accounts, user data, permissions, subscriptions and billing. Reusable technical libraries may be shared without shared production identities or cross-product access.
+
+- **FileShape account:** one opaque internal `fileshape_account_id` per FileShape user across its Telegram bot, Mini App, website, Android and iOS. Provider credentials are separately verified linked login methods; Telegram ID, Google email and Apple relay email are not primary keys.
+- **Bot launch:** verify Telegram identity using existing trusted bot/Mini App mechanisms. Create or map a FileShape account without extra signup. Preserve current identity behavior until migration and isolation tests pass.
+- **Website:** add secure Telegram login and optionally verified email/Google login. Link identities only after proof of control of both; never merge solely by matching email.
+- **Mobile:** add appropriate Google/Apple sign-in, restore purchases and account-deletion flows. Observe each store's purchase requirements; do not assume Telegram Stars checkout can replace store billing.
+- **FileShape Pro only:** one FileShape entitlement across FileShape clients where platform policies allow. Validate receipts, refunds and grants server-side per payment provider. FileShape Pro does **not** unlock NickScope or any other IhsanSoft product.
+- Price target: **149 Telegram Stars / 30 days** in bot; future local-currency prices target comparable user cost, not guaranteed exact equality. Existing bot/cloud quotas in ROADMAP.md remain authoritative.
+- Future mobile **on-device** operations aim to have no artificial attempt-count limits and no third-party ad networks. Server/cloud processing remains resource-metered.
+- Sync minimal FileShape-specific settings and favorites only when useful and authorized. Never permanently sync user files by default; enforce strict temporary artifact ownership and deletion.
+- Account linking, recovery, unlinking, deletion and migration need audited protections against account takeover, duplicate subscription grants and cross-user data exposure.
 
 ### Deployment and engineering sequence
 
@@ -25,7 +27,7 @@ Status: **product proposal, not implemented or deployed**. Created 2026-11-15. T
 2. **Shared contract foundation (in parallel, no launch delay):** versioned capability catalog, stable account/entitlement interfaces and typed API; preserve legacy adapters, keep features behind flags. Add tests showing Telegram ingress and future HTTP clients cannot bypass auth or quotas.
 3. **Website (after bot):** build responsive frontend against the same authenticated API; signed uploads/downloads, explicit server limits, account linking and shared Pro entitlements; independently test browser session/CSRF/CORS and mobile browsers.
 4. **Android and iOS (after website, parallel if capacity permits):** native/on-device conversion adapters for suitable formats, shared cloud API for heavy jobs, platform-specific purchase validation and restore, secure identity linking and app-store compliance. No requirement to upload every local file.
-5. **IhsanSoft platform extraction (only when multiple products need it):** move shared identity/billing modules into separately deployable services only after measured need; do not prematurely build microservices or mix NickScope and FileShape product data.
+5. **IhsanSoft platform extraction (only when multiple products need it):** reuse generic, stateless technical libraries only when valuable; do not centralize product identities, billing or user data, and do not prematurely build microservices.
 
 **Release discipline:** every implementation milestone uses a separate branch and PR; green final-head Python, Mini App and Docker checks; post-merge main CI; realistic load tests and owner approval for production rollout. This is an architectural commitment, **not** a claim that Google/Apple login, unified subscription or mobile apps already exist.
 
