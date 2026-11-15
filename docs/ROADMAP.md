@@ -75,3 +75,15 @@ The usage day resets at **00:00 UTC**; successful jobs are charged once, invalid
 ## FileShape 5.0 — architecture rebuild (proposed; staged)
 
 Architecture migration design and mandatory invariants: [ARCHITECTURE_5.md](ARCHITECTURE_5.md). This is a **proposal**, not a deployed or benchmarked architecture. Implement contract-tested boundaries before replacing SQLite or in-process execution. Keep existing quotas, owner isolation, file cleanup and disabled Stars checkout intact. Proceed with measured phases A–F and separate PRs; do not claim 100,000 concurrent conversions without representative load tests. The earlier 4.26 premium UI milestone remains planned, with sequencing to be agreed after the architecture foundation review.
+
+
+## Audio Studio increment 5.0.12 (draft branch, not released)
+
+The bot-only audio trim is the first scoped, opt-in part of the planned
+4.27+ editor work. It adds a strict timestamp form and bounded FFmpeg MP3
+export in the existing Telegram bot, leaving Mini App, API conversions,
+metadata/tag editor, audio joining and video extraction unchanged. The
+[documentation](BOT_AUDIO_TRIM.md) records limitations and pending verification.
+This PR must not merge without a working CI runner, exact-head Python and
+Mini App/Docker checks and post-merge CI. All other feature and Stars
+release gates remain unchanged.
