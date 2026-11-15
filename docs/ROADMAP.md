@@ -301,3 +301,27 @@ All stacked architecture changes remain draft/unmerged due to
 GitHub Actions runner pre-start failure (issue #101). Full
 exact-head Python, frontend and Docker CI plus integration tests
 must pass before release.
+
+
+### Phase F2 — authenticated bounded HTTP PDF merge (draft)
+
+A dedicated `POST /api/v1/pdf/merge` multi-file HTTP route now calls the
+existing `PdfModulePort.merge` implementation through the isolated
+worker. Only 2–5 PDF uploads are accepted, with a shared 20 MiB **HTTP**
+aggregate size budget (the bot's batch limit is different), a 45 MiB
+result bound, the established PDF page limit, per-user admission, quota
+settlement, a temporary workspace and orphan cleanup. Source filename
+suffixes are checked before dispatch and bytes are validated in the
+worker. Inputs are processed in upload order, and successful responses
+return `merged.pdf` with no-store/nosniff headers.
+
+`GET /api/v1/capabilities` lists the route as a separate batch
+operation, not a `/api/v1/convert` action. The Telegram bot's PDF merge
+is unchanged. Tests cover order, count bounds, invalid/missing PDFs,
+spoofed files, encrypted/over-page PDFs, upload limit, temp cleanup and
+worker payload validation. No ZIP create/extract HTTP endpoint, new
+identity system, payment activation or outside services introduced.
+
+CI is still blocked before runner allocation (issue #101). This
+stacked PR must stay draft until exact-head tests run and pass.
+
