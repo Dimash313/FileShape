@@ -104,7 +104,7 @@ class IntakeDispatchStore(FencedDispatchStore):
                LEFT JOIN input_handoff h ON h.job_id=d.job_id
                WHERE j.state='queued' AND d.state='queued'
                  AND (h.state IS NULL OR h.state IN ('suspect','review'))
-               ORDER BY d.created_at,d.job_id LIMIT ?""",
+               ORDER BY COALESCE(h.updated_at,0),d.created_at,d.job_id LIMIT ?""",
             (limit,),
         ).fetchall()
         result = []
@@ -338,7 +338,18 @@ class InputHandoff:
             # Never substitute this upload for the accepted job's original
             # reference. That would break idempotency and ownership.
             self.blobs.delete(owner_id, ref)
-        self.repair_one(owner_id, envelope, now=timestamp)
+            # Replayed requests must remain idempotent even after the
+            # original job has started or reached a terminal state.
+            if self.dispatch.get(envelope.job_id, owner_id).state != "queued":
+                return envelope, False
+        try:
+            self.repair_one(owner_id, envelope, now=timestamp)
+        except JobNotFound:
+            # A concurrent worker/cancellation may have advanced a queued
+            # duplicate after we inspected it. Do not resurrect the job.
+            if not created and self.dispatch.get(envelope.job_id, owner_id).state != "queued":
+                return envelope, False
+            raise
         return envelope, created
 
     def repair_one(
