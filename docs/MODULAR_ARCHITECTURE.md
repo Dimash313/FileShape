@@ -272,3 +272,54 @@ cycles and remove the compatibility facade only after auditing callers.
 `services/image_tools.py`, retain legacy aliases and introduce an image
 domain port, separately and under equivalent compatibility tests.
 
+
+## Phase C4 — physical image extraction and shared API image port (draft)
+
+Image processing and PDF parsing are now physically separate:
+
+- `services.image_tools` **owns** `_open_image`, `convert_image`,
+  `compress_image`, `MAX_IMAGE_PIXELS`, output presets and decoded-image
+  protection. The original transformation algorithms and presets are not
+  redesigned in this phase.
+- `services.pdf_tools` continues to own PDF parsing and page editing;
+  image conversion *to* a PDF uses PIL's PDF output capability and does
+  not call PDF page-editing functions.
+- `services.file_tools` has **no format algorithm implementations**:
+  it re-exports both domains' original public functions and constants for
+  existing callers. It is a transitional compatibility facade.
+- `services.image_bundle` imports the image decoder directly from
+  `services.image_tools` rather than the legacy facade.
+- `services.image_module` declares a typed `ImageModulePort` with
+  `convert(source,target,fmt)`, `compress(source,target)` and
+  `bundle_as_pdf(sources,target)`. The existing image and image-bundle
+  implementations remain behind its in-process adapter.
+- `api.server._transform` uses the image port for all existing
+  `img:JPEG`, `img:PNG`, `img:WEBP`, `img:PDF` and
+  `img:compress` actions. `api.worker` uses it for the existing
+  multi-image-to-PDF batch route.
+- The Telegram bot's image callbacks still import the legacy
+  `services.file_tools` exports. They are intentionally **not**
+  migrated in this PR; that requires its own handler/usage regression tests.
+
+**Compatibility:** public API action strings, input classification and
+validation, result filenames, image-quality settings, resource caps,
+authentication, user isolation, quota accounting, and temp-file lifecycle
+are unchanged. The adapter does not itself authorize or account for work.
+
+**Regression evidence added** in image module contract, image extraction,
+image worker and import-boundary test files: actual generated images/PDFs,
+wrong/unsupported inputs, output size/format, transparency handling, call
+ordering, dependency isolation and unchanged routing. Existing bot/API
+integration, malformed-file, image-bundle and conversion-matrix tests must
+continue to pass. Test mocks must patch `services.image_tools` or the
+port rather than expecting a monkeypatch of a legacy re-export to reach the
+new implementation.
+
+**Performance:** this adds in-process Python function dispatch, not
+per-format network calls or microservices. No guaranteed zero overhead,
+latency improvement or production capacity is claimed until benchmarks.
+
+**Next:** a small PR to switch bot image callbacks to the same image port,
+then continue to independent document and archive modules. Do not
+advertise a Video API until its full processing and security chain ships.
+
