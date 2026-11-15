@@ -2,6 +2,10 @@
 
 > Status: living engineering plan, reviewed 2026-11-14. **Not** a public launch, payment enablement, deployment or production-readiness declaration. Every change requires its own branch, PR, green checks on the final head commit and a successful push-triggered main CI run after merging.
 
+## Launch approach — owner decision
+
+**No beta or early-access phase.** Follow [NO_BETA_LAUNCH_POLICY.md](NO_BETA_LAUNCH_POLICY.md). Build and integrate with rigorous CI, automated/simulated end-to-end testing, and operational release gates; then launch publicly only with owner authorization. Real Telegram/Android user testing and production observations occur after launch, not as a mandatory prelaunch beta. Never mark unexecuted tests as passed, and never defer known reproducible safety or correctness defects.
+
 ## Source of truth and agreed business rules
 
 This document supersedes **proposed** prices, quotas and packaging in [BOT_PRODUCT_ROADMAP.md](BOT_PRODUCT_ROADMAP.md) where they disagree. Keep [ROAD_TO_5.md](ROAD_TO_5.md) as historical engineering gates, not an assertion that outdated pending milestones are still current. Source code and merged PRs determine what is actually implemented.
