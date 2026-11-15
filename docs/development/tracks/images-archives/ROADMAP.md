@@ -44,3 +44,11 @@ Work through Issues and independent PRs. New chat must inspect live PR heads and
 - [Issue #158](https://github.com/Dimash313/FileShape/issues/158) / [Draft PR #159](https://github.com/Dimash313/FileShape/pull/159): centralize JPEG/PNG/WebP **actual input encoding** and single-frame validation in the image-domain header path; reuse it during all-image PDF preflight. Reject disguised GIF/TIFF and animated WebP/APNG before pixel decoding. Preserve quotas, bounded image size, output formats, EXIF/alpha handling, and atomic cleanup.
 - Locally reconstructed module tests: **29/29 passed** (7 new + 22 prior) across input preflight, PDF bundle creation and atomic publication on Python 3.13.5/Pillow 12.3.0/pypdf 5.9.0, not full repo or exact-head GitHub CI. Issue #101 still blocks CI evidence.
 - Stack: #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture parents. Review/merge in dependency order after actual CI. No new platforms, assets, providers or APIs.
+
+
+## Pinned image input descriptors — active stacked Draft
+
+- [Issue #161](https://github.com/Dimash313/FileShape/issues/161) / [Draft PR #162](https://github.com/Dimash313/FileShape/pull/162): address the regular-file pathname replacement race between batch header validation and later pixel decoding. Hold each regular input open from admission to decode with `O_NOFOLLOW` / nonblocking and `fstat` checks where supported, keep 2–8 / 20 MiB / 22m pixel safeguards, source format/frame validation and atomic PDF publication.
+- Regression: replace an already-approved pathname with a disguised GIF (another regular file) during the header pass; PDF must still use the original opened image and retain page geometry. Check FIFO, symlink, corrupt header and descriptor cleanup.
+- **Actual local reconstructed-domain regression:** 35/35 Python tests passed (6 new + 29 existing). This is not full-repo exact-head green CI. GitHub runner issue #101 blocks release.
+- Stack: #162 → #159 → #153 → #144 → #137 → #128 → #112 → #111 → #109 → architecture parents. Keep Draft and merge in dependency order after real CI/review. In-place inode modifications and platforms without `O_NOFOLLOW` need separate threat-model review; do not overclaim comprehensive TOCTOU prevention.
