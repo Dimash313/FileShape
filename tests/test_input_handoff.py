@@ -330,6 +330,54 @@ class InputHandoffTests(unittest.TestCase):
             # lease with lost input for manual recovery rather than claiming
             # a job that cannot read its authoritative input bytes.
 
+    def test_four_broken_expired_leases_cannot_starve_healthy_queue(self):
+        with IntakeDispatchStore(self.db_path) as dispatch, \
+                PrivateBlobStore(self.blob_root) as blobs:
+            intake = InputHandoff(dispatch, blobs)
+            stale = []
+            for i in range(4):
+                owner = 1000 + i
+                envelope, created = intake.submit(
+                    owner, f"{i + 1:064x}", "b" * 64, PDF,
+                    action="pdf:extract", suffix=".pdf", pages="1",
+                    now=self.now + i * 0.1,
+                )
+                self.assertTrue(created)
+                lease = dispatch.claim_next(
+                    blobs, now=self.now + 1 + i * 0.1, lease_seconds=2,
+                )
+                self.assertEqual(lease.envelope.job_id, envelope.job_id)
+                stale.append((owner, envelope))
+            for owner, envelope in stale:
+                self.assertTrue(blobs.delete(
+                    owner, envelope.input_ref, job_id=envelope.job_id,
+                ))
+
+            healthy, created = intake.submit(
+                2000, "f" * 64, "c" * 64, PDF,
+                action="pdf:extract", suffix=".pdf", pages="1",
+                now=self.now + 5,
+            )
+            self.assertTrue(created)
+            # First bounded scan finds four invalid expired leases and
+            # demotes them to suspect, avoiding permanent head-of-line
+            # starvation of healthy work behind them.
+            self.assertIsNone(dispatch.claim_next(blobs, now=self.now + 6))
+            for owner, envelope in stale:
+                row = dispatch._db.execute(
+                    "SELECT state FROM input_handoff WHERE job_id=?",
+                    (envelope.job_id,),
+                ).fetchone()
+                self.assertEqual(row[0], "suspect")
+                self.assertEqual(
+                    dispatch.get(envelope.job_id, owner).state, "processing",
+                )
+            lease = dispatch.claim_next(blobs, now=self.now + 7)
+            self.assertIsNotNone(lease)
+            self.assertEqual(lease.envelope.job_id, healthy.job_id)
+            self.assertEqual(dispatch.get(healthy.job_id, 2000).state,
+                             "processing")
+
     def test_expired_ready_input_cannot_be_claimed_and_enters_review(self):
         with IntakeDispatchStore(self.db_path) as dispatch, \
                 PrivateBlobStore(self.blob_root) as blobs:
