@@ -106,11 +106,11 @@ def home_keyboard() -> InlineKeyboardMarkup:
 
 def home_text() -> str:
     return (
-        "📁 FileShape\\n"
-        "Всё для работы с файлами в Telegram.\\n\\n"
-        "Конвертируй, сжимай и редактируй файлы.\\n"
-        "Отправь файл в этот чат или открой инструменты ниже.\\n\\n"
-        "📎 Файл до 20 МБ · /cancel — отменить операцию.\\n"
+        "📁 FileShape\n"
+        "Всё для работы с файлами в Telegram.\n\n"
+        "Конвертируй, сжимай и редактируй файлы.\n"
+        "Отправь файл в этот чат или открой инструменты ниже.\n\n"
+        "📎 Файл до 20 МБ · /cancel — отменить операцию.\n"
         "Для возврата в меню: /menu."
     )
 
@@ -230,7 +230,7 @@ async def send_result(message: Message, path: Path, caption: str = "✅ Гото
     return await message.answer_document(
         FSInputFile(path),
         caption="FileShape · " + caption + (
-            "" if can_reprocess else "\\n⚠️ Результат больше 20 МБ: повторная обработка недоступна."
+            "" if can_reprocess else "\n⚠️ Результат больше 20 МБ: повторная обработка недоступна."
         ),
         reply_markup=file_menu(kind) if can_reprocess else None,
     )
@@ -300,8 +300,8 @@ async def start(message: Message, state: FSMContext):
 @router.message(Command("help", "tools"))
 async def help_message(message: Message):
     await message.answer(
-        "🧰 FileShape · Инструменты\\n\\n"
-        "Выбери раздел или просто отправь файл.\\n"
+        "🧰 FileShape · Инструменты\n\n"
+        "Выбери раздел или просто отправь файл.\n"
         "Для отмены текущей операции: /cancel.",
         reply_markup=navigation_keyboard(),
     )
@@ -350,9 +350,9 @@ async def profile_message(message: Message, bot: Bot):
 @router.message(Command("plans"))
 async def plans_message(message: Message):
     await message.answer(
-        "💎 Тарифы FileShape\\n\\n"
-        "Free: 10 успешных операций в сутки UTC, один активный запрос.\\n"
-        "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\\n"
+        "💎 Тарифы FileShape\n\n"
+        "Free: 10 успешных операций в сутки UTC, один активный запрос.\n"
+        "Pro: 100 в сутки и до трёх одновременных — после активации тарифа.\n"
         "Покупка Pro и пакетов через Telegram Stars пока недоступна. "
         "Лимит размера файла сейчас — 20 МБ.",
         reply_markup=back_keyboard(),
@@ -372,10 +372,10 @@ async def navigate(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await state.clear()
         text, markup = home_text(), home_keyboard()
     elif section == "tools":
-        text, markup = "🧰 Инструменты FileShape\\n\\nВыбери категорию или отправь файл.", navigation_keyboard()
+        text, markup = "🧰 Инструменты FileShape\n\nВыбери категорию или отправь файл.", navigation_keyboard()
     elif section in NAV_CATEGORIES:
         title, description = NAV_CATEGORIES[section]
-        text = f"{title}\\n\\n{description}\\n\\nОтправь файл в этот чат — бот покажет доступные действия."
+        text = f"{title}\n\n{description}\n\nОтправь файл в этот чат — бот покажет доступные действия."
         markup = back_keyboard()
     elif section == "profile":
         # Answer immediately before a potentially slow internal API request.
@@ -384,15 +384,15 @@ async def navigate(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await callback.message.edit_text(text, reply_markup=back_keyboard())
         return
     elif section == "plans":
-        text = ("💎 Тарифы FileShape\\n\\n"
+        text = ("💎 Тарифы FileShape\n\n"
                 "Free: 10 операций в сутки UTC. Pro: 100 при активной подписке. "
                 "Оплата Telegram Stars и покупка пакетов пока недоступны.")
         markup = back_keyboard()
     elif section == "help":
-        text = ("❔ Как пользоваться\\n\\n"
-                "1. Отправь PDF, изображение, аудио, DOCX, TXT или ZIP.\\n"
-                "2. Выбери действие под файлом.\\n"
-                "3. Получи результат в этом чате.\\n\\n"
+        text = ("❔ Как пользоваться\n\n"
+                "1. Отправь PDF, изображение, аудио, DOCX, TXT или ZIP.\n"
+                "2. Выбери действие под файлом.\n"
+                "3. Получи результат в этом чате.\n\n"
                 "Отмена: /cancel · Главное меню: /menu.")
         markup = back_keyboard()
     else:
