@@ -2,6 +2,10 @@
 
 These instructions apply to **all work in this repository**: code, dependencies, UX, text, marketing, integrations, examples, tests, and future features. Read this file before making changes, and preserve it in subsequent work.
 
+## Public launch and verification strategy
+
+The owner requires **no beta, early access, pilot, or staged user rollout** before the first public release. Follow [docs/NO_BETA_LAUNCH_POLICY.md](docs/NO_BETA_LAUNCH_POLICY.md): build and integrate with full CI, mock-based integration/security/load tests and operational safeguards; do not treat unavailable live-user testing as a blanket PR blocker or falsely claim it ran. Fix reproducible defects before launch. The first user-facing release requires owner approval.
+
 ## Project owner's religious and ethical requirements
 
 The project owner follows **Salafi Islam** and requires FileShape to be developed and operated within **halal** boundaries. Do not knowingly introduce haram (religiously prohibited) or doubtful/shubuhat features, content, revenue models, or partnerships. **This is a general, project-wide prohibition: the examples below are NOT an exhaustive list. An unlisted haram or doubtful activity is equally excluded.**
