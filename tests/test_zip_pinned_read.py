@@ -60,6 +60,18 @@ class PinnedZipReaderTests(unittest.TestCase):
         self.assertFalse(list(self.output.iterdir()))
         self.assert_no_stage()
 
+    def test_zip_creation_rejects_directory_input_before_fdopen(self):
+        other = self.root / "other.txt"
+        other.write_bytes(b"synthetic file")
+        target = self.root / "result.zip"
+        with self.assertRaisesRegex(ValueError, "недоступен"):
+            archive_tools.make_zip(
+                [(self.root, "directory"), (other, "other.txt")],
+                target,
+            )
+        self.assertFalse(target.exists())
+        self.assertEqual(list(self.root.glob(".fileshape_zip_*.zip")), [])
+
     def test_extract_opens_the_approved_source_only_once(self):
         original_open = archive_tools._open_zip_source
         opened = []
