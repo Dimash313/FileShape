@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from services.archive_tools import inspect_zip, make_zip, unpack_zip
 
@@ -27,6 +28,70 @@ class ZipToolsTests(unittest.TestCase):
         results = unpack_zip(output, self.folder)
         self.assertEqual([path.read_text() for path, _ in results], ["hello", "world"])
         self.assertTrue(all(path.parent == self.folder for path, _ in results))
+
+    def test_self_created_highly_compressed_zip_is_still_readable(self):
+        # Highly repetitive data used to produce a ZIP our reader rejected.
+        repeated = b"A" * 400_000
+        first = self.folder / "repeated.txt"
+        first.write_bytes(repeated)
+        ordinary = b"short ordinary payload" * 200
+        second = self.folder / "normal.bin"
+        second.write_bytes(ordinary)
+        output = self.folder / "readable.zip"
+        self.assertEqual(make_zip([
+            (first, "nested/report.txt"),
+            (second, "another/report.txt"),
+        ], output), 2)
+        with zipfile.ZipFile(output) as archive:
+            self.assertEqual(archive.namelist(), ["report.txt", "report_2.txt"])
+            self.assertEqual(archive.getinfo("report.txt").compress_type,
+                             zipfile.ZIP_STORED)
+            self.assertEqual(archive.getinfo("report_2.txt").compress_type,
+                             zipfile.ZIP_DEFLATED)
+        self.assertEqual(inspect_zip(output)["bytes"],
+                         len(repeated) + len(ordinary))
+        entries = unpack_zip(output, self.folder)
+        self.assertEqual([file.read_bytes() for file, _ in entries],
+                         [repeated, ordinary])
+        self.assertEqual(list(self.folder.glob(".fileshape_zip_*.zip")), [])
+
+    def test_total_input_limit_prevents_unreadable_output_and_preserves_target(self):
+        sources = []
+        for index in range(3):
+            path = self.folder / f"large_{index}.bin"
+            # Sparse files: only metadata is needed to reject an oversized
+            # archive, without allocating or reading 60 MiB of content.
+            with path.open("wb") as stream:
+                stream.truncate(20 * 1024 * 1024)
+            sources.append((path, f"large_{index}.bin"))
+        target = self.folder / "original.zip"
+        target.write_bytes(b"do not overwrite on rejection")
+        with self.assertRaisesRegex(ValueError, "лимит"):
+            make_zip(sources, target)
+        self.assertEqual(target.read_bytes(), b"do not overwrite on rejection")
+        self.assertEqual(list(self.folder.glob(".fileshape_zip_*.zip")), [])
+
+    def test_failure_during_zip_write_preserves_previous_target(self):
+        first = self.folder / "one.txt"
+        second = self.folder / "two.txt"
+        first.write_text("one", encoding="utf-8")
+        second.write_text("two", encoding="utf-8")
+        target = self.folder / "old.zip"
+        target.write_bytes(b"existing output must remain unchanged")
+        with patch.object(zipfile.ZipFile, "write", side_effect=OSError("disk failed")):
+            with self.assertRaisesRegex(OSError, "disk failed"):
+                make_zip([(first, "one.txt"), (second, "two.txt")], target)
+        self.assertEqual(target.read_bytes(), b"existing output must remain unchanged")
+        self.assertEqual(list(self.folder.glob(".fileshape_zip_*.zip")), [])
+
+    def test_external_high_ratio_zip_is_still_rejected_by_inspect_and_unpack(self):
+        external = self.folder / "external_bomb.zip"
+        with zipfile.ZipFile(external, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("bomb.txt", b"Z" * 400_000)
+        with self.assertRaisesRegex(ValueError, "сжатие"):
+            inspect_zip(external)
+        with self.assertRaisesRegex(ValueError, "сжатие"):
+            unpack_zip(external, self.folder)
 
     def test_nested_archive_names_are_flattened(self):
         output = self.folder / "nested.zip"
