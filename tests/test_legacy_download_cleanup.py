@@ -2,13 +2,19 @@
 import asyncio
 import os
 from pathlib import Path
+from io import BytesIO
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from starlette.background import BackgroundTask
+from starlette.datastructures import UploadFile
+from fastapi import HTTPException
 
 from api.server import BoundedFileResponse, _legacy_result_preflight, MAX_RESULT_BYTES
+from api import server
+from api.admission import AdmissionQueue
+from api.jobs import JobRegistry
 from api.workspaces import Workspace
 
 
@@ -131,6 +137,46 @@ class LegacyDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as failure:
                 _legacy_result_preflight(target, "Результат недоступен")
             self.assertEqual(failure.exception.status_code, 413)
+
+    async def test_swap_rejected_before_job_marked_completed(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "api.workspaces.workspace_root", return_value=Path(directory)
+        ):
+            secret = Path(directory) / "secret-outside-workspace"
+            secret.write_bytes(b"not-for-download")
+            registry = JobRegistry()
+            original = server.BoundedFileResponse
+
+            async def produce_result(request):
+                (Path(request["work"]) / "converted.docx").write_bytes(b"safe result")
+                return {"ok": True, "filename": "converted.docx", "bytes": 11}
+
+            def replace_at_response_creation(target, **kwargs):
+                # The route's lstat preflight has already passed; simulate a
+                # compromised worker swapping its output just before FD pin.
+                target.unlink()
+                target.symlink_to(secret)
+                return original(target, **kwargs)
+
+            with (
+                patch.object(server, "jobs", registry),
+                patch.object(server, "job_runtime", None),
+                patch.object(server, "admission", AdmissionQueue()),
+                patch.object(server, "slots", asyncio.Semaphore(1)),
+                patch.object(server, "enforce_rate_limit", new_callable=AsyncMock),
+                patch.object(server, "run_managed_worker", side_effect=produce_result),
+                patch.object(server, "BoundedFileResponse", side_effect=replace_at_response_creation),
+            ):
+                upload = UploadFile(file=BytesIO(b"plain text"), filename="input.txt")
+                with self.assertRaises(HTTPException) as raised:
+                    await server.convert(
+                        upload=upload, action="txt:docx", pages="", user_id=42
+                    )
+                self.assertEqual(raised.exception.status_code, 422)
+                self.assertEqual(
+                    [item.state for _, item in registry._jobs.values()], ["failed"]
+                )
+            self.assertEqual(secret.read_bytes(), b"not-for-download")
 
     async def test_range_and_head_keep_existing_file_response_contract(self):
         for method, headers, expected_status, expected_body in (
