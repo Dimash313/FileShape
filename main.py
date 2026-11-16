@@ -28,25 +28,21 @@ from services.bot_operations import (
     reserve_bot_operation, settle_bot_operation, fetch_bot_usage,
 )
 from services.campaign_bridge import forward_campaign_join
-from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
-from services.archive_tools import MAX_BUNDLE_FILES, inspect_zip, make_zip, unpack_zip
-from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
-from services.file_tools import (
-    MAX_MERGE_FILES,
-    compress_image,
-    convert_image,
-    extract_pdf_pages,
-    merge_pdfs,
-    pdf_page_count,
-    remove_pdf_pages,
-    rotate_pdf,
-)
+from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
+from services.audio_module import audio_module
+from services.archive_tools import MAX_BUNDLE_FILES, MAX_UNCOMPRESSED_TOTAL
+from services.archive_module import archive_module
+from services.document_module import document_module
+from services.file_tools import MAX_MERGE_FILES
+from services.image_tools import IMAGE_FORMATS
+from services.image_module import image_module
+from services.pdf_module import pdf_module
 
 router = Router()
 logger = logging.getLogger(__name__)
 MAX_BYTES = 20 * 1024 * 1024  # Standard Bot API download limit.
 MAX_MERGE_BYTES = 60 * 1024 * 1024
-MAX_ZIP_BUNDLE_BYTES = 60 * 1024 * 1024
+MAX_ZIP_BUNDLE_BYTES = MAX_UNCOMPRESSED_TOTAL
 MAX_OUTPUT_BYTES = 45 * 1024 * 1024
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 processing_slots = asyncio.Semaphore(3)
@@ -436,7 +432,7 @@ async def run_merge(message: Message, bot: Bot, state: FSMContext, actor_id: int
                     check_download(path)
                     paths.append(path)
                 target = folder / "merged.pdf"
-                pages = await asyncio.to_thread(merge_pdfs, paths, target)
+                pages = await asyncio.to_thread(pdf_module.merge, paths, target)
                 await send_result(message, target, f"✅ {len(paths)} PDF · {pages} стр. | FileShape")
     except BotOperationQuotaExceeded:
         await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
@@ -528,7 +524,7 @@ async def run_zip_bundle(message: Message, bot: Bot, state: FSMContext, actor_id
                     check_download(path)
                     inputs.append((path, item["name"]))
                 target = folder / "fileshape.zip"
-                await asyncio.to_thread(make_zip, inputs, target)
+                await asyncio.to_thread(archive_module.create, inputs, target)
                 await send_result(message, target, f"✅ ZIP из {len(items)} файлов · FileShape")
     except BotOperationQuotaExceeded:
         await message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
@@ -578,7 +574,7 @@ async def collect_zip_file(message: Message, state: FSMContext):
         await message.answer("Максимум 5 файлов. Нажми «Готово».")
         return
     if sum(item["size"] for item in items) + size > MAX_ZIP_BUNDLE_BYTES:
-        await message.answer("Суммарный лимит — 60 МБ. Выбери файл поменьше.")
+        await message.answer("Суммарный лимит — 50 МБ. Выбери файл поменьше.")
         return
     items.append({
         "file_id": file.file_id,
@@ -623,10 +619,10 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
                 target = folder / "pages.pdf"
                 if data.get("pdf_mode") == "pdf:remove":
                     target = folder / "without_pages.pdf"
-                    count = await asyncio.to_thread(remove_pdf_pages, source, target, spec)
+                    count = await asyncio.to_thread(pdf_module.remove, source, target, spec)
                     await send_result(message, target, f"✅ Осталось страниц: {count} | FileShape")
                 else:
-                    count = await asyncio.to_thread(extract_pdf_pages, source, target, spec)
+                    count = await asyncio.to_thread(pdf_module.extract, source, target, spec)
                     await send_result(message, target, f"✅ Извлечено страниц: {count} | FileShape")
         await state.clear()
     except BotOperationQuotaExceeded:
@@ -762,28 +758,28 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                 await bot.download(file, destination=source)
                 check_download(source)
                 if action == "pdf:info":
-                    count = await asyncio.to_thread(pdf_page_count, source)
+                    count = await asyncio.to_thread(pdf_module.count_pages, source)
                     await callback.message.answer(f"📄 В PDF страниц: {count}.")
                 elif action == "audio:info":
-                    info = await asyncio.to_thread(probe_audio, source)
+                    info = await asyncio.to_thread(audio_module.probe, source)
                     await callback.message.answer(
                         f"🎧 Аудио · {info['seconds']:.1f} сек. · "
                         f"кодек {info['codec']}\n"
                         "Конвертация доступна для записей до 10 минут."
                     )
                 elif action == "docx:info":
-                    _text, info = await asyncio.to_thread(read_docx_text, source)
+                    info = await asyncio.to_thread(document_module.inspect_docx, source)
                     await callback.message.answer(
                         f"📝 DOCX: абзацев {info['paragraphs']}, таблиц {info['tables']}, "
                         f"символов {info['characters']}."
                     )
                 elif action == "txt:info":
-                    info = await asyncio.to_thread(txt_info, source)
+                    info = await asyncio.to_thread(document_module.inspect_text, source)
                     await callback.message.answer(
                         f"📝 TXT: строк {info['lines']}, символов {info['characters']}."
                     )
                 elif action == "zip:list":
-                    info = await asyncio.to_thread(inspect_zip, source)
+                    info = await asyncio.to_thread(archive_module.inspect, source)
                     names = "\n".join("• " + name[:100] for name in info["names"])
                     await callback.message.answer(
                         f"📦 ZIP: файлов {info['files']}, распакованный размер "
@@ -791,34 +787,34 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
                         f"{names or 'Архив пуст.'}"
                     )
                 elif action == "zip:extract":
-                    entries = await asyncio.to_thread(unpack_zip, source, folder)
+                    entries = await asyncio.to_thread(archive_module.extract, source, folder)
                     for path, name in entries:
                         await send_result(callback.message, path, f"📂 {name}")
                 else:
                     if action == "pdf:first":
                         target = folder / "first_page.pdf"
-                        await asyncio.to_thread(extract_pdf_pages, source, target, "1")
+                        await asyncio.to_thread(pdf_module.extract, source, target, "1")
                     elif action == "pdf:rotate":
                         target = folder / "rotated.pdf"
-                        await asyncio.to_thread(rotate_pdf, source, target, 90)
+                        await asyncio.to_thread(pdf_module.rotate, source, target, 90)
                     elif action == "img:compress":
                         target = folder / "optimized.webp"
-                        await asyncio.to_thread(compress_image, source, target)
+                        await asyncio.to_thread(image_module.compress, source, target)
                     elif action.startswith("audio:"):
                         fmt = action.split(":", 1)[1]
                         target = folder / ("audio" + OUTPUT_FORMATS[fmt])
-                        await asyncio.to_thread(convert_audio, source, target, fmt)
+                        await asyncio.to_thread(audio_module.convert, source, target, fmt)
                     elif action == "docx:txt":
                         target = folder / "document.txt"
-                        await asyncio.to_thread(docx_to_txt, source, target)
+                        await asyncio.to_thread(document_module.to_text, source, target)
                     elif action == "txt:docx":
                         target = folder / "document.docx"
-                        await asyncio.to_thread(txt_to_docx, source, target)
+                        await asyncio.to_thread(document_module.to_docx, source, target)
                     else:
                         fmt = action.split(":", 1)[1]
-                        ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "PDF": ".pdf"}[fmt]
+                        ext = IMAGE_FORMATS[fmt]
                         target = folder / ("converted" + ext)
-                        await asyncio.to_thread(convert_image, source, target, fmt)
+                        await asyncio.to_thread(image_module.convert, source, target, fmt)
                     await send_result(callback.message, target)
     except BotOperationQuotaExceeded:
         await callback.message.answer("Лимит операций исчерпан или предыдущая операция ещё выполняется.")
