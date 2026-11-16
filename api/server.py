@@ -28,6 +28,7 @@ from starlette.background import BackgroundTask
 
 from api.artifacts import ArtifactStore, ArtifactUnavailable
 from api.conversion_catalog import IMAGE_EXTENSIONS, SUPPORTED, file_kind
+from api.capability_manifest import build_http_capabilities
 from api.background_jobs import BackgroundJobs
 from api.admission import AdmissionQueue, QueueClosed, QueueFull, QueueTimeout
 from api.auth import InvalidInitData, verify_init_data
@@ -46,15 +47,17 @@ from api.readiness import readiness_status
 from api.worker_runner import WorkerFailed, WorkerTimeout, run_worker
 from api.workspaces import Workspace, OrphanCleaner, cleanup_orphans
 from config import get_settings
-from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS, convert_audio, probe_audio
-from services.archive_tools import inspect_zip
-from services.document_tools import docx_to_txt, read_docx_text, txt_info, txt_to_docx
-from services.image_bundle import MIN_IMAGES, MAX_IMAGES, images_to_pdf
+from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
+from services.audio_module import audio_module
+from services.archive_module import archive_module
+from services.document_module import document_module
+from services.image_bundle import MIN_IMAGES, MAX_IMAGES
 from services.upload_validation import validate_upload
-from services.file_tools import (
-    IMAGE_FORMATS, compress_image, convert_image, extract_pdf_pages,
-    pdf_page_count, remove_pdf_pages, rotate_pdf,
-)
+from services.image_tools import IMAGE_FORMATS
+from services.image_module import image_module
+from services.pdf_module import pdf_module
+from services.pdf_tools import MAX_MERGE_FILES
+from services.archive_tools import MAX_BUNDLE_FILES, MAX_MEMBER_BYTES
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_BYTES = 20 * 1024 * 1024
@@ -108,7 +111,7 @@ join_replay = JoinReplayGuard()
 api.add_middleware(
     UploadIngressGuard,
     max_bytes=MAX_REQUEST_BYTES,
-    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/jobs"},
+    paths={"/api/v1/convert", "/api/v1/images/pdf", "/api/v1/pdf/merge", "/api/v1/zip/create", "/api/v1/jobs"},
 )
 # Outer middleware also observes requests rejected before multipart parsing.
 api.add_middleware(RequestTrace)
@@ -507,6 +510,21 @@ async def health():
     return {"status": "ok"}
 
 
+@api.get("/api/v1/capabilities")
+async def public_capabilities():
+    """Describe implemented HTTP operations, not processing permissions or health."""
+    result = build_http_capabilities()
+    result["max_upload_bytes"] = MAX_INPUT_BYTES
+    result["max_result_bytes"] = MAX_RESULT_BYTES
+    # All batch uploads currently share the HTTP max aggregate input size.
+    for batch_operation in result["batch_operations"]:
+        batch_operation["max_total_upload_bytes"] = MAX_INPUT_BYTES
+    return JSONResponse(
+        result,
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @api.get("/ready")
 async def ready():
     result = await asyncio.to_thread(readiness_status)
@@ -818,16 +836,15 @@ async def run_managed_worker(payload):
 
 def _info_action(source: Path, action: str) -> dict | None:
     if action == "pdf:info":
-        return {"info": {"pages": pdf_page_count(source)}}
+        return {"info": {"pages": pdf_module.count_pages(source)}}
     if action == "audio:info":
-        return {"info": probe_audio(source)}
+        return {"info": audio_module.probe(source)}
     if action == "docx:info":
-        _, info = read_docx_text(source)
-        return {"info": info}
+        return {"info": document_module.inspect_docx(source)}
     if action == "txt:info":
-        return {"info": txt_info(source)}
+        return {"info": document_module.inspect_text(source)}
     if action == "zip:list":
-        return {"info": inspect_zip(source)}
+        return {"info": archive_module.inspect(source)}
     return None
 
 
@@ -835,30 +852,30 @@ def _transform(source: Path, output_dir: Path, action: str, pages: str) -> Path:
     if action.startswith("img:"):
         if action == "img:compress":
             target = output_dir / "optimized.webp"
-            compress_image(source, target)
+            image_module.compress(source, target)
         else:
             fmt = action.split(":", 1)[1]
             target = output_dir / ("converted" + IMAGE_FORMATS[fmt])
-            convert_image(source, target, fmt)
+            image_module.convert(source, target, fmt)
     elif action.startswith("audio:"):
         fmt = action.split(":", 1)[1]
         target = output_dir / ("converted" + OUTPUT_FORMATS[fmt])
-        convert_audio(source, target, fmt)
+        audio_module.convert(source, target, fmt)
     elif action == "pdf:rotate":
         target = output_dir / "rotated.pdf"
-        rotate_pdf(source, target, 90)
+        pdf_module.rotate(source, target, 90)
     elif action in {"pdf:first", "pdf:extract", "pdf:remove"}:
         target = output_dir / "result.pdf"
         if action == "pdf:remove":
-            remove_pdf_pages(source, target, pages)
+            pdf_module.remove(source, target, pages)
         else:
-            extract_pdf_pages(source, target, "1" if action == "pdf:first" else pages)
+            pdf_module.extract(source, target, "1" if action == "pdf:first" else pages)
     elif action == "docx:txt":
         target = output_dir / "converted.txt"
-        docx_to_txt(source, target)
+        document_module.to_text(source, target)
     elif action == "txt:docx":
         target = output_dir / "converted.docx"
-        txt_to_docx(source, target)
+        document_module.to_docx(source, target)
     else:
         raise ValueError("Недопустимая операция")
     return target
@@ -1020,6 +1037,173 @@ async def multi_image_pdf(
                 work.cleanup()
             logger.error("Multi-image PDF failed")
             raise HTTPException(status_code=422, detail="Не удалось объединить изображения") from None
+
+
+@api.post("/api/v1/pdf/merge")
+async def multi_pdf_merge(
+    uploads: list[UploadFile] = FileField(...),
+    user_id: int = Depends(authorize_new_processing),
+):
+    """Merge 2–5 PDF files in client order, using the bounded parser worker."""
+    if not 2 <= len(uploads) <= MAX_MERGE_FILES:
+        raise HTTPException(status_code=422, detail="Выбери от 2 до 5 PDF")
+    for upload in uploads:
+        kind, suffix = file_kind(upload.filename or "")
+        if kind != "pdf" or suffix != ".pdf":
+            raise HTTPException(status_code=422, detail="Поддерживаются только PDF")
+
+    await enforce_rate_limit(user_id)
+    async with conversion_job(user_id, uploads) as job_id:
+        work = None
+        try:
+            work = Workspace(prefix="fileshape_batch_pdf_merge_")
+            total_bytes = 0
+            for index, upload in enumerate(uploads):
+                target_path = Path(work.name) / f"pdf_{index}.pdf"
+                file_bytes = 0
+                with target_path.open("wb") as output:
+                    while True:
+                        chunk = await upload.read(64 * 1024)
+                        if not chunk:
+                            break
+                        file_bytes += len(chunk)
+                        total_bytes += len(chunk)
+                        if total_bytes > MAX_INPUT_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail="Общий размер файлов превышает 20 МБ",
+                            )
+                        output.write(chunk)
+                if file_bytes == 0:
+                    raise HTTPException(status_code=422, detail="Обнаружен пустой PDF")
+
+            await run_managed_worker({
+                "operation": "pdf_merge", "work": work.name,
+                "count": len(uploads),
+            })
+            merged = Path(work.name) / "merged.pdf"
+            if not merged.is_file() or merged.stat().st_size == 0:
+                raise ValueError("Не удалось создать PDF")
+            if merged.stat().st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            jobs.transition(job_id, user_id, "completed")
+            return BoundedFileResponse(
+                merged,
+                filename="merged.pdf",
+                media_type="application/pdf",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-FileShape-Job-Id": job_id,
+                },
+                background=BackgroundTask(work.cleanup),
+            )
+        except asyncio.CancelledError:
+            if work is not None:
+                work.cleanup()
+            raise
+        except HTTPException:
+            if work is not None:
+                work.cleanup()
+            raise
+        except WorkerTimeout as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=504, detail=str(exc)) from None
+        except ValueError as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+        except Exception:
+            if work is not None:
+                work.cleanup()
+            logger.error("Multi-PDF merge failed")
+            raise HTTPException(status_code=422, detail="Не удалось объединить PDF") from None
+
+
+@api.post("/api/v1/zip/create")
+async def multi_zip_create(
+    uploads: list[UploadFile] = FileField(...),
+    user_id: int = Depends(authorize_new_processing),
+):
+    """Create one ZIP from 2–5 arbitrary files, bounded by HTTP upload limits."""
+    if not 2 <= len(uploads) <= MAX_BUNDLE_FILES:
+        raise HTTPException(status_code=422, detail="Выбери от 2 до 5 файлов")
+    names = []
+    for upload in uploads:
+        name = upload.filename
+        if not isinstance(name, str) or not 1 <= len(name) <= 255:
+            raise HTTPException(status_code=422, detail="Некорректное имя файла")
+        names.append(name)
+
+    await enforce_rate_limit(user_id)
+    async with conversion_job(user_id, uploads) as job_id:
+        work = None
+        try:
+            work = Workspace(prefix="fileshape_batch_zip_create_")
+            total_bytes = 0
+            for index, upload in enumerate(uploads):
+                # Never write a client-supplied filename into the filesystem.
+                path = Path(work.name) / f"zip_item_{index}"
+                file_bytes = 0
+                with path.open("wb") as output:
+                    while True:
+                        chunk = await upload.read(64 * 1024)
+                        if not chunk:
+                            break
+                        file_bytes += len(chunk)
+                        total_bytes += len(chunk)
+                        if file_bytes > MAX_MEMBER_BYTES or total_bytes > MAX_INPUT_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail="Общий размер файлов превышает лимит 20 МБ",
+                            )
+                        output.write(chunk)
+                if file_bytes == 0:
+                    raise HTTPException(status_code=422, detail="Обнаружен пустой файл")
+
+            await run_managed_worker({
+                "operation": "zip_create", "work": work.name,
+                "count": len(uploads), "names": names,
+            })
+            result = Path(work.name) / "fileshape.zip"
+            if not result.is_file() or result.stat().st_size == 0:
+                raise ValueError("Не удалось создать ZIP")
+            if result.stat().st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            jobs.transition(job_id, user_id, "completed")
+            return BoundedFileResponse(
+                result,
+                filename="fileshape.zip",
+                media_type="application/zip",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-FileShape-Job-Id": job_id,
+                },
+                background=BackgroundTask(work.cleanup),
+            )
+        except asyncio.CancelledError:
+            if work is not None:
+                work.cleanup()
+            raise
+        except HTTPException:
+            if work is not None:
+                work.cleanup()
+            raise
+        except WorkerTimeout as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=504, detail=str(exc)) from None
+        except ValueError as exc:
+            if work is not None:
+                work.cleanup()
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from None
+        except Exception:
+            if work is not None:
+                work.cleanup()
+            logger.error("ZIP creation failed")
+            raise HTTPException(status_code=422, detail="Не удалось создать ZIP") from None
 
 
 # Owner-only campaign endpoints share the API-owned durable SQLite store.

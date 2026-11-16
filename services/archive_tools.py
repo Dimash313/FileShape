@@ -3,6 +3,8 @@
 Never use ZipFile.extractall() on user archives; user paths are untrusted.
 """
 from pathlib import Path, PurePosixPath
+import os
+import tempfile
 import re
 import stat
 import zipfile
@@ -13,6 +15,14 @@ MAX_BUNDLE_FILES = 5
 MAX_UNCOMPRESSED_TOTAL = 50 * 1024 * 1024
 MAX_MEMBER_BYTES = 20 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200
+
+
+def _too_high_compression(info: zipfile.ZipInfo) -> bool:
+    """The same safety threshold for external ZIPs and our own output."""
+    return (
+        info.file_size > 128 * 1024
+        and info.file_size / max(1, info.compress_size) > MAX_COMPRESSION_RATIO
+    )
 
 
 def _validate_member(info: zipfile.ZipInfo) -> None:
@@ -31,7 +41,7 @@ def _validate_member(info: zipfile.ZipInfo) -> None:
     if not info.is_dir():
         if info.file_size > MAX_MEMBER_BYTES:
             raise ValueError("Один из файлов слишком большой")
-        if info.file_size > 128 * 1024 and info.file_size / max(1, info.compress_size) > MAX_COMPRESSION_RATIO:
+        if _too_high_compression(info):
             raise ValueError("Подозрительно сильное сжатие в ZIP")
 
 
@@ -101,12 +111,64 @@ def _archive_name(name: str, used: set[str]) -> str:
 
 
 def make_zip(inputs: list[tuple[Path, str]], target: Path) -> int:
+    """Create a ZIP that our strict reader can inspect and extract.
+
+    Deflate normally. Only if one or more members exceed the reader's
+    compression-ratio threshold, rebuild those members as ZIP_STORED.
+    This preserves compression for normal files and does NOT relax the
+    ZIP-bomb policy for untrusted external archives.
+
+    Staging in the output directory avoids publishing an invalid or
+    partially-written archive and preserves an existing target on errors.
+    """
     if not 2 <= len(inputs) <= MAX_BUNDLE_FILES:
         raise ValueError("Выбери от 2 до 5 файлов")
     used: set[str] = set()
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-        for source, suggested_name in inputs:
-            if source.stat().st_size > MAX_MEMBER_BYTES:
-                raise ValueError("Один из файлов слишком большой")
-            archive.write(source, arcname=_archive_name(suggested_name, used))
+    members: list[tuple[Path, str]] = []
+    total_bytes = 0
+    for source, suggested_name in inputs:
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("Файл не найден или недоступен")
+        size = source.stat().st_size
+        if size > MAX_MEMBER_BYTES:
+            raise ValueError("Один из файлов слишком большой")
+        total_bytes += size
+        if total_bytes > MAX_UNCOMPRESSED_TOTAL:
+            raise ValueError("ZIP после распаковки превышает лимит")
+        members.append((source, _archive_name(suggested_name, used)))
+
+    fd, staging_name = tempfile.mkstemp(
+        prefix=".fileshape_zip_", suffix=".zip", dir=target.parent,
+    )
+    os.close(fd)
+    staging = Path(staging_name)
+    try:
+        store_members: set[str] = set()
+        with zipfile.ZipFile(
+            staging, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6,
+        ) as archive:
+            for source, name in members:
+                archive.write(source, arcname=name)
+                if _too_high_compression(archive.getinfo(name)):
+                    store_members.add(name)
+
+        if store_members:
+            # Reuse the same private temporary path: no second on-disk
+            # archive or duplicate data storage is needed.
+            with zipfile.ZipFile(
+                staging, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6,
+            ) as archive:
+                for source, name in members:
+                    compression = (
+                        zipfile.ZIP_STORED if name in store_members
+                        else zipfile.ZIP_DEFLATED
+                    )
+                    archive.write(source, arcname=name, compress_type=compression)
+
+        # Fail closed if source bytes changed during the optional rebuild,
+        # or if future reader rules become stricter.
+        inspect_zip(staging)
+        os.replace(staging, target)
+    finally:
+        staging.unlink(missing_ok=True)
     return len(inputs)
