@@ -6,6 +6,10 @@
 
 **No beta or early-access phase.** Follow [NO_BETA_LAUNCH_POLICY.md](NO_BETA_LAUNCH_POLICY.md). Build and integrate with rigorous CI, automated/simulated end-to-end testing, and operational release gates; then launch publicly only with owner authorization. Real Telegram/Android user testing and production observations occur after launch, not as a mandatory prelaunch beta. Never mark unexecuted tests as passed, and never defer known reproducible safety or correctness defects.
 
+## Mandatory UX and 10/10 quality target
+
+[Button-first UX](BUTTON_FIRST_UX.md) and the [evidence-based quality standard](QUALITY_STANDARD.md) are required across all FileShape surfaces, under the [no-beta release policy](NO_BETA_LAUNCH_POLICY.md). Aim for 10/10 in every applicable dimension without fabricating ratings or claiming unexecuted live tests passed. Exact-head CI and simulated error/security/mobile interaction tests are required for each integration; public release remains owner-authorized.
+
 ## Source of truth and agreed business rules
 
 This document supersedes **proposed** prices, quotas and packaging in [BOT_PRODUCT_ROADMAP.md](BOT_PRODUCT_ROADMAP.md) where they disagree. Keep [ROAD_TO_5.md](ROAD_TO_5.md) as historical engineering gates, not an assertion that outdated pending milestones are still current. Source code and merged PRs determine what is actually implemented.
