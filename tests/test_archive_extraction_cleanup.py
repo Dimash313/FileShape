@@ -109,22 +109,36 @@ class ZipExtractionCleanupTests(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), [])
         self.assert_clean()
 
-    def test_revalidates_swapped_archive_after_inspection(self):
+    def test_path_swap_after_inspection_still_extracts_pinned_original(self):
         original = self.zip_from([("ok.txt", b"safe")])
         replacement = self.root / "replacement.zip"
         with zipfile.ZipFile(replacement, "w") as writer:
             writer.writestr("../escape.txt", b"unsafe")
-        original_inspect = archive_tools.inspect_zip
+        real_inspect = archive_tools._inspect_open_zip
+        swaps = 0
 
-        def swap_after_inspect(path):
-            result = original_inspect(path)
-            os.replace(replacement, path)
+        def replace_path_after_validating_pinned_archive(archive):
+            nonlocal swaps
+            result = real_inspect(archive)
+            swaps += 1
+            # A malicious pathname replacement must not change the content
+            # of the already-open, validated ZIP descriptor.
+            os.replace(replacement, original)
             return result
 
-        with patch.object(archive_tools, "inspect_zip", side_effect=swap_after_inspect):
-            with self.assertRaises(ValueError):
-                archive_tools.unpack_zip(original, self.output)
-        self.assertEqual(list(self.output.iterdir()), [])
+        with patch.object(
+            archive_tools, "_inspect_open_zip",
+            side_effect=replace_path_after_validating_pinned_archive,
+        ):
+            extracted = archive_tools.unpack_zip(original, self.output)
+
+        self.assertEqual(swaps, 1)
+        self.assertEqual([name for _, name in extracted], ["01_ok.txt"])
+        self.assertEqual(extracted[0][0].read_bytes(), b"safe")
+        self.assertEqual(list(self.output.iterdir()), [self.output / "01_ok.txt"])
+        # A fresh inspection of the replacement is still rejected.
+        with self.assertRaises(ValueError):
+            archive_tools.inspect_zip(original)
         self.assert_clean()
 
     def test_existing_zip_bomb_and_count_checks_stay_strict(self):
