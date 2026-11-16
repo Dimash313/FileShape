@@ -2,15 +2,23 @@
 
 Updated: 2026-11-16 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
-Current Issue: [#210](https://github.com/Dimash313/FileShape/issues/210), repeated task cancellation must not abandon subprocess reaping.
-Current branch: `api-security/210-resilient-worker-reap`. Current PR: [#213](https://github.com/Dimash313/FileShape/pull/213) (**Draft**); target exactly `api-security/169-worker-env-boundary` / [Draft #170](https://github.com/Dimash313/FileShape/pull/170).
-Dependency chain: current branch → #170 (worker env) → #164 (bounded stdout) → `docs/independent-development-tracks` / #112 (unmerged). Never merge out of order or overwrite parent branches.
+Current Issue: [#216](https://github.com/Dimash313/FileShape/issues/216), validate untrusted worker-selected output names before API path construction.
+Current branch: `api-security/216-validate-worker-result-names`. PR pending at this status edit; target exactly `api-security/210-resilient-worker-reap` / [Draft #213](https://github.com/Dimash313/FileShape/pull/213).
+Dependency chain: current branch → #213 (repeated cancel reap) → #170 (worker env) → #164 (bounded stdout) → `docs/independent-development-tracks` / #112 (unmerged). Never merge out of order or overwrite parent branches.
 
-## Current issue #210 — bounded fix
+## Current issue #216 — worker reply path contract
+
+- `api/worker_runner.py`: validate any worker-returned `filename` as a single ASCII basename with ≤64 characters, no path separators, `..`, hidden prefix, control characters, or absolute path syntax. Validate companion `bytes` as a positive integer, not a bool. Existing `info` and `validate_only` reply shapes remain valid. Fail closed with a generic error that does not echo the unsafe filename.
+- `tests/test_worker_runner.py`: execute real synthetic child processes emitting crafted JSON output. Reject relative traversal, absolute and Windows-style paths, nonstring/malformed/oversized names and invalid byte counts, while preserving valid result and info-only replies.
+- **No exact-head hosted CI observed for this branch at status-writing time.** Run full GitHub Python suite, Docker image build and Mini App checks; independent security/integration review is still required. Output-filename validation is defense-in-depth only: directory symlink replacement and serving files through pinned file descriptors remain separate concerns, not solved by this PR.
+
+## Parent issue #210 — repeated cancellation-safe reaping
+
+## Parent issue #210 — bounded fix
 
 - `api/worker_runner.py`: added `_reap_worker` which starts one independent wait task and shields it in a retry loop, preserving the caller's cancellation signal **after** reaping. Previous single `await asyncio.shield(proc.wait())` could be interrupted by repeated `task.cancel()`, completing the caller while the wait remained pending.
 - `tests/test_worker_runner.py`: deterministic actual-child regression: gate `proc.wait()` completion, cancel parent twice, assert it cannot finish before reaping is permitted to complete; retain timeout/normal cancellation tests. Initial local reproduction (Linux/Python) showed old single-shield code exits early on second cancel. No new dependency, HTTP API, billing, platform, user content or domain changes.
-- GitHub run [#43758544246](https://github.com/Dimash313/FileShape/actions/runs/43758544246), original PR head `cf0ee9b23a34857aad826f84caa852f060070720`, allocated real hosted runners and Mini App passed; Python still executing at that time. This STATUS update advances the branch head, so **recheck the newest exact-head workflow run** before claiming success. Require full Python, Docker and Mini App checks, independent review of process cleanup semantics and integration with parents before merge.
+- PR #213 exact head `6cb7b17ed89eee1b974724cc3cc6422597b574af` passed real GitHub-hosted Python, Docker and Mini App tests ([run #43758681795](https://github.com/Dimash313/FileShape/actions/runs/43758681795)). This does not validate issue #216's new changes. Require full Python, Docker and Mini App checks, independent review of process cleanup semantics and integration with parents before merge.
 
 ## Parent issue #169 — isolation of worker secrets
 
