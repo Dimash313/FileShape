@@ -3,14 +3,14 @@
 Updated: 2026-11-16 UTC; verify live GitHub heads, Issues, PR bases and Actions.
 Track: `api-security`.
 Current Issue: [#216](https://github.com/Dimash313/FileShape/issues/216), validate untrusted worker-selected output names before API path construction.
-Current branch: `api-security/216-validate-worker-result-names`. PR pending at this status edit; target exactly `api-security/210-resilient-worker-reap` / [Draft #213](https://github.com/Dimash313/FileShape/pull/213).
+Current branch: `api-security/216-validate-worker-result-names`. Current PR: [#220](https://github.com/Dimash313/FileShape/pull/220) (**Draft**); target exactly `api-security/210-resilient-worker-reap` / [Draft #213](https://github.com/Dimash313/FileShape/pull/213).
 Dependency chain: current branch → #213 (repeated cancel reap) → #170 (worker env) → #164 (bounded stdout) → `docs/independent-development-tracks` / #112 (unmerged). Never merge out of order or overwrite parent branches.
 
 ## Current issue #216 — worker reply path contract
 
 - `api/worker_runner.py`: validate any worker-returned `filename` as a single ASCII basename with ≤64 characters, no path separators, `..`, hidden prefix, control characters, or absolute path syntax. Validate companion `bytes` as a positive integer, not a bool. Existing `info` and `validate_only` reply shapes remain valid. Fail closed with a generic error that does not echo the unsafe filename.
 - `tests/test_worker_runner.py`: execute real synthetic child processes emitting crafted JSON output. Reject relative traversal, absolute and Windows-style paths, nonstring/malformed/oversized names and invalid byte counts, while preserving valid result and info-only replies.
-- **No exact-head hosted CI observed for this branch at status-writing time.** Run full GitHub Python suite, Docker image build and Mini App checks; independent security/integration review is still required. Output-filename validation is defense-in-depth only: directory symlink replacement and serving files through pinned file descriptors remain separate concerns, not solved by this PR.
+- After creating PR #220, initial exact PR head `a16c80825c69617686eec640962b8d14cda10b04` started [GitHub Actions run #43930871533](https://github.com/Dimash313/FileShape/actions/runs/43930871533): Mini App checks passed and Python tests were executing. **This handoff edit advances the branch HEAD again**, so inspect the NEW exact-head CI result rather than assuming this earlier run validates the final commit. Require full Python suite, Docker image build, Mini App tests, independent security/integration review and parent PR integration. Output-filename validation is defense-in-depth only: directory symlink replacement and serving files through pinned file descriptors remain separate concerns, not solved by this PR.
 
 ## Parent issue #210 — repeated cancellation-safe reaping
 
