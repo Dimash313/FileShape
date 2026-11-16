@@ -990,8 +990,7 @@ async def convert(
             target = Path(work.name) / result["filename"]
             _legacy_result_preflight(target, "Пустой результат")
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            response = BoundedFileResponse(
                 target,
                 dir_fd=work._directory_fd,
                 filename=target.name,
@@ -999,6 +998,13 @@ async def convert(
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             # Cancellation does not inherit from Exception. Remove partial uploads
             # and outputs before propagating cancellation to the ASGI server.
@@ -1067,8 +1073,7 @@ async def multi_image_pdf(
             })
             target = Path(work.name) / "fileshape_photos.pdf"
             _legacy_result_preflight(target, "Не удалось создать PDF")
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            response = BoundedFileResponse(
                 target,
                 dir_fd=work._directory_fd,
                 filename=target.name,
@@ -1076,6 +1081,13 @@ async def multi_image_pdf(
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             # Cancellation does not inherit from Exception. Remove partial uploads
             # and outputs before propagating cancellation to the ASGI server.
@@ -1145,8 +1157,7 @@ async def multi_pdf_merge(
             })
             merged = Path(work.name) / "merged.pdf"
             _legacy_result_preflight(merged, "Не удалось создать PDF")
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            response = BoundedFileResponse(
                 merged,
                 dir_fd=work._directory_fd,
                 filename="merged.pdf",
@@ -1158,6 +1169,13 @@ async def multi_pdf_merge(
                 },
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             if work is not None:
                 work.cleanup()
@@ -1228,8 +1246,7 @@ async def multi_zip_create(
             })
             result = Path(work.name) / "fileshape.zip"
             _legacy_result_preflight(result, "Не удалось создать ZIP")
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            response = BoundedFileResponse(
                 result,
                 dir_fd=work._directory_fd,
                 filename="fileshape.zip",
@@ -1241,6 +1258,13 @@ async def multi_zip_create(
                 },
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             if work is not None:
                 work.cleanup()
