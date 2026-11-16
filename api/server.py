@@ -719,6 +719,23 @@ class BoundedFileResponse(FileResponse):
                     await cleanup()
 
 
+def _legacy_result_preflight(target: Path, unavailable: str) -> None:
+    """Avoid even following a substituted symlink during the route's precheck.
+
+    The subsequent BoundedFileResponse fd/fstat check is authoritative:
+    this initial lstat check only preserves existing HTTP size/error semantics.
+    """
+    try:
+        info = target.lstat()
+    except OSError:
+        raise ValueError(unavailable) from None
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1 or info.st_size <= 0):
+        raise ValueError(unavailable)
+    if info.st_size > MAX_RESULT_BYTES:
+        raise HTTPException(status_code=413, detail="Результат слишком большой")
+
+
 class ResultStream(StreamingResponse):
     def __init__(self, file, size, media_type, filename):
         self.file = file
@@ -971,10 +988,7 @@ async def convert(
                 return JSONResponse(result["info"], headers={"Cache-Control": "no-store", "X-FileShape-Job-Id": job_id})
 
             target = Path(work.name) / result["filename"]
-            if not target.is_file() or target.stat().st_size == 0:
-                raise ValueError("Пустой результат")
-            if target.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            _legacy_result_preflight(target, "Пустой результат")
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
@@ -1052,10 +1066,7 @@ async def multi_image_pdf(
                 "suffixes": [file_kind(upload.filename or "")[1] for upload in uploads],
             })
             target = Path(work.name) / "fileshape_photos.pdf"
-            if not target.is_file() or target.stat().st_size == 0:
-                raise ValueError("Не удалось создать PDF")
-            if target.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            _legacy_result_preflight(target, "Не удалось создать PDF")
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 target,
@@ -1133,10 +1144,7 @@ async def multi_pdf_merge(
                 "count": len(uploads),
             })
             merged = Path(work.name) / "merged.pdf"
-            if not merged.is_file() or merged.stat().st_size == 0:
-                raise ValueError("Не удалось создать PDF")
-            if merged.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            _legacy_result_preflight(merged, "Не удалось создать PDF")
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 merged,
@@ -1219,10 +1227,7 @@ async def multi_zip_create(
                 "count": len(uploads), "names": names,
             })
             result = Path(work.name) / "fileshape.zip"
-            if not result.is_file() or result.stat().st_size == 0:
-                raise ValueError("Не удалось создать ZIP")
-            if result.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            _legacy_result_preflight(result, "Не удалось создать ZIP")
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 result,
