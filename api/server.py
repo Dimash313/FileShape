@@ -12,6 +12,8 @@ import sqlite3
 import logging
 import mimetypes
 import os
+import stat
+import weakref
 from pathlib import Path
 import tempfile
 import time
@@ -657,17 +659,81 @@ async def retry_background_job(
 
 
 class BoundedFileResponse(FileResponse):
-    """Compatibility downloads must release workspaces on disconnect/deadline."""
+    """Serve one pinned, private result inode; clean up on any send outcome.
+
+    Starlette FileResponse otherwise opens the *pathname* after the route
+    has returned. Workers may replace that pathname, so hold an O_NOFOLLOW
+    descriptor and serve through Linux's stable /proc/self/fd handle instead.
+    """
     timeout_seconds = 120
+
+    def __init__(self, path, *, dir_fd=None, **kwargs):
+        if not os.path.isdir("/proc/self/fd") or not hasattr(os, "O_NOFOLLOW"):
+            raise RuntimeError("Безопасная выдача файлов недоступна")
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        try:
+            # The workspace directory fd is locked and pinned by Workspace.
+            # Resolve only a basename under that fd, never a worker pathname.
+            fd = os.open(Path(path).name if dir_fd is not None else path,
+                         flags, dir_fd=dir_fd)
+        except OSError:
+            raise ValueError("Результат недоступен") from None
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1):
+                raise ValueError("Результат недоступен")
+            if info.st_size <= 0:
+                raise ValueError("Пустой результат")
+            if info.st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            # A procfd resolves to this open inode even if the workspace path
+            # is replaced before ASGI begins streaming it.
+            super().__init__(f"/proc/self/fd/{fd}", stat_result=info, **kwargs)
+            # Also close the fd if a response is abandoned without being sent.
+            self._pin_finalizer = weakref.finalize(self, os.close, fd)
+        except BaseException:
+            os.close(fd)
+            raise
 
     async def __call__(self, scope, receive, send):
         cleanup, self.background = self.background, None
+        # ASGI pathsend hands a filename to the web server for *later* open.
+        # Force Starlette's bounded streaming path while our fd is pinned.
+        if "http.response.pathsend" in scope.get("extensions", {}):
+            scope = {
+                **scope,
+                "extensions": {
+                    name: value for name, value in scope["extensions"].items()
+                    if name != "http.response.pathsend"
+                },
+            }
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 await super().__call__(scope, receive, send)
         finally:
-            if cleanup is not None:
-                await cleanup()
+            try:
+                self._pin_finalizer()
+            finally:
+                if cleanup is not None:
+                    await cleanup()
+
+
+def _legacy_result_preflight(target: Path, unavailable: str) -> None:
+    """Avoid even following a substituted symlink during the route's precheck.
+
+    The subsequent BoundedFileResponse fd/fstat check is authoritative:
+    this initial lstat check only preserves existing HTTP size/error semantics.
+    """
+    try:
+        info = target.lstat()
+    except OSError:
+        raise ValueError(unavailable) from None
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1 or info.st_size <= 0):
+        raise ValueError(unavailable)
+    if info.st_size > MAX_RESULT_BYTES:
+        raise HTTPException(status_code=413, detail="Результат слишком большой")
 
 
 class ResultStream(StreamingResponse):
@@ -922,19 +988,23 @@ async def convert(
                 return JSONResponse(result["info"], headers={"Cache-Control": "no-store", "X-FileShape-Job-Id": job_id})
 
             target = Path(work.name) / result["filename"]
-            if not target.is_file() or target.stat().st_size == 0:
-                raise ValueError("Пустой результат")
-            if target.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            _legacy_result_preflight(target, "Пустой результат")
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            response = BoundedFileResponse(
                 target,
+                dir_fd=work._directory_fd,
                 filename=target.name,
                 media_type=content_type,
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             # Cancellation does not inherit from Exception. Remove partial uploads
             # and outputs before propagating cancellation to the ASGI server.
@@ -1002,18 +1072,22 @@ async def multi_image_pdf(
                 "suffixes": [file_kind(upload.filename or "")[1] for upload in uploads],
             })
             target = Path(work.name) / "fileshape_photos.pdf"
-            if not target.is_file() or target.stat().st_size == 0:
-                raise ValueError("Не удалось создать PDF")
-            if target.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            _legacy_result_preflight(target, "Не удалось создать PDF")
+            response = BoundedFileResponse(
                 target,
+                dir_fd=work._directory_fd,
                 filename=target.name,
                 media_type="application/pdf",
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             # Cancellation does not inherit from Exception. Remove partial uploads
             # and outputs before propagating cancellation to the ASGI server.
@@ -1082,13 +1156,10 @@ async def multi_pdf_merge(
                 "count": len(uploads),
             })
             merged = Path(work.name) / "merged.pdf"
-            if not merged.is_file() or merged.stat().st_size == 0:
-                raise ValueError("Не удалось создать PDF")
-            if merged.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            _legacy_result_preflight(merged, "Не удалось создать PDF")
+            response = BoundedFileResponse(
                 merged,
+                dir_fd=work._directory_fd,
                 filename="merged.pdf",
                 media_type="application/pdf",
                 headers={
@@ -1098,6 +1169,13 @@ async def multi_pdf_merge(
                 },
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             if work is not None:
                 work.cleanup()
@@ -1167,13 +1245,10 @@ async def multi_zip_create(
                 "count": len(uploads), "names": names,
             })
             result = Path(work.name) / "fileshape.zip"
-            if not result.is_file() or result.stat().st_size == 0:
-                raise ValueError("Не удалось создать ZIP")
-            if result.stat().st_size > MAX_RESULT_BYTES:
-                raise HTTPException(status_code=413, detail="Результат слишком большой")
-            jobs.transition(job_id, user_id, "completed")
-            return BoundedFileResponse(
+            _legacy_result_preflight(result, "Не удалось создать ZIP")
+            response = BoundedFileResponse(
                 result,
+                dir_fd=work._directory_fd,
                 filename="fileshape.zip",
                 media_type="application/zip",
                 headers={
@@ -1183,6 +1258,13 @@ async def multi_zip_create(
                 },
                 background=BackgroundTask(work.cleanup),
             )
+            # Mark completed only after the result inode is safely pinned.
+            try:
+                jobs.transition(job_id, user_id, "completed")
+            except BaseException:
+                response._pin_finalizer()
+                raise
+            return response
         except asyncio.CancelledError:
             if work is not None:
                 work.cleanup()

@@ -226,6 +226,51 @@ class ArtifactStoreTests(unittest.TestCase):
             store.open_result(FIRST)
         self.assertEqual(target.read_bytes(), b"secret")
 
+    def test_same_size_private_regular_file_replacement_is_rejected(self):
+        store = self.store()
+        item = self.complete(store)
+        output = item.path / "result.txt"
+        replacement = item.path / "replacement.txt"
+        # The replacement passes the legacy mode/type/size checks.
+        replacement.write_bytes(b"unsafe")
+        replacement.chmod(0o600)
+        self.assertEqual(replacement.stat().st_size, output.stat().st_size)
+        os.replace(replacement, output)
+        with self.assertRaises(ArtifactUnavailable):
+            store.open_result(FIRST)
+        self.assertEqual(output.read_bytes(), b"unsafe")
+
+    def test_truncating_completed_result_is_rejected(self):
+        store = self.store()
+        item = self.complete(store)
+        output = item.path / "result.txt"
+        with output.open("r+b") as handle:
+            handle.truncate(3)
+        self.assertEqual(output.stat().st_size, 3)
+        with self.assertRaises(ArtifactUnavailable):
+            store.open_result(FIRST)
+
+    def test_open_lease_retains_published_fd_after_path_replacement(self):
+        store = self.store()
+        item = self.complete(store)
+        lease, size, mime, filename = store.open_result(FIRST)
+        self.addCleanup(lease.close)
+        replacement = item.path / "replacement.txt"
+        replacement.write_bytes(b"unsafe")
+        replacement.chmod(0o600)
+        os.replace(replacement, item.path / "result.txt")
+        with self.assertRaises(ArtifactUnavailable):
+            store.open_result(FIRST)
+        self.assertEqual((size, mime, filename), (6, "text/plain", "result.txt"))
+        self.assertEqual(lease.read(), b"result")
+        self.assertEqual(store.reserved_bytes, 6)
+        lease.close()
+        # Replacement does not give new callers a lease, but cleanup
+        # still retains the reservation until the job is discarded.
+        self.assertEqual(store.reserved_bytes, 6)
+        store.discard(FIRST)
+        self.assertEqual(store.reserved_bytes, 0)
+
     def test_directory_symlink_rejected(self):
         store = self.store()
         item = self.complete(store)
