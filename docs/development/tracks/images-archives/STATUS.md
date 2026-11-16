@@ -4,7 +4,7 @@ Updated: 2026-11-17 UTC
 Track: `images-archives`
 Current Issue: [#227 — reject unsupported compression methods during ZIP preflight](https://github.com/Dimash313/FileShape/issues/227)
 Branch: `fix/zip-unsupported-compression-j3`; base `fix/zip-pinned-read-extract-j2` ([parent Draft PR #221](https://github.com/Dimash313/FileShape/pull/221)).
-New Draft PR: pending creation; inspect GitHub for live head and CI.
+New Draft PR: [#229](https://github.com/Dimash313/FileShape/pull/229), stacked on #221. Inspect live head and exact GitHub CI before integration.
 
 ## Current branch (not merged)
 - `services/archive_tools.py`: validate `ZipInfo.compress_type` in the existing metadata preflight `_validate_member`. Accept all four Python-supported ZIP methods: STORED, DEFLATED, BZIP2, LZMA. Reject unknown methods with a stable `ValueError("Неподдерживаемый метод сжатия ZIP")` **before any extraction / temp stage creation**. Prevents `zip:list` reporting that an undecodable archive is supported while `zip:extract` later fails with `NotImplementedError`.
