@@ -1,5 +1,6 @@
 """Hard timeout, error and cancellation tests for worker isolation."""
 import asyncio
+import json
 import os
 import shutil
 import wave
@@ -127,6 +128,79 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, worker_env, clear=True):
             self.assertFalse(load_dotenv(stream=StringIO("BOT_TOKEN=secret_from_dotenv\n")))
             self.assertNotIn("BOT_TOKEN", os.environ)
+
+    async def test_worker_rejects_unsafe_output_names_without_reflecting_paths(self):
+        # Exercise the real API -> subprocess JSON boundary. The legitimate
+        # worker returns one basename, but its stdout is never trusted.
+        original = asyncio.create_subprocess_exec
+
+        async def echo_response(response):
+            script = (
+                "import sys;sys.stdin.buffer.read();sys.stdout.write("
+                + json.dumps(json.dumps(response)) + ")"
+            )
+            return await original(
+                sys.executable, "-c", script,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+        invalid = [
+            {"ok": True, "filename": "/etc/hosts", "bytes": 10},
+            {"ok": True, "filename": "../../secrets.txt", "bytes": 10},
+            {"ok": True, "filename": "dir/result.pdf", "bytes": 10},
+            {"ok": True, "filename": r"..\\private.txt", "bytes": 10},
+            {"ok": True, "filename": ".active.lock", "bytes": 10},
+            {"ok": True, "filename": "bad..pdf", "bytes": 10},
+            {"ok": True, "filename": "bad\\nname.pdf", "bytes": 10},
+            {"ok": True, "filename": "a" * 65, "bytes": 10},
+            {"ok": True, "filename": None, "bytes": 10},
+            {"ok": True, "filename": 123, "bytes": 10},
+            {"ok": True, "filename": "converted.pdf", "bytes": 0},
+            {"ok": True, "filename": "converted.pdf", "bytes": -1},
+            {"ok": True, "filename": "converted.pdf", "bytes": True},
+            {"ok": True, "filename": "converted.pdf", "bytes": "10"},
+            {"ok": True, "filename": "converted.pdf"},
+        ]
+        for response in invalid:
+            with self.subTest(response=response):
+                async def fake_worker(*args, **kwargs):
+                    return await echo_response(response)
+
+                with patch("api.worker_runner.asyncio.create_subprocess_exec", side_effect=fake_worker):
+                    with self.assertRaises(WorkerFailed) as failure:
+                        await run_worker({"operation": "single"}, timeout=5)
+                self.assertEqual(
+                    str(failure.exception), "Некорректный результат обработчика"
+                )
+                self.assertNotIn(str(response.get("filename")), str(failure.exception))
+
+    async def test_worker_accepts_valid_result_basename_and_info_only(self):
+        original = asyncio.create_subprocess_exec
+        for response in (
+            {"ok": True, "filename": "converted.docx", "bytes": 128},
+            {"ok": True, "info": {"info": {"pages": 1}}},
+            {"ok": True},
+        ):
+            with self.subTest(response=response):
+                script = (
+                    "import sys;sys.stdin.buffer.read();sys.stdout.write("
+                    + json.dumps(json.dumps(response)) + ")"
+                )
+
+                async def fake_worker(*args, **kwargs):
+                    return await original(
+                        sys.executable, "-c", script,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+
+                with patch("api.worker_runner.asyncio.create_subprocess_exec", side_effect=fake_worker):
+                    self.assertEqual(await run_worker({"operation": "single"}, timeout=5), response)
 
     async def test_real_txt_to_docx_with_restricted_worker_environment(self):
         # Exercise the actual child import + converter stack, not a patched
