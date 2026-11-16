@@ -545,3 +545,76 @@ h1 {
 .usage-profile .usage-reset{display:flex;align-items:center;gap:7px;font-size:11px;line-height:1.5;color:var(--text-secondary);margin:0}
 .usage-profile .usage-error{font-size:12px;line-height:1.55;border:1px solid #777;background:#282828;color:#f1f1f1;padding:12px;margin:0;border-radius:10px}
 @media(max-width:350px){.usage-grid{grid-template-columns:1fr}.usage-heading{align-items:flex-start;flex-wrap:wrap}}
+
+
+/* Interfaces UX: 44px touch targets for small-screen Telegram WebViews (#139). */
+/* Keep visual icon dimensions compact while expanding the actual click areas. */
+.icon-button {
+  width: 44px;
+  height: 44px;
+}
+.notice {
+  overflow-wrap: anywhere;
+}
+.notice button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+.text-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 9px 8px;
+}
+.page-presets-row button,
+.pdf-bulk-actions button,
+.pdf-grid-navigation button,
+.job-check,
+.usage-heading button {
+  min-height: 44px;
+}
+.batch-row button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Interfaces UX: in-app section keyboard navigation and skip link (#172). */
+.skip-link {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  /* The Mini App is a centered 600px shell on wide viewports. */
+  left: max(16px, calc((100vw - 600px) / 2 + 16px));
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  z-index: 30;
+  transform: translateY(-200%);
+  opacity: 0;
+  pointer-events: none;
+  padding: 12px 16px;
+  border: 2px solid var(--text-primary);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.skip-link:focus {
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+#main-content,
+#screen-title {
+  scroll-margin-top: calc(90px + env(safe-area-inset-top));
+}
+@media (forced-colors: active) {
+  .skip-link:focus {
+    background: Canvas;
+    color: CanvasText;
+    border-color: Highlight;
+    outline-color: Highlight;
+  }
+}

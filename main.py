@@ -30,6 +30,7 @@ from services.bot_operations import (
 from services.campaign_bridge import forward_campaign_join
 from services.audio_tools import AUDIO_EXTENSIONS, OUTPUT_FORMATS
 from services.audio_module import audio_module
+from services.audio_trim import parse_trim_range, trim_audio
 from services.archive_tools import MAX_BUNDLE_FILES, MAX_UNCOMPRESSED_TOTAL
 from services.archive_module import archive_module
 from services.document_module import document_module
@@ -54,6 +55,10 @@ class ExtractState(StatesGroup):
 
 class MergeState(StatesGroup):
     collecting = State()
+
+
+class TrimState(StatesGroup):
+    waiting_for_range = State()
 
 
 class ZipState(StatesGroup):
@@ -144,7 +149,7 @@ def file_menu(kind: str) -> InlineKeyboardMarkup:
     elif kind == "audio":
         rows = [
             [("→ MP3", "audio:mp3"), ("→ OGG", "audio:ogg"), ("→ WAV", "audio:wav")],
-            [("ℹ️ Об аудио", "audio:info")],
+            [("✂️ Обрезать запись", "audio:trim"), ("ℹ️ Об аудио", "audio:info")],
         ]
     elif kind == "docx":
         rows = [[("📝 → TXT", "docx:txt"), ("ℹ️ О документе", "docx:info")]]
@@ -639,6 +644,57 @@ async def extract_by_range(message: Message, bot: Bot, state: FSMContext):
         await remove_status(status)
 
 
+@router.message(TrimState.waiting_for_range)
+async def audio_trim_range(message: Message, bot: Bot, state: FSMContext):
+    """Bounded private-chat text flow; quota charged only for delivered output."""
+    actor_id = message.from_user.id if message.from_user else -1
+    if message.chat.type != "private" or message.chat.id != actor_id:
+        await message.answer("Обрезка доступна только в личном чате.")
+        return
+    data = await state.get_data()
+    file_id = data.get("file_id")
+    suffix = data.get("suffix")
+    if data.get("owner_id") != actor_id or not file_id or suffix not in AUDIO_EXTENSIONS:
+        await state.clear()
+        await message.answer("Исходный файл недоступен. Пришли аудио ещё раз.")
+        return
+    spec = (message.text or "").strip()
+    try:
+        parse_trim_range(spec)
+    except ValueError as error:
+        await message.answer(f"{error}. Или /cancel.")
+        return
+    if not await allow_processing(message, bot, actor_id):
+        return
+    status = await message.answer("⏳ Обрезаю запись…")
+    try:
+        async with processing_slots, metered_bot_work(actor_id, bot):
+            with tempfile.TemporaryDirectory(prefix="fileshape_") as directory:
+                folder = Path(directory)
+                source = folder / ("source" + suffix)
+                await bot.download(file_id, destination=source)
+                check_download(source)
+                target = folder / "trimmed.mp3"
+                info = await asyncio.to_thread(trim_audio, source, target, spec)
+                await send_result(
+                    message, target,
+                    f"✅ Обрезано {info['end_seconds'] - info['start_seconds']} сек. · MP3",
+                )
+        await state.clear()
+    except BotOperationQuotaExceeded:
+        await message.answer("Лимит операций исчерпан или другая операция ещё выполняется.")
+    except BotOperationUnavailable:
+        await message.answer("Учёт операций временно недоступен. Файл не обрабатывался.")
+    except ValueError as error:
+        await message.answer(f"Не удалось обрезать аудио: {error}. Измени отрезок или /cancel.")
+    except Exception:
+        logger.exception("Audio trimming failed")
+        await state.clear()
+        await message.answer("Не удалось обработать аудио. Пришли файл заново.")
+    finally:
+        await remove_status(status)
+
+
 @router.message(F.document | F.photo | F.audio | F.voice)
 async def received_file(message: Message):
     if message.chat.type != "private":
@@ -697,7 +753,7 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
         "img:JPEG", "img:PNG", "img:WEBP", "img:PDF", "img:compress"
     }
     valid_audio = category == "audio" and action in {
-        "audio:mp3", "audio:ogg", "audio:wav", "audio:info"
+        "audio:mp3", "audio:ogg", "audio:wav", "audio:info", "audio:trim"
     }
     valid_docx = category == "docx" and action in {"docx:info", "docx:txt"}
     valid_txt = category == "txt" and action in {"txt:info", "txt:docx"}
@@ -725,6 +781,18 @@ async def run_action(callback: CallbackQuery, bot: Bot, state: FSMContext):
             "Отправь ещё от 1 до 4 файлов в нужном порядке.\n"
             "Затем нажми «Готово».",
             reply_markup=buttons([[("✅ Готово", "bundle:done"), ("✖️ Отмена", "bundle:cancel")]]),
+        )
+        return
+    if action == "audio:trim":
+        await state.set_state(TrimState.waiting_for_range)
+        await state.update_data(
+            file_id=file.file_id, suffix=suffix, owner_id=callback.from_user.id,
+        )
+        await callback.message.answer(
+            "✂️ Обрезка аудио · результат MP3 (128 кбит/с)\n\n"
+            "Отправь начало и конец в формате:\n"
+            "00:00:05-00:00:20\n\n"
+            "Доступны записи до 10 минут. Отмена: /cancel."
         )
         return
     if action in {"pdf:extract", "pdf:remove"}:
