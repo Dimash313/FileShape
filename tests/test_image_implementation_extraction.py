@@ -92,8 +92,16 @@ class ImageExtractionTests(unittest.TestCase):
         imports = [(node.module, [item.name for item in node.names])
                    for node in ast.walk(tree)
                    if isinstance(node, ast.ImportFrom)]
-        self.assertIn(("services.image_tools", ["_open_image"]), imports)
-        self.assertNotIn(("services.file_tools", ["_open_image"]), imports)
+        # Adding another image-domain helper must not fail this boundary
+        # test: check where the symbol is imported from, not the entire list.
+        self.assertTrue(any(
+            module == "services.image_tools" and "_open_image" in names
+            for module, names in imports
+        ))
+        self.assertFalse(any(
+            module == "services.file_tools" and "_open_image" in names
+            for module, names in imports
+        ))
 
 
 if __name__ == "__main__":

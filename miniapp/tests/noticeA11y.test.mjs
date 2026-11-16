@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+
+const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+
+test('notice state stores message and severity as one atomic value', () => {
+  assert.match(app, /useState<\{ text: string; kind: 'status' \| 'alert' \} \| null>\(null\)/);
+  assert.match(app, /const showNotice = \(text: string, kind: 'status' \| 'alert' = 'status'\) => setNotice\(\{ text, kind \}\)/);
+  assert.match(app, /className="notice" role=\{notice\.kind\}>\{notice\.text\}/);
+  assert.doesNotMatch(app, /className="notice" role="status"/);
+});
+
+test('invalid single and batch selections are assertive alerts', () => {
+  for (const name of ['batchImageSelectionError(files)', 'singleFileSelectionError(next)']) {
+    const start = app.indexOf(name);
+    assert.ok(start >= 0, 'Missing validation: ' + name);
+    const body = app.slice(start, start + 140);
+    assert.match(body, /if \(error\) \{\s*showNotice\(error, 'alert'\);\s*return;/);
+  }
+});
+
+test('PDF input limits and server validation errors announce as alerts', () => {
+  for (const fragment of [
+    'За одну операцию можно выбрать не более 150 страниц.',
+    'Нельзя удалить все страницы PDF.',
+    'Выбор слишком сложный.',
+    'Максимум 150 страниц;',
+    'Слишком много выбранных страниц.',
+  ]) {
+    const line = app.split('\n').find(x => x.includes(fragment) && x.includes('showNotice('));
+    assert.ok(line, 'Missing alert notice: ' + fragment);
+    assert.match(line, /, 'alert'\);/);
+  }
+  assert.match(app, /showNotice\(pageSelectionError \|\| 'Проверь выбранные страницы\.', 'alert'\)/);
+});
+
+test('caught request failures are alerts but confirmed results use polite status', () => {
+  for (const message of [
+    'Не удалось проверить статус.',
+    'Не удалось обработать файл.',
+    'Не удалось прочитать PDF.',
+    'Номер задания не подтверждён.',
+    'Не удалось объединить изображения.',
+  ]) {
+    const line = app.split('\n').find(x => x.includes(message) && x.includes('showNotice('));
+    assert.ok(line, 'Missing caught error: ' + message);
+    assert.match(line, /, 'alert'\);/);
+  }
+  for (const message of [
+    'Готово! Файл сохранён на устройство.',
+    'Информация о PDF получена.',
+    'Задание принято.',
+    'Готово! PDF создан из ',
+  ]) {
+    const line = app.split('\n').find(x => x.includes(message) && x.includes('showNotice('));
+    assert.ok(line, 'Missing confirmation: ' + message);
+    assert.doesNotMatch(line, /, 'alert'\);/);
+  }
+  assert.match(app, /status\.state === 'failed' \? 'alert' : 'status'/);
+});
+
+test('closing notices and navigating sections clear the current notice', () => {
+  assert.match(app, /<button aria-label="Закрыть" onClick=\{\(\) => setNotice\(null\)\}/);
+  assert.match(app, /onClick=\{\(\) => \{ tapFeedback\(\); setTab\(item\.tab\); setNotice\(null\); \}\}/);
+  assert.doesNotMatch(app, /setNotice\(''\)/);
+});
+
+test('PDF page input exposes semantic validation error and links its message', () => {
+  const field = app.match(/<input type="text" value=\{pages\}[\s\S]*?\/>/)?.[0];
+  assert.ok(field, 'PDF pages input missing');
+  assert.match(field, /aria-invalid=\{Boolean\(pageSelectionError\)\}/);
+  assert.match(field, /aria-describedby=\{pageSelectionError \? 'pdf-page-selection-error' : undefined\}/);
+  assert.doesNotMatch(field, /aria-invalid=\{!validPageSelection\}/);
+  assert.match(app, /\{selectedOption\?\.pages && pageSelectionError && <div id="pdf-page-selection-error" className="pdf-inline-error" role="alert">/);
+
+  // Range syntax may be valid even though the request itself is invalid.
+  assert.match(app, /selectedPageNumbers\.size > 150 \? 'За одну операцию можно выбрать максимум 150 страниц\.'/);
+  assert.match(app, /selectedAction === 'pdf:remove' && pdfPageCount !== null && selectedPageNumbers\.size === pdfPageCount/);
+});
+
+test('job history and status notice use the same API-typed localized labels', () => {
+  assert.match(app, /import type \{ JobStatus, QueueStatus, UploadProgress \} from '\.\/api';/);
+  assert.match(app, /jobState\?: JobStatus\['state'\]/);
+  assert.match(app, /const jobStateLabels: Record<JobStatus\['state'\], string> = \{/);
+
+  for (const [state, label] of [
+    ['queued', 'ожидание'],
+    ['processing', 'обработка'],
+    ['completed', 'завершено'],
+    ['failed', 'ошибка'],
+    ['cancelled', 'отменено'],
+  ]) {
+    assert.ok(app.includes(state + ": '" + label + "'"), 'Missing localized state ' + state);
+  }
+  assert.match(app, /showNotice\('Статус задания: ' \+ jobStateLabels\[status\.state\], status\.state === 'failed' \? 'alert' : 'status'\);/);
+  assert.match(app, /\{item\.jobState \? jobStateLabels\[item\.jobState\] : 'завершено'\}/);
+  assert.doesNotMatch(app, /' · ' \+ item\.jobState\b/);
+});
+
+test('history only shows a completed icon for confirmed completed or local results', () => {
+  assert.match(app, /const historyStateIcons: Record<JobStatus\['state'\], LucideIcon> = \{/);
+  for (const state of ['queued', 'processing']) {
+    assert.match(app, new RegExp(state + ': Clock3,'));
+  }
+  for (const state of ['failed', 'cancelled']) {
+    assert.match(app, new RegExp(state + ': X,'));
+  }
+  assert.match(app, /completed: Check,/);
+  assert.match(app, /const HistoryStateIcon = item\.jobState \? historyStateIcons\[item\.jobState\] : Check;/);
+  assert.match(app, /<HistoryStateIcon size=\{18\} aria-hidden="true" \/>/);
+  assert.doesNotMatch(app, /: <Check size=\{18\}\/>/);
+  assert.match(app, /\{item\.jobState \? jobStateLabels\[item\.jobState\] : 'завершено'\}/);
+  assert.match(app, /aria-label=\{'Скачать ' \+ item\.name\}/);
+});
+
+test('history keys stay unique even if two result callbacks run in the same millisecond', () => {
+  // Date.now() can collide for multiple results and would update both rows
+  // because checkJob matches by the React history key.
+  assert.match(app, /const nextHistoryIdRef = useRef\(0\);/);
+  assert.match(app, /id: \+\+nextHistoryIdRef\.current, name, jobId/);
+  assert.doesNotMatch(app, /id: Date\.now\(\)/);
+  assert.match(app, /setHistory\(items => \{/);
+  assert.match(app, /entry\.id === item\.id \? \{ \.\.\.entry, jobState: status\.state \} : entry/);
+  assert.match(app, /key=\{item\.id\}/);
+  assert.doesNotMatch(app, /nextHistoryIdRef\.current\s*=\s*0/);
+});
