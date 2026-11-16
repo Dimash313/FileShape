@@ -1,6 +1,6 @@
 # Images & Archives — handoff
 
-Updated: 2026-11-17 UTC
+Updated: 2026-11-16 UTC
 Track: `images-archives`
 Current Issue: [#227 — reject unsupported compression methods during ZIP preflight](https://github.com/Dimash313/FileShape/issues/227)
 Branch: `fix/zip-unsupported-compression-j3`; base `fix/zip-pinned-read-extract-j2` ([parent Draft PR #221](https://github.com/Dimash313/FileShape/pull/221)).
