@@ -6,6 +6,7 @@ The API remains responsible for authentication, upload limits and cleanup.
 import asyncio
 import json
 import os
+import re
 import signal
 from pathlib import Path
 import sys
@@ -13,6 +14,29 @@ import sys
 WORKER_TIMEOUT_SECONDS = 45
 WORKER_MEMORY_BYTES = 512 * 1024 * 1024
 WORKER_OUTPUT_LIMIT = 64 * 1024
+
+# Reuse the private artifact naming contract, but enforce it independently at
+# the untrusted worker boundary before any API handler constructs a Path.
+_WORKER_FILENAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+
+
+def _validate_worker_filename(result: dict) -> None:
+    """Reject path escapes and malformed output metadata before API dispatch."""
+    if "filename" not in result:
+        # validate_only and info actions have no output filename.
+        return
+    name = result["filename"]
+    byte_count = result.get("bytes")
+    if (
+        type(name) is not str
+        or _WORKER_FILENAME_RE.fullmatch(name) is None
+        or ".." in name
+        or type(byte_count) is not int
+        or byte_count <= 0
+    ):
+        # Never reflect potentially sensitive file paths into API errors.
+        raise WorkerFailed("Некорректный результат обработчика")
+
 
 
 class WorkerTimeout(ValueError):
@@ -148,6 +172,7 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
         if proc.returncode != 0 or not result.get("ok"):
             detail = result.get("error", "Не удалось обработать файл")
             raise WorkerFailed(str(detail)[:200])
+        _validate_worker_filename(result)
         return result
     finally:
         # Even if the worker already exited, a grandchild may still hold the
