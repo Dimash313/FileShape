@@ -6,6 +6,7 @@ The API remains responsible for authentication, upload limits and cleanup.
 import asyncio
 import json
 import os
+import re
 import signal
 from pathlib import Path
 import sys
@@ -13,6 +14,29 @@ import sys
 WORKER_TIMEOUT_SECONDS = 45
 WORKER_MEMORY_BYTES = 512 * 1024 * 1024
 WORKER_OUTPUT_LIMIT = 64 * 1024
+
+# Reuse the private artifact naming contract, but enforce it independently at
+# the untrusted worker boundary before any API handler constructs a Path.
+_WORKER_FILENAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+
+
+def _validate_worker_filename(result: dict) -> None:
+    """Reject path escapes and malformed output metadata before API dispatch."""
+    if "filename" not in result:
+        # validate_only and info actions have no output filename.
+        return
+    name = result["filename"]
+    byte_count = result.get("bytes")
+    if (
+        type(name) is not str
+        or _WORKER_FILENAME_RE.fullmatch(name) is None
+        or ".." in name
+        or type(byte_count) is not int
+        or byte_count <= 0
+    ):
+        # Never reflect potentially sensitive file paths into API errors.
+        raise WorkerFailed("Некорректный результат обработчика")
+
 
 
 class WorkerTimeout(ValueError):
@@ -32,6 +56,89 @@ def _resource_limits():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+# File parsers must not inherit the API's Telegram token, cloud credentials,
+# interpreter-injection variables or any other unrelated service environment.
+# Keep the process utilities needed by FFmpeg and the document/image stack.
+_WORKER_ENV_KEYS = (
+    "PATH", "HOME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE",
+    "TZ", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME",
+)
+
+
+def _worker_environment() -> dict[str, str]:
+    env = {key: os.environ[key] for key in _WORKER_ENV_KEYS if key in os.environ}
+    env.update({
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONIOENCODING": "utf-8",
+        # config.py is imported transitively by api.worker. Do not load
+        # the parent application's BOT_TOKEN from a local .env in the child.
+        "PYTHON_DOTENV_DISABLED": "1",
+    })
+    return env
+
+
+async def _communicate_bounded(proc, data: bytes) -> bytes:
+    """Read at most 64 KiB + 1 byte, even if a worker floods stdout.
+
+    Unlike Process.communicate(), this does not accumulate unbounded output
+    in the API process. Input is fed concurrently to avoid pipe deadlocks.
+    """
+    async def feed_input():
+        try:
+            proc.stdin.write(data)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            # Workers may reject malformed requests before reading stdin.
+            pass
+        finally:
+            proc.stdin.close()
+
+    async def read_output():
+        output = bytearray()
+        while True:
+            # Never request more than the budget plus one sentinel byte.
+            chunk = await proc.stdout.read(min(16384, WORKER_OUTPUT_LIMIT + 1 - len(output)))
+            if not chunk:
+                return bytes(output)
+            output.extend(chunk)
+            if len(output) > WORKER_OUTPUT_LIMIT:
+                raise WorkerFailed("Слишком большой ответ обработчика")
+
+    writer = asyncio.create_task(feed_input())
+    reader = asyncio.create_task(read_output())
+    try:
+        output = await reader
+        await writer
+        await proc.wait()
+        return output
+    finally:
+        for task in (reader, writer):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(reader, writer, return_exceptions=True)
+
+
+async def _reap_worker(proc) -> None:
+    """Finish child reaping even when the caller is cancelled repeatedly.
+
+    A single shield() protects the wait *task*, not the outer caller:
+    a second cancellation still interrupts an awaiting run_worker().
+    Keep a strong reference to the wait task until it is complete and do
+    not swallow a cancellation that arrived during cleanup.
+    """
+    waiter = asyncio.create_task(proc.wait())
+    cancelled = False
+    while not waiter.done():
+        try:
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            cancelled = True
+    await waiter
+    if cancelled:
+        raise asyncio.CancelledError()
+
+
 async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> dict:
     """Run one operation; kill and reap the worker on timeout or cancellation."""
     if timeout <= 0:
@@ -48,16 +155,14 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env=_worker_environment(),
         **kwargs,
     )
     try:
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(data), timeout=timeout)
+            stdout = await asyncio.wait_for(_communicate_bounded(proc, data), timeout=timeout)
         except asyncio.TimeoutError:
             raise WorkerTimeout("Обработка заняла слишком много времени") from None
-        if len(stdout) > WORKER_OUTPUT_LIMIT:
-            raise WorkerFailed("Слишком большой ответ обработчика")
         try:
             result = json.loads(stdout)
         except (ValueError, UnicodeDecodeError):
@@ -67,6 +172,7 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
         if proc.returncode != 0 or not result.get("ok"):
             detail = result.get("error", "Не удалось обработать файл")
             raise WorkerFailed(str(detail)[:200])
+        _validate_worker_filename(result)
         return result
     finally:
         # Even if the worker already exited, a grandchild may still hold the
@@ -79,6 +185,5 @@ async def run_worker(payload: dict, timeout: float = WORKER_TIMEOUT_SECONDS) -> 
         elif proc.returncode is None:
             proc.kill()
         if proc.returncode is None:
-            # Reap after cancellation without allowing a second cancellation
-            # to abandon the subprocess.
-            await asyncio.shield(proc.wait())
+            # Repeated cancellation must not end cleanup ahead of process reap.
+            await _reap_worker(proc)
