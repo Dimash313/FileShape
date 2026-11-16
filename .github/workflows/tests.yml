@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Keep all main checks, but cancel obsolete PR runs on newer commits.
+# This saves hosted-runner time without skipping checks for the latest PR head.
+concurrency:
+  group: fileshape-tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -17,6 +23,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
       - name: Install dependencies
