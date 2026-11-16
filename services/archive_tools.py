@@ -42,6 +42,14 @@ def _validate_member(info: zipfile.ZipInfo) -> None:
     if info.flag_bits & 1:
         raise ValueError("Зашифрованные ZIP не поддерживаются")
     if not info.is_dir():
+        # ZipFile.infolist() accepts metadata for unknown codecs, but later
+        # ZipExtFile.read() raises NotImplementedError. Reject at admission
+        # while preserving all four stdlib-supported decompression methods.
+        if info.compress_type not in (
+            zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED,
+            zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA,
+        ):
+            raise ValueError("Неподдерживаемый метод сжатия ZIP")
         if info.file_size > MAX_MEMBER_BYTES:
             raise ValueError("Один из файлов слишком большой")
         if _too_high_compression(info):
