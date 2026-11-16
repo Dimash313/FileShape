@@ -50,6 +50,15 @@ class AdmissionQueue:
     async def acquire(self, semaphore: asyncio.Semaphore) -> None:
         if self.closing:
             raise QueueClosed()
+        # Claim an available permit before our first suspension point.
+        # Scheduling all acquires in separate tasks would let a concurrent
+        # burst observe the same free slot and bypass max_waiters.
+        if not semaphore.locked():
+            await semaphore.acquire()  # The unlocked fast path does not suspend.
+            if self.closing:
+                semaphore.release()
+                raise QueueClosed()
+            return
         queued = semaphore.locked()
         if queued:
             if self.waiting >= self.max_waiters:

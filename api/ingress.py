@@ -7,8 +7,6 @@ while Starlette consumes the stream, before UploadFile objects are parsed.
 from typing import Any
 import re
 
-from starlette.datastructures import Headers
-
 class RequestTooLarge(Exception):
     pass
 
@@ -26,15 +24,28 @@ class UploadIngressGuard:
             await self.app(scope, receive, send)
             return
 
-        headers = Headers(scope=scope)
-        length = headers.get("content-length")
-        if length is not None:
+        # Check raw ASGI header fields: duplicate lengths must not collapse,
+        # and HTTP header names are case-insensitive.
+        raw_headers = scope.get("headers", ())
+        lengths = [value for name, value in raw_headers
+                   if name.lower() == b"content-length"]
+        has_transfer_encoding = any(
+            name.lower() == b"transfer-encoding" for name, _ in raw_headers
+        )
+        if len(lengths) > 1 or (lengths and has_transfer_encoding):
+            await self._reject(send, 400, "Неоднозначные заголовки длины запроса")
+            return
+
+        if lengths:
+            length = lengths[0]
+            # int() accepts whitespace and leading signs, but HTTP framing
+            # only permits a nonempty sequence of ASCII decimal digits.
+            if re.fullmatch(rb"[0-9]+", length) is None:
+                await self._reject(send, 400, "Недопустимая длина запроса")
+                return
             try:
                 declared = int(length)
             except ValueError:
-                await self._reject(send, 400, "Недопустимая длина запроса")
-                return
-            if declared < 0:
                 await self._reject(send, 400, "Недопустимая длина запроса")
                 return
             if declared > self.max_bytes:
