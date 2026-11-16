@@ -48,25 +48,31 @@ def _validate_member(info: zipfile.ZipInfo) -> None:
             raise ValueError("Подозрительно сильное сжатие в ZIP")
 
 
+def _inspect_open_zip(archive: zipfile.ZipFile) -> dict:
+    """Validate ZIP metadata on the same already-open archive handle."""
+    members = archive.infolist()
+    if len(members) > MAX_ARCHIVE_ENTRIES:
+        raise ValueError("Слишком много элементов в ZIP")
+    total = 0
+    filenames = []
+    for info in members:
+        _validate_member(info)
+        if not info.is_dir():
+            total += info.file_size
+            if total > MAX_UNCOMPRESSED_TOTAL:
+                raise ValueError("ZIP после распаковки превышает лимит")
+            filenames.append(info.filename)
+    return {"files": len(filenames), "bytes": total, "names": filenames[:15]}
+
+
 def inspect_zip(source: Path) -> dict:
+    """Validate only a regular, pinned ZIP file; never follow a source link."""
     try:
-        with zipfile.ZipFile(source, "r") as archive:
-            members = archive.infolist()
-            if len(members) > MAX_ARCHIVE_ENTRIES:
-                raise ValueError("Слишком много элементов в ZIP")
-            total = 0
-            filenames = []
-            for info in members:
-                _validate_member(info)
-                if not info.is_dir():
-                    total += info.file_size
-                    if total > MAX_UNCOMPRESSED_TOTAL:
-                        raise ValueError("ZIP после распаковки превышает лимит")
-                    filenames.append(info.filename)
-            return {"files": len(filenames), "bytes": total, "names": filenames[:15]}
+        with _open_zip_source(source) as (stream, _):
+            with zipfile.ZipFile(stream, "r") as archive:
+                return _inspect_open_zip(archive)
     except (zipfile.BadZipFile, zipfile.LargeZipFile):
         raise ValueError("Повреждённый или неподдерживаемый ZIP") from None
-
 
 def unpack_zip(source: Path, folder: Path) -> list[tuple[Path, str]]:
     """Stage ZIP extraction and roll back incomplete publication on failure.
@@ -78,17 +84,17 @@ def unpack_zip(source: Path, folder: Path) -> list[tuple[Path, str]]:
     if folder.is_symlink() or not folder.is_dir():
         raise ValueError("Каталог распаковки недоступен")
 
-    # Keep the public inspector's original validation and error semantics.
-    summary = inspect_zip(source)
-    if not 1 <= summary["files"] <= MAX_EXTRACT_FILES:
-        raise ValueError(f"Распаковка доступна для 1–{MAX_EXTRACT_FILES} файлов")
-
     # Track only files *we* published; never remove pre-existing entries.
     published: list[tuple[Path, int, int]] = []
     try:
-        with zipfile.ZipFile(source, "r") as archive:
-            # Validate the same open archive used for extraction. Otherwise a
-            # swapped ZIP between inspect_zip() and open() bypasses preflight.
+        # Pin the approved source and validate on the very same ZIP handle
+        # used for reading members. No second pathname open between stages.
+        with ExitStack() as reader_stack:
+            stream, _ = reader_stack.enter_context(_open_zip_source(source))
+            archive = reader_stack.enter_context(zipfile.ZipFile(stream, "r"))
+            summary = _inspect_open_zip(archive)
+            if not 1 <= summary["files"] <= MAX_EXTRACT_FILES:
+                raise ValueError(f"Распаковка доступна для 1–{MAX_EXTRACT_FILES} файлов")
             members = archive.infolist()
             if len(members) > MAX_ARCHIVE_ENTRIES:
                 raise ValueError("Слишком много элементов в ZIP")
