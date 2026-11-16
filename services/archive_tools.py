@@ -193,14 +193,16 @@ def _open_zip_source(source: Path):
             raise ValueError("Файл не найден или недоступен") from None
         raise
     try:
+        # fdopen("rb") itself can raise IsADirectoryError on Linux. Verify
+        # the descriptor type *before* turning it into a buffered stream.
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Файл не найден или недоступен")
         stream = os.fdopen(descriptor, "rb")
     except BaseException:
         os.close(descriptor)
         raise
     with stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode):
-            raise ValueError("Файл не найден или недоступен")
         yield stream, info
 
 
