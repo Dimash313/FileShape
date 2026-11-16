@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from starlette.background import BackgroundTask
 
-from api.server import BoundedFileResponse
+from api.server import BoundedFileResponse, _legacy_result_preflight, MAX_RESULT_BYTES
 from api.workspaces import Workspace
 
 
@@ -107,6 +107,30 @@ class LegacyDownloadCleanupTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 BoundedFileResponse(target, dir_fd=work._directory_fd)
             self.assertEqual(secret.read_bytes(), b"private")
+
+    def test_preflight_never_follows_symlink_and_preserves_413(self):
+        from fastapi import HTTPException
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.txt"
+            outside.write_bytes(b"secret")
+            target = root / "result.txt"
+            target.symlink_to(outside)
+            with self.assertRaises(ValueError):
+                _legacy_result_preflight(target, "Результат недоступен")
+            target.unlink()
+            os.link(outside, target)
+            with self.assertRaises(ValueError):
+                _legacy_result_preflight(target, "Результат недоступен")
+            target.unlink()
+            target.write_bytes(b"valid")
+            _legacy_result_preflight(target, "Результат недоступен")
+            with target.open("r+b") as stream:
+                stream.truncate(MAX_RESULT_BYTES + 1)
+            with self.assertRaises(HTTPException) as failure:
+                _legacy_result_preflight(target, "Результат недоступен")
+            self.assertEqual(failure.exception.status_code, 413)
 
     async def test_range_and_head_keep_existing_file_response_contract(self):
         for method, headers, expected_status, expected_body in (
