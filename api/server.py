@@ -12,6 +12,8 @@ import sqlite3
 import logging
 import mimetypes
 import os
+import stat
+import weakref
 from pathlib import Path
 import tempfile
 import time
@@ -657,17 +659,64 @@ async def retry_background_job(
 
 
 class BoundedFileResponse(FileResponse):
-    """Compatibility downloads must release workspaces on disconnect/deadline."""
+    """Serve one pinned, private result inode; clean up on any send outcome.
+
+    Starlette FileResponse otherwise opens the *pathname* after the route
+    has returned. Workers may replace that pathname, so hold an O_NOFOLLOW
+    descriptor and serve through Linux's stable /proc/self/fd handle instead.
+    """
     timeout_seconds = 120
+
+    def __init__(self, path, *, dir_fd=None, **kwargs):
+        if not os.path.isdir("/proc/self/fd") or not hasattr(os, "O_NOFOLLOW"):
+            raise RuntimeError("Безопасная выдача файлов недоступна")
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        try:
+            # The workspace directory fd is locked and pinned by Workspace.
+            # Resolve only a basename under that fd, never a worker pathname.
+            fd = os.open(Path(path).name if dir_fd is not None else path,
+                         flags, dir_fd=dir_fd)
+        except OSError:
+            raise ValueError("Результат недоступен") from None
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1):
+                raise ValueError("Результат недоступен")
+            if info.st_size <= 0:
+                raise ValueError("Пустой результат")
+            if info.st_size > MAX_RESULT_BYTES:
+                raise HTTPException(status_code=413, detail="Результат слишком большой")
+            # A procfd resolves to this open inode even if the workspace path
+            # is replaced before ASGI begins streaming it.
+            super().__init__(f"/proc/self/fd/{fd}", stat_result=info, **kwargs)
+            # Also close the fd if a response is abandoned without being sent.
+            self._pin_finalizer = weakref.finalize(self, os.close, fd)
+        except BaseException:
+            os.close(fd)
+            raise
 
     async def __call__(self, scope, receive, send):
         cleanup, self.background = self.background, None
+        # ASGI pathsend hands a filename to the web server for *later* open.
+        # Force Starlette's bounded streaming path while our fd is pinned.
+        if "http.response.pathsend" in scope.get("extensions", {}):
+            scope = {
+                **scope,
+                "extensions": {
+                    name: value for name, value in scope["extensions"].items()
+                    if name != "http.response.pathsend"
+                },
+            }
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 await super().__call__(scope, receive, send)
         finally:
-            if cleanup is not None:
-                await cleanup()
+            try:
+                self._pin_finalizer()
+            finally:
+                if cleanup is not None:
+                    await cleanup()
 
 
 class ResultStream(StreamingResponse):
@@ -930,6 +979,7 @@ async def convert(
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 target,
+                dir_fd=work._directory_fd,
                 filename=target.name,
                 media_type=content_type,
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
@@ -1009,6 +1059,7 @@ async def multi_image_pdf(
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 target,
+                dir_fd=work._directory_fd,
                 filename=target.name,
                 media_type="application/pdf",
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-FileShape-Job-Id": job_id},
@@ -1089,6 +1140,7 @@ async def multi_pdf_merge(
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 merged,
+                dir_fd=work._directory_fd,
                 filename="merged.pdf",
                 media_type="application/pdf",
                 headers={
@@ -1174,6 +1226,7 @@ async def multi_zip_create(
             jobs.transition(job_id, user_id, "completed")
             return BoundedFileResponse(
                 result,
+                dir_fd=work._directory_fd,
                 filename="fileshape.zip",
                 media_type="application/zip",
                 headers={
