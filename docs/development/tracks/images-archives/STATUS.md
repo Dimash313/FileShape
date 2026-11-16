@@ -4,7 +4,7 @@ Updated: 2026-11-16 UTC
 Track: `images-archives`
 Active Issue: [#215 — pin ZIP inspection/extraction input](https://github.com/Dimash313/FileShape/issues/215)
 Branch: `fix/zip-pinned-read-extract-j2`
-Draft PR: pending creation, stacked on [#200](https://github.com/Dimash313/FileShape/pull/200) (`fix/zip-pinned-create-inputs-j1`). Inspect live final head/CI before integration.
+Draft PR: [#221](https://github.com/Dimash313/FileShape/pull/221), stacked on [#200](https://github.com/Dimash313/FileShape/pull/200) (`fix/zip-pinned-create-inputs-j1`). Inspect live final head/CI before integration.
 
 ## Implemented in this branch (not in main)
 - `services/archive_tools.py`: `inspect_zip` opens a regular source through the already-tested `_open_zip_source` guard (no symlink traversal, no FIFO blocking, `fstat` regular-file requirement), then validates metadata from the pinned `ZipFile` handle. `unpack_zip` opens each ZIP **once**, uses `_inspect_open_zip` for the same real archive handle, and retains that handle throughout entry validation, CRC/byte-budget reading, private stage preparation and no-clobber publication. Never reopens the source path between header and decode.
