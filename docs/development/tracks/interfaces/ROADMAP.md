@@ -1,5 +1,9 @@
 # Track: interfaces & UX — roadmap
 
+## Current integration direction (2026-11-17)
+
+**Draft [#233](https://github.com/Dimash313/FileShape/pull/233)** carries the Mini App UX and tests directly onto reviewed current `main` in one candidate (Issue [#230](https://github.com/Dimash313/FileShape/issues/230)), because predecessor architecture drafts #94–#112 were closed rather than merged individually. The old seven-deep Interfaces dependency chain listed below is provenance only and MUST NOT be mass-merged. This candidate excludes `main.py` bot messages: resolve that separately with the audio integration owner. Validate actual current-main CI (frontend, Python, Docker), run independent reviews and use no-beta mocked integration tests prior to any owner-authorized public launch. Device/AT QA remains NOT EXECUTED and optional internal verification; do not claim it was tested.
+
 **Scope:** Telegram bot menus, Telegram Mini App, later standalone web/Android/iOS visual experiences, accessibility, copy, design system and client-side API integration.
 
 1. Inventory actual bot and Mini App screens/flows, current user-facing errors, loading states and design consistency. Record regressions and accessibility gaps as Issues.

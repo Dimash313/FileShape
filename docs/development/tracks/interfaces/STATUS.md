@@ -1,5 +1,17 @@
 # Interfaces & UX — current handoff
 
+## Current-main integration override — 2026-11-17
+
+**Active candidate:** [Issue #230](https://github.com/Dimash313/FileShape/issues/230) / [Draft PR #233](https://github.com/Dimash313/FileShape/pull/233), branch `integration/interfaces-miniapp-current-main`, based **directly on current `main`**. This integrates the Mini App-only code and frontend regressions from legacy [#173](https://github.com/Dimash313/FileShape/pull/173) without bringing old `main.py` or bot newline regression. Main contains owner-approved no-beta policy and an architecture/docs integration; architecture #94–#112 were closed without individual merge. **The legacy dependency chain described below is historical and MUST NOT be used as the current merge plan.** The sole direct parent for #233 is `main`.
+
+18 selected file paths were disjoint from main-only changes since shared ancestor `f69d812` at the audited base `17fd3f2`; 15 code/test blobs and 3 documentation files were copied from #173 in the initial one-commit candidate. This STATUS and the UX ROADMAP/MOBILE_QA are refreshed after copy. **New exact-final-head CI and independent CTO/security review are required**; old #173's green run proves only its old branch. No PR merged or deployed here. Optional internal device/TalkBack checks remain NOT EXECUTED; no beta or pilot.
+
+Bot-specific PR #118 (`main.py` and `tests/test_bot_message_linebreaks.py`) requires a separate coordinated integration candidate due overlap with audio [#223](https://github.com/Dimash313/FileShape/pull/223). See CTO [#222](https://github.com/Dimash313/FileShape/issues/222) for superseded 23-PR chain and revised handoff.
+
+---
+
+## Archived legacy stack notes (not current integration instructions)
+
 Updated: 2026-11-15 UTC
 Track: `interfaces`
 Current issue: [#172](https://github.com/Dimash313/FileShape/issues/172) — keyboard skip link and section-focus semantics in Mini App.

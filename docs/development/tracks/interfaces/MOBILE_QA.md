@@ -1,6 +1,6 @@
 # FileShape Interfaces — Mini App mobile and keyboard QA
 
-**Scope:** Draft PR [#173](https://github.com/Dimash313/FileShape/pull/173), Issue [#172](https://github.com/Dimash313/FileShape/issues/172).
+**Scope:** Current-main [Draft PR #233](https://github.com/Dimash313/FileShape/pull/233) (Issue [#230](https://github.com/Dimash313/FileShape/issues/230)), integrating legacy [#173](https://github.com/Dimash313/FileShape/pull/173) and its [#172](https://github.com/Dimash313/FileShape/issues/172) keyboard acceptance cases.
 **Status:** manual verification **NOT EXECUTED**. This is an acceptance checklist, not proof of compatibility.
 **Owner launch decision:** no public/closed beta, early access, pilot or staged user rollout before the first public release (documented in [PR #190](https://github.com/Dimash313/FileShape/pull/190)). These manual device cases are **optional internal checks if equipment is available**, not a requirement to recruit users or a blanket blocker on merging green, reviewed engineering PRs. Unrun cases remain Not run and must never be represented as verified.
 The batch-reorder focus check K8 is covered by unit and source-level regressions, but still requires real keyboard/TalkBack verification.
